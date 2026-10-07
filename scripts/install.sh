@@ -3,9 +3,14 @@ set -eu
 
 repo='PolderLabs/PolderGraph'
 api="https://api.github.com/repos/$repo/releases/latest"
+source="https://github.com/$repo.git"
 
 if ! command -v curl >/dev/null 2>&1; then
-    echo 'Error: curl is required to download the latest release.' >&2
+    echo 'Error: curl is required to look up the latest release.' >&2
+    exit 1
+fi
+if ! command -v git >/dev/null 2>&1; then
+    echo 'Error: Git is required to install PolderGraph from the release source.' >&2
     exit 1
 fi
 
@@ -22,13 +27,13 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 release_json=$(curl -fsSL -H 'Accept: application/vnd.github+json' "$api")
-wheel_url=$(printf '%s' "$release_json" | sed -nE 's/.*"browser_download_url": *"([^"]+\.whl)".*/\1/p' | head -n 1)
-if [ -z "$wheel_url" ]; then
-    echo "Error: no wheel asset was found in the latest GitHub release for $repo." >&2
+tag=$(printf '%s' "$release_json" | sed -nE 's/.*"tag_name": *"([^"]+)".*/\1/p' | head -n 1)
+if [ -z "$tag" ]; then
+    echo "Error: the latest GitHub release for $repo has no tag." >&2
     exit 1
 fi
 
-echo "Installing PolderGraph from the latest GitHub release: $wheel_url"
-uv tool install "poldergraph[all] @ $wheel_url"
+echo "Installing PolderGraph from GitHub release $tag..."
+uv tool install --upgrade --from "git+$source@$tag" 'poldergraph[all]'
 echo 'PolderGraph is installed. Open a new shell if the poldergraph command is not on PATH.'
 echo 'Run "poldergraph init" from the repository you want to index.'

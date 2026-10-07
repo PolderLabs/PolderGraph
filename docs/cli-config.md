@@ -5,13 +5,12 @@
 Primary:
 
 ```bash
-uv tool install "poldergraph[all] @ file:///path/to/poldergraph-<version>-py3-none-any.whl"
+uv tool install --upgrade --from "git+https://github.com/PolderLabs/PolderGraph.git@v0.1.1" "poldergraph[all]"
 ```
 
-Download the wheel from the [latest GitHub release](https://github.com/PolderLabs/PolderGraph/releases/latest)
-first. Each release wheel contains the compiled dashboard (`web/dist`) and can
-be installed on Linux or Windows. The platform installer scripts resolve the
-wheel from the GitHub latest-release API automatically.
+Each GitHub release includes the compiled dashboard (`web/dist`) in its source
+archive. Git is required. The platform installer scripts resolve the latest
+release tag automatically.
 
 Also support standard Python packaging installation.
 

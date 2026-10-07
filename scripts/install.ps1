@@ -2,6 +2,11 @@ $ErrorActionPreference = 'Stop'
 
 $repo = 'PolderLabs/PolderGraph'
 $releaseApi = "https://api.github.com/repos/$repo/releases/latest"
+$source = "https://github.com/$repo.git"
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw 'Git is required to install PolderGraph from the release source. Install Git for Windows and retry.'
+}
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Host 'Installing uv...'
@@ -18,13 +23,12 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 
 $release = Invoke-RestMethod -Headers @{ Accept = 'application/vnd.github+json' } $releaseApi
-$wheel = $release.assets | Where-Object { $_.name -match '^poldergraph-.*\.whl$' } | Select-Object -First 1
-if (-not $wheel) {
-    throw "No wheel asset was found in the latest GitHub release for $repo."
+if (-not $release.tag_name) {
+    throw "The latest GitHub release for $repo has no tag."
 }
 
-Write-Host "Installing PolderGraph from the latest GitHub release: $($wheel.browser_download_url)"
-uv tool install "poldergraph[all] @ $($wheel.browser_download_url)"
+Write-Host "Installing PolderGraph from GitHub release $($release.tag_name)..."
+uv tool install --upgrade --from "git+$source@$($release.tag_name)" 'poldergraph[all]'
 if ($LASTEXITCODE -ne 0) {
     throw "PolderGraph installation failed (uv exit code $LASTEXITCODE)."
 }
