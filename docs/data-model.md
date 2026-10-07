@@ -143,6 +143,13 @@ threshold.
 - `meta` — schema version, index format version, representation version, last
   scan time, indexed HEAD, metric cache key.
 
+Coding-agent memories live in a separate centralized per-user SQLite database
+under the OS application-data directory. This intentionally keeps user
+preferences and private memory data out of every repository index. Each project
+record is scoped by the resolved workspace root; user-scoped records are
+available in all projects. Memory vectors use a separate `memory` vector task
+table in that same central database.
+
 ## Versions
 
 `SCHEMA_VERSION` tracks table layout. `INDEX_FORMAT_VERSION` tracks the meaning

@@ -28,6 +28,9 @@ check PolderGraph index status
 poldergraph context "<task/question>" --json
         |
         v
+receive relevant user and project memories with grounded source context
+        |
+        v
 read only the returned source locations needed
         |
         v
@@ -92,6 +95,22 @@ Incrementally refreshes the graph. Must be safe for agents to invoke repeatedly.
 #### `pg_find_tests`
 Convenience query that returns structurally or lexically linked tests for symbols/files.
 
+#### Shared memory tools
+
+- `pg_memory_status`
+- `pg_memory_search`
+- `pg_memory_list`
+- `pg_memory_add`
+- `pg_memory_update`
+- `pg_memory_forget`
+
+`pg_context` automatically includes matching shared user preferences and
+current-project memories under its existing token budget. Agents should save
+lasting user preferences and well-supported project decisions when they become
+clear, without interrupting the user. Do not save secrets or transient task
+details. See [memory.md](memory.md) for the storage, scoping, vector retrieval,
+CLI, and retention contract.
+
 ### Optional resources
 
 Expose lightweight MCP resources when useful:
@@ -127,7 +146,8 @@ When a task depends on understanding repository structure, finding implementatio
 tracing dependencies, locating tests, or estimating change impact:
 
 1. Prefer the PolderGraph MCP tools when available.
-2. Otherwise run:
+2. Start with `pg_context`, which includes matching user preferences and project
+   memories. Otherwise run:
    `poldergraph context "<your task or question>" --json`
 3. If the result says the index is stale, run:
    `poldergraph update --quiet`
@@ -138,6 +158,9 @@ tracing dependencies, locating tests, or estimating change impact:
 7. Read/edit the actual source files returned by PolderGraph; do not treat semantic
    similarity as proof of a source-code dependency.
 8. After substantial source changes, run `poldergraph update --quiet`.
+9. When the user states a lasting preference or work establishes durable project
+   knowledge, save it using `pg_memory_add` (or `poldergraph memory add`) with
+   the correct scope. Do not store credentials or one-off task details.
 
 Do not read `.poldergraph/index.sqlite3` directly.
 <!-- poldergraph:end -->

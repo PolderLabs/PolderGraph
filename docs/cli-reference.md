@@ -91,10 +91,30 @@ Options:
 ### `poldergraph context QUERY`
 
 Agent-optimized repository context under a token budget.
+Relevant user-wide and current-project memories are included in the same budget.
 
 Options:
 - `--budget N` — token budget (default 6000)
 - `--json/--no-json` — machine-readable output (default json)
+
+### `poldergraph memory`
+
+Manage the central per-user memory store shared by projects and coding agents.
+
+```bash
+poldergraph memory status
+poldergraph memory add "Use the shared settings loader" --scope project --kind decision
+poldergraph memory add "Prefer concise answers" --scope user --kind preference
+poldergraph memory search "configuration workflow" --json
+poldergraph memory list --scope all --json
+poldergraph memory update mem_123 --content "Updated durable note"
+poldergraph memory forget mem_123
+```
+
+Commands accept `--root PATH` to select a project when invoked outside it.
+Search uses local vector plus keyword retrieval; pass `--lexical-only` to skip
+vector inference. The database path is shown by `memory status` and can be
+overridden with `POLDERGRAPH_MEMORY_DB`.
 
 ### `poldergraph ui`
 

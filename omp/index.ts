@@ -192,6 +192,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 					...event.systemPrompt,
 					"PolderGraph repository context (local index; use as navigation evidence, then inspect the cited source files. Semantic similarity is not proof of a dependency):\n" +
 						JSON.stringify(context.data),
+					"PolderGraph memory is shared locally across projects. Relevant user preferences and project notes are already included above. When the user shares a lasting preference or you establish durable project knowledge, save it with poldergraph_remember without interrupting the user. Never store credentials or one-off task details.",
 				],
 			};
 		} catch (error) {
@@ -221,6 +222,81 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 		parameters: z.object({ query: z.string().describe("Repository question or task"), budget: z.number().int().min(256).max(12000).default(CONTEXT_BUDGET).describe("Approximate context token budget") }),
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			return toolResult(["context", params.query, "--budget", String(params.budget)], ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "poldergraph_memory_search",
+		label: "PolderGraph Memory Search",
+		description: "Recall semantically related user preferences and this project's durable notes from the shared local memory store.",
+		parameters: z.object({
+			query: z.string().describe("Current task, preference, or project concept to recall"),
+			scope: z.enum(["all", "project", "user"]).default("all"),
+			limit: z.number().int().min(1).max(50).default(10),
+		}),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			return toolResult(["memory", "search", params.query, "--scope", params.scope, "--limit", String(params.limit)], ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "poldergraph_memory_list",
+		label: "PolderGraph Memory List",
+		description: "List shared user memories and memories scoped to the current project.",
+		parameters: z.object({
+			scope: z.enum(["all", "project", "user"]).default("all"),
+			limit: z.number().int().min(1).max(100).default(50),
+		}),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			return toolResult(["memory", "list", "--scope", params.scope, "--limit", String(params.limit)], ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "poldergraph_remember",
+		label: "PolderGraph Remember",
+		description: "Save a durable project fact, decision, or user preference to the shared local memory. Never save secrets or transient task details.",
+		parameters: z.object({
+			content: z.string().min(1).describe("One concise, reusable fact, preference, decision, or workflow"),
+			scope: z.enum(["project", "user"]).default("project"),
+			kind: z.enum(["fact", "preference", "decision", "workflow", "reference"]).default("fact"),
+			tags: z.array(z.string()).max(20).default([]),
+		}),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const args = ["memory", "add", params.content, "--scope", params.scope, "--kind", params.kind];
+			for (const tag of params.tags) args.push("--tag", tag);
+			return toolResult(args, ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "poldergraph_memory_forget",
+		label: "PolderGraph Forget Memory",
+		description: "Delete a user or current-project memory by ID from the shared local store.",
+		parameters: z.object({ memory_id: z.string() }),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			return toolResult(["memory", "forget", params.memory_id], ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "poldergraph_memory_update",
+		label: "PolderGraph Update Memory",
+		description: "Update the text, type, or tags for one user or current-project memory.",
+		parameters: z.object({
+			memory_id: z.string(),
+			content: z.string().optional(),
+			kind: z.enum(["fact", "preference", "decision", "workflow", "reference"]).optional(),
+			tags: z.array(z.string()).max(20).optional(),
+			clear_tags: z.boolean().default(false),
+		}),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const args = ["memory", "update", params.memory_id];
+			if (params.content !== undefined) args.push("--content", params.content);
+			if (params.kind !== undefined) args.push("--kind", params.kind);
+			for (const tag of params.tags ?? []) args.push("--tag", tag);
+			if (params.clear_tags) args.push("--clear-tags");
+			return toolResult(args, ctx.cwd, signal);
 		},
 	});
 
@@ -300,7 +376,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 				}
 				return;
 			}
-			const allowed = new Set(["status", "search", "context", "explain", "path", "related", "impact", "update", "config"]);
+			const allowed = new Set(["status", "search", "context", "memory", "explain", "path", "related", "impact", "update", "config"]);
 			if (!allowed.has(subcommand)) {
 				ctx.ui.notify("Supported commands: ui, config, status, search, context, explain, path, related, impact, update", "warning");
 				return;

@@ -82,6 +82,21 @@ Arguments:
 
 Returns structurally or lexically linked tests for a symbol or file.
 
+### Shared memory
+
+`pg_context` automatically returns relevant memories under the supplied token
+budget. These tools operate on one central per-user memory database and only
+show user-wide entries plus entries scoped to the current project:
+
+- `pg_memory_status`: store location and visible-scope counts.
+- `pg_memory_search(query, scope="all", limit=10)`: semantic vector and keyword search.
+- `pg_memory_list(scope="all", limit=50)`: list accessible records.
+- `pg_memory_add(content, scope="project", kind="fact", tags=[])`: save a durable note.
+- `pg_memory_update(memory_id, content?, kind?, tags?, clear_tags=false)`: edit and re-vectorize a note.
+- `pg_memory_forget(memory_id)`: permanently delete a note and its vectors.
+
+See [memory.md](memory.md) for scope, storage location, privacy, and fallback behavior.
+
 ## Error handling
 
 All tools return structured error envelopes with `code`, `message` and `remediation` fields. The agent sees the error message and the remediation step, never a crash.

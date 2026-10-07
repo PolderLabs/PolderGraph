@@ -145,11 +145,14 @@ When a task depends on understanding repository structure, finding implementatio
 tracing dependencies, locating tests, or estimating change impact:
 
 1. Prefer the PolderGraph MCP tools when available.
-2. Otherwise run: `poldergraph context "<your task or question>" --json`
+2. Start with `pg_context`, which includes relevant project memories and user
+   preferences, or run: `poldergraph context "<your task or question>" --json`
 3. If the result says the index is stale, run: `poldergraph update --quiet`
 4. Use `poldergraph path "<A>" "<B>" --json` for relationship/path questions.
 5. Use `poldergraph explain "<symbol>" --json` for a focused symbol.
 6. Use `poldergraph impact "<symbol-or-path>" --json` before broad refactors.
+7. Save lasting preferences and durable project decisions with `pg_memory_add`;
+   never save credentials or transient task details.
 <!-- poldergraph:end -->
 ```
 
@@ -166,6 +169,35 @@ tracing dependencies, locating tests, or estimating change impact:
 | `pg_impact` | Reverse dependency / change impact analysis |
 | `pg_update` | Incremental index refresh |
 | `pg_find_tests` | Structurally or lexically linked tests |
+| `pg_memory_search` | Vector and keyword recall across user preferences and project notes |
+| `pg_memory_add` | Save durable user or project memories to the local central store |
+| `pg_memory_update` / `pg_memory_forget` | Maintain and remove saved memories |
+
+## Shared agent memory
+
+PolderGraph keeps one private memory database for your user account and separates memories by scope:
+
+- **User memories** carry across every project, such as writing preferences and recurring workflow choices.
+- **Project memories** stay available only when an agent is working in that repository, such as architecture decisions and local conventions.
+
+OMP and Codex retrieve relevant memories automatically when they build task context. Agents can save lasting preferences and useful project knowledge as they work; no separate memory service or repository file is needed. Memory search combines local EmbeddingGemma vectors with keyword matching, and the same bounded results are available through the CLI and MCP.
+
+```bash
+# Save a preference for all projects
+poldergraph memory add "Keep explanations concise and include a short example" \
+  --scope user --kind preference --tag communication
+
+# Save a decision only for the current project
+poldergraph memory add "API handlers use the shared auth dependency" \
+  --scope project --kind decision --tag architecture
+
+# Recall relevant memories, inspect the store, or remove an entry by ID
+poldergraph memory search "auth handler conventions" --json
+poldergraph memory status
+poldergraph memory forget mem_...
+```
+
+The database lives under your OS user-data directory (`%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS, or `$XDG_DATA_HOME`/`~/.local/share` on Linux). Set `POLDERGRAPH_MEMORY_DB` to move it. Project source and memories stay local; memory records are never written into Git. Do not save passwords, API keys, private keys, or one-off task details. See [the memory guide](docs/memory.md) for retrieval, controls, and privacy details.
 
 ## Codex setup
 

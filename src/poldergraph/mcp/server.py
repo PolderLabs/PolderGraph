@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import (
-    API_VERSION,
     PolderGraphError,
     envelope,
     error_envelope,
@@ -164,8 +163,12 @@ def build_server(root: Path | None = None) -> Any:
 
         service = session.service()
         filters = SearchFilters(
-            kinds=kinds or [], languages=languages or [], roots=roots or [], path_prefixes=paths or []
+            kinds=kinds or [],
+            languages=languages or [],
+            roots=roots or [],
+            path_prefixes=paths or [],
         )
+
         def run() -> dict[str, Any]:
             response = service.search(
                 query,
@@ -193,21 +196,29 @@ def build_server(root: Path | None = None) -> Any:
         """
         from ..retrieval.service import SearchFilters
 
-        service = session.service()
-        filters = SearchFilters(kinds=kinds or [], languages=languages or [])
-        budget = max(500, min(int(token_budget), MAX_BUDGET_TOKENS))
-        return _guard("pg_context", lambda: _envelope("pg_context") | {
-            "data": service.context(query, token_budget=budget, filters=filters).to_dict()
-        })
+        def run():
+            service = session.service(need_backend=True)
+            filters = SearchFilters(kinds=kinds or [], languages=languages or [])
+            budget = max(500, min(int(token_budget), MAX_BUDGET_TOKENS))
+            result = service.context(query, token_budget=budget, filters=filters).to_dict()
+            from ..memory import MemoryStore, add_memories_to_context
+
+            add_memories_to_context(
+                result, MemoryStore(service.root), query, budget, backend=service.backend
+            )
+            return _envelope("pg_context") | {"data": result}
+
+        return _guard("pg_context", run)
 
     # ------------------------------------------------------------ pg_entity
 
     @server.tool()
     def pg_entity(entity: str) -> dict[str, Any]:
         """Return entity details and a bounded neighborhood."""
-        return _guard("pg_entity", lambda: _envelope("pg_entity") | {
-            "data": session.service().explain(entity)
-        })
+        return _guard(
+            "pg_entity",
+            lambda: _envelope("pg_entity") | {"data": session.service().explain(entity)},
+        )
 
     # -------------------------------------------------------------- pg_path
 
@@ -221,11 +232,21 @@ def build_server(root: Path | None = None) -> Any:
     ) -> dict[str, Any]:
         """Find the relationship path between two entities."""
         service = session.service()
-        return _guard("pg_path", lambda: _envelope("pg_path") | {
-            "data": service.path(
-                source, target, structural_only=structural_only, include_semantic=include_semantic, max_hops=max_hops
-            )
-        })
+        return _guard(
+            "pg_path",
+            lambda: (
+                _envelope("pg_path")
+                | {
+                    "data": service.path(
+                        source,
+                        target,
+                        structural_only=structural_only,
+                        include_semantic=include_semantic,
+                        max_hops=max_hops,
+                    )
+                }
+            ),
+        )
 
     # ----------------------------------------------------------- pg_related
 
@@ -233,9 +254,12 @@ def build_server(root: Path | None = None) -> Any:
     def pg_related(entity: str, limit: int = 10) -> dict[str, Any]:
         """Return semantic neighbours with structural linkage made explicit."""
         service = session.service()
-        return _guard("pg_related", lambda: _envelope("pg_related") | {
-            "data": service.related(entity, limit=_clamp(limit, 10))
-        })
+        return _guard(
+            "pg_related",
+            lambda: (
+                _envelope("pg_related") | {"data": service.related(entity, limit=_clamp(limit, 10))}
+            ),
+        )
 
     # ------------------------------------------------------------ pg_impact
 
@@ -247,9 +271,13 @@ def build_server(root: Path | None = None) -> Any:
     ) -> dict[str, Any]:
         """Show what may be affected if this entity changes."""
         service = session.service()
-        return _guard("pg_impact", lambda: _envelope("pg_impact") | {
-            "data": service.impact(entity, max_depth=max_depth, edge_types=edge_types)
-        })
+        return _guard(
+            "pg_impact",
+            lambda: (
+                _envelope("pg_impact")
+                | {"data": service.impact(entity, max_depth=max_depth, edge_types=edge_types)}
+            ),
+        )
 
     # ---------------------------------------------------------- pg_update
 
@@ -270,12 +298,139 @@ def build_server(root: Path | None = None) -> Any:
     # ------------------------------------------------------- pg_find_tests
 
     @server.tool()
-    def pg_find_tests(entity: str | None = None, query: str | None = None, limit: int = 25) -> dict[str, Any]:
+    def pg_find_tests(
+        entity: str | None = None, query: str | None = None, limit: int = 25
+    ) -> dict[str, Any]:
         """Return structurally or lexically linked tests for a symbol or file."""
         service = session.service()
-        return _guard("pg_find_tests", lambda: _envelope("pg_find_tests") | {
-            "data": service.find_tests(entity, query=query, limit=_clamp(limit, 25))
-        })
+        return _guard(
+            "pg_find_tests",
+            lambda: (
+                _envelope("pg_find_tests")
+                | {"data": service.find_tests(entity, query=query, limit=_clamp(limit, 25))}
+            ),
+        )
+
+    # ------------------------------------------------------------- pg_memory
+
+    @server.tool()
+    def pg_memory_status() -> dict[str, Any]:
+        """Show the shared memory location and current project/user memory counts."""
+        from ..memory import MemoryStore
+
+        return _guard(
+            "pg_memory_status",
+            lambda: envelope(
+                command="pg_memory_status", data=MemoryStore(session.service().root).status()
+            ),
+        )
+
+    @server.tool()
+    def pg_memory_search(query: str, scope: str = "all", limit: int = 10) -> dict[str, Any]:
+        """Retrieve project notes and user preferences with local vector and keyword RAG."""
+        from ..memory import MemoryStore, memory_backend
+
+        def run():
+            service = session.service()
+            store = MemoryStore(service.root)
+            results = store.search(
+                query,
+                scope=scope,
+                limit=_clamp(limit, 10),
+                backend=memory_backend(service.backend),
+            )
+            return envelope(
+                command="pg_memory_search",
+                data={
+                    "query": query,
+                    "scope": scope,
+                    "results": results,
+                    "store": str(store.database),
+                },
+            )
+
+        return _guard("pg_memory_search", run)
+
+    @server.tool()
+    def pg_memory_list(scope: str = "all", limit: int = 50) -> dict[str, Any]:
+        """List user memories and current-project memories, without showing other projects."""
+        from ..memory import MemoryStore
+
+        def run():
+            store = MemoryStore(session.service().root)
+            return envelope(
+                command="pg_memory_list",
+                data={
+                    "scope": scope,
+                    "results": store.list(scope=scope, limit=_clamp(limit, 50)),
+                    "store": str(store.database),
+                },
+            )
+
+        return _guard("pg_memory_list", run)
+
+    @server.tool()
+    def pg_memory_add(
+        content: str,
+        scope: str = "project",
+        kind: str = "fact",
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Save durable project knowledge or a user preference for future tasks."""
+        from ..memory import MemoryStore, memory_backend
+
+        def run():
+            service = session.service()
+            store = MemoryStore(service.root)
+            data = store.add(
+                content,
+                scope=scope,
+                kind=kind,
+                tags=tags,
+                backend=memory_backend(service.backend),
+            )
+            warnings = [data["vector_warning"]] if data.get("vector_warning") else []
+            return envelope(command="pg_memory_add", data=data, warnings=warnings)
+
+        return _guard("pg_memory_add", run)
+
+    @server.tool()
+    def pg_memory_update(
+        memory_id: str,
+        content: str | None = None,
+        kind: str | None = None,
+        tags: list[str] | None = None,
+        clear_tags: bool = False,
+    ) -> dict[str, Any]:
+        """Update a visible memory and refresh its local vector."""
+        from ..memory import MemoryStore, memory_backend
+
+        def run():
+            service = session.service()
+            data = MemoryStore(service.root).update(
+                memory_id,
+                content=content,
+                kind=kind,
+                tags=[] if clear_tags else tags,
+                backend=memory_backend(service.backend),
+            )
+            warnings = [data["vector_warning"]] if data.get("vector_warning") else []
+            return envelope(command="pg_memory_update", data=data, warnings=warnings)
+
+        return _guard("pg_memory_update", run)
+
+    @server.tool()
+    def pg_memory_forget(memory_id: str) -> dict[str, Any]:
+        """Permanently remove a user or current-project memory and its vectors."""
+        from ..memory import MemoryStore
+
+        return _guard(
+            "pg_memory_forget",
+            lambda: envelope(
+                command="pg_memory_forget",
+                data=MemoryStore(session.service().root).forget(memory_id),
+            ),
+        )
 
     server.poldergraph_session = session  # type: ignore[attr-defined]
     return server

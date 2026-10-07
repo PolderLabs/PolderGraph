@@ -41,8 +41,15 @@ app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
 )
+memory_app = typer.Typer(
+    help="Remember project knowledge and user preferences across coding agents.",
+    no_args_is_help=True,
+)
+app.add_typer(memory_app, name="memory")
 
-DimensionOption = typer.Option(256, "--dimensions", help="Embedding dimensions: 128, 256, 512 or 768.")
+DimensionOption = typer.Option(
+    256, "--dimensions", help="Embedding dimensions: 128, 256, 512 or 768."
+)
 
 
 def _overrides(**kwargs: Any) -> dict[str, Any]:
@@ -85,7 +92,9 @@ def init(
     force: bool = typer.Option(False, "--force", help="Discard an existing index and rebuild."),
     no_agent: bool = typer.Option(False, "--no-agent", help="Skip agent instruction generation."),
     dimensions: int = typer.Option(256, "--dimensions", help="Embedding dimensions."),
-    embedding_backend: str = typer.Option("native", "--embedding-backend", help="native or ollama."),
+    embedding_backend: str = typer.Option(
+        "native", "--embedding-backend", help="native or ollama."
+    ),
     media: bool = typer.Option(True, "--include-media/--no-media", help="Index media files."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
@@ -118,9 +127,7 @@ def init(
         degraded: list[str] = []
         if workspace.config.embedding.backend != "none":
             try:
-                backend = create_backend(
-                    workspace.config, cache_dir=None
-                )
+                backend = create_backend(workspace.config, cache_dir=None)
                 # Force model acquisition now so the first query is fast.
                 backend.model_info()
             except PolderGraphError as exc:
@@ -136,7 +143,9 @@ def init(
                 return
             width = 24
             filled = int(width * done / total) if total else 0
-            sys.stderr.write(f"\r  {stage:<10} [{'#' * filled}{'.' * (width - filled)}] {done}/{total}")
+            sys.stderr.write(
+                f"\r  {stage:<10} [{'#' * filled}{'.' * (width - filled)}] {done}/{total}"
+            )
             sys.stderr.flush()
 
         stats = indexer.run(discovered)
@@ -192,19 +201,12 @@ def _print_init_summary(
     root: Path, stats: Any, graph: Any, repo: Any, agent: Any, degraded: list[str]
 ) -> None:
     typer.echo(f"Indexed {root}")
-    typer.echo(
-        f"  files      {stats.files_indexed} "
-        f"(+{stats.files_removed} removed)"
-    )
+    typer.echo(f"  files      {stats.files_indexed} (+{stats.files_removed} removed)")
     typer.echo(f"  entities   {stats.entities_written}")
     typer.echo(f"  edges      {stats.edges_written}")
+    typer.echo(f"  embeddings {stats.embeddings_written} ({stats.embeddings_reused} reused)")
     typer.echo(
-        f"  embeddings {stats.embeddings_written} "
-        f"({stats.embeddings_reused} reused)"
-    )
-    typer.echo(
-        f"  communities {sum(len(c.memberships) for c in graph.communities)} "
-        f"(structural + hybrid)"
+        f"  communities {sum(len(c.memberships) for c in graph.communities)} (structural + hybrid)"
     )
     if stats.unresolved:
         typer.echo(f"  unresolved references {stats.unresolved}")
@@ -262,18 +264,14 @@ def update(
         indexer = Indexer(workspace, backend=None)
         if workspace.config.embedding.backend != "none":
             try:
-                indexer.backend = create_backend(
-                    workspace.config, cache_dir=None, offline=offline
-                )
+                indexer.backend = create_backend(workspace.config, cache_dir=None, offline=offline)
             except PolderGraphError as exc:
                 indexer.backend = None
                 if not quiet and not json_output:
                     typer.secho(f"warning: {exc.message}", fg=typer.colors.YELLOW, err=True)
 
         discovered = indexer.discover()
-        plan = plan_update(
-            repo, discovered, root_id=workspace.root_id(), force=force
-        )
+        plan = plan_update(repo, discovered, root_id=workspace.root_id(), force=force)
         stats = indexer.run(discovered, changed=plan.to_index, removed_paths=plan.removed)
         stats.files_skipped = len(plan.unchanged)
         graph = run_graph_stage(workspace, workspace.config, repo, indexer.backend)
@@ -391,7 +389,9 @@ def status(
             workspace.close()
 
 
-def _print_status(workspace: Any, counts: dict, capabilities: list, config: Config, payload: dict) -> None:
+def _print_status(
+    workspace: Any, counts: dict, capabilities: list, config: Config, payload: dict
+) -> None:
     data = payload["data"]
     typer.echo(f"root        {workspace.root}")
     typer.echo(
@@ -483,7 +483,11 @@ def search(
             if not response.results:
                 typer.echo("No matches.")
             rows = []
-            for item in response.data_dict_rows() if hasattr(response, "data_dict_rows") else payload["data"]["results"]:
+            for item in (
+                response.data_dict_rows()
+                if hasattr(response, "data_dict_rows")
+                else payload["data"]["results"]
+            ):
                 rows.append(
                     [
                         f"{item['score']:.3f}",
@@ -577,7 +581,9 @@ def _print_explain(data: dict) -> None:
         typer.echo("")
         typer.echo("semantic neighbours (not structural)")
         for neighbor in data["semantic_neighbors"][:8]:
-            typer.echo(f"  {neighbor['similarity']:.3f}  {neighbor['entity']['qualified_name'] or neighbor['entity']['name']}")
+            typer.echo(
+                f"  {neighbor['similarity']:.3f}  {neighbor['entity']['qualified_name'] or neighbor['entity']['name']}"
+            )
     if data["metrics"]:
         typer.echo("")
         typer.echo("metrics  " + "  ".join(f"{k}={v:.4f}" for k, v in data["metrics"].items()))
@@ -608,7 +614,9 @@ def related(
         else:
             for item in data["related"]:
                 marker = "linked" if item["structurally_connected"] else "unlinked"
-                typer.echo(f"{item['similarity']:.3f}  {item['entity']['qualified_name'] or item['entity']['name']}  ({marker})")
+                typer.echo(
+                    f"{item['similarity']:.3f}  {item['entity']['qualified_name'] or item['entity']['name']}  ({marker})"
+                )
     except PolderGraphError as exc:
         if json_output:
             emit_error(command, exc)
@@ -627,7 +635,9 @@ def related(
 def path(
     source: str = typer.Argument(..., help="Source entity."),
     target: str = typer.Argument(..., help="Target entity."),
-    structural_only: bool = typer.Option(True, "--structural-only/--include-semantic", help="Edge classes to traverse."),
+    structural_only: bool = typer.Option(
+        True, "--structural-only/--include-semantic", help="Edge classes to traverse."
+    ),
     max_hops: int = typer.Option(12, "--max-hops", help="Maximum path length."),
     root: Optional[Path] = typer.Option(None, "--root", help="Repository root."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
@@ -676,7 +686,9 @@ def path(
 def impact(
     target: str = typer.Argument(..., help="Entity ID, qualified name or path."),
     max_depth: int = typer.Option(3, "--max-depth", help="Reverse dependency depth."),
-    edge_type: list[str] = typer.Option([], "--edge-type", help="Restrict edge classes (repeatable)."),
+    edge_type: list[str] = typer.Option(
+        [], "--edge-type", help="Restrict edge classes (repeatable)."
+    ),
     root: Optional[Path] = typer.Option(None, "--root", help="Repository root."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
@@ -727,11 +739,19 @@ def context(
         workspace, repo, service = build_service(root, need_backend=True)
         result = service.context(query, token_budget=budget)
         data = result.to_dict()
+        from .memory import MemoryStore, add_memories_to_context
+
+        add_memories_to_context(
+            data, MemoryStore(service.root), query, budget, backend=service.backend
+        )
         payload = envelope(command=command, index=freshness_payload(service), data=data)
         if json_output:
             emit_json(payload)
         else:
-            typer.echo(f"{len(data['entities'])} entities, {len(data['snippets'])} snippets, ~{data['token_estimate']} tokens")
+            typer.echo(
+                f"{len(data['entities'])} entities, {len(data['snippets'])} snippets, "
+                f"{len(data['memories'])} memories, ~{data['token_estimate']} tokens"
+            )
             for entity in data["entities"]:
                 typer.echo(entity_line(_Simple(entity)))
     except PolderGraphError as exc:
@@ -743,6 +763,193 @@ def context(
     finally:
         if workspace:
             workspace.close()
+
+
+# --------------------------------------------------------------- agent memory
+
+
+def _memory_backend_or_none():
+    from .memory import memory_backend
+
+    try:
+        return memory_backend()
+    except Exception:
+        return None
+
+
+def _memory_emit(command: str, data: dict[str, Any], json_output: bool, text: str) -> None:
+    if json_output:
+        emit_json(envelope(command=f"memory.{command}", data=data))
+    else:
+        typer.echo(text)
+
+
+def _memory_guard(command: str, json_output: bool, call: Any) -> None:
+    try:
+        data, message = call()
+        _memory_emit(command, data, json_output, message)
+    except PolderGraphError as exc:
+        if json_output:
+            emit_error(f"memory.{command}", exc)
+        else:
+            typer.secho(f"error: {exc.message}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(int(exc.exit_code)) from exc
+
+
+@memory_app.command("status")
+def memory_status(
+    root: Path | None = typer.Option(None, "--root", help="Current project root."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Show the shared memory store and current project scope."""
+    from .memory import MemoryStore
+
+    store = MemoryStore(root)
+
+    def run():
+        data = store.status()
+        return data, (
+            f"Memory store: {data['store']}\n"
+            f"User memories: {data['user_memories']}  Project memories: {data['project_memories']}\n"
+            f"Current project: {data['current_project']}"
+        )
+
+    _memory_guard("status", json_output, run)
+
+
+@memory_app.command("add")
+def memory_add(
+    content: str = typer.Argument(..., help="A durable fact, preference, decision, or workflow."),
+    scope: str = typer.Option("project", "--scope", help="Project-specific or user-wide memory."),
+    kind: str = typer.Option(
+        "fact", "--kind", help="fact, preference, decision, workflow, or reference."
+    ),
+    tag: list[str] = typer.Option([], "--tag", help="Searchable tag (repeatable)."),
+    root: Path | None = typer.Option(
+        None, "--root", help="Project root for project-scoped memory."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Save a memory in the central per-user store, shared across projects."""
+    from .memory import MemoryStore
+
+    store = MemoryStore(root)
+
+    def run():
+        data = store.add(
+            content, scope=scope, kind=kind, tags=tag, backend=_memory_backend_or_none()
+        )
+        return data, f"Saved {data['scope']} memory {data['id']} ({data['kind']})."
+
+    _memory_guard("add", json_output, run)
+
+
+@memory_app.command("search")
+def memory_search(
+    query: str = typer.Argument(..., help="Question or terms to match against memories."),
+    scope: str = typer.Option(
+        "all", "--scope", help="Search project, user, or all visible memories."
+    ),
+    limit: int = typer.Option(10, "--limit", min=1, max=100, help="Maximum results."),
+    lexical_only: bool = typer.Option(False, "--lexical-only", help="Skip local vector search."),
+    root: Path | None = typer.Option(None, "--root", help="Current project root."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Find relevant project notes and user preferences with hybrid RAG."""
+    from .memory import MemoryStore
+
+    store = MemoryStore(root)
+
+    def run():
+        results = store.search(
+            query,
+            scope=scope,
+            limit=limit,
+            backend=None if lexical_only else _memory_backend_or_none(),
+        )
+        data = {"query": query, "scope": scope, "results": results, "store": str(store.database)}
+        lines = [
+            f"{item['id']}  [{item['scope']} · {item['kind']} · {item['retrieval']} · {item['score']:.2f}]\n"
+            f"  {item['content']}"
+            for item in results
+        ]
+        return data, "\n".join(lines) if lines else "No matching memories."
+
+    _memory_guard("search", json_output, run)
+
+
+@memory_app.command("list")
+def memory_list(
+    scope: str = typer.Option(
+        "all", "--scope", help="List project, user, or all visible memories."
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, max=100, help="Maximum results."),
+    root: Path | None = typer.Option(None, "--root", help="Current project root."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """List memories available to the current project."""
+    from .memory import MemoryStore
+
+    store = MemoryStore(root)
+
+    def run():
+        results = store.list(scope=scope, limit=limit)
+        data = {"scope": scope, "results": results, "store": str(store.database)}
+        lines = [
+            f"{item['id']}  [{item['scope']} · {item['kind']}]\n  {item['content']}"
+            for item in results
+        ]
+        return data, "\n".join(lines) if lines else "No memories saved yet."
+
+    _memory_guard("list", json_output, run)
+
+
+@memory_app.command("update")
+def memory_update(
+    memory_id: str = typer.Argument(..., help="Memory ID."),
+    content: str | None = typer.Option(None, "--content", help="Replace the memory text."),
+    kind: str | None = typer.Option(None, "--kind", help="Change the memory kind."),
+    tag: list[str] | None = typer.Option(None, "--tag", help="Replace tags (repeatable)."),
+    clear_tags: bool = typer.Option(False, "--clear-tags", help="Remove all tags."),
+    root: Path | None = typer.Option(None, "--root", help="Current project root."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Update a memory visible to this project."""
+    from .memory import MemoryStore
+
+    store = MemoryStore(root)
+
+    def run():
+        if clear_tags and tag is not None:
+            raise UsageError("Use --clear-tags or --tag, not both.")
+        data = store.update(
+            memory_id,
+            content=content,
+            kind=kind,
+            tags=[] if clear_tags else tag,
+            backend=_memory_backend_or_none(),
+        )
+        return data, f"Updated memory {memory_id}."
+
+    _memory_guard("update", json_output, run)
+
+
+@memory_app.command("forget")
+def memory_forget(
+    memory_id: str = typer.Argument(..., help="Memory ID."),
+    root: Path | None = typer.Option(None, "--root", help="Current project root."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Permanently remove a project or user memory from the central store."""
+    from .memory import MemoryStore
+
+    store = MemoryStore(root)
+
+    def run():
+        data = store.forget(memory_id)
+        return data, f"Forgot memory {memory_id}."
+
+    _memory_guard("forget", json_output, run)
 
 
 class _Simple:
@@ -813,8 +1020,12 @@ def mcp(
 @app.command("setup")
 def setup(
     target: Optional[Path] = typer.Argument(None, help="Repository root."),
-    agent: list[str] = typer.Option([], "--agent", help="Set up one named agent integration (repeatable)."),
-    all_agents: bool = typer.Option(False, "--all", help="Set up every supported agent integration."),
+    agent: list[str] = typer.Option(
+        [], "--agent", help="Set up one named agent integration (repeatable)."
+    ),
+    all_agents: bool = typer.Option(
+        False, "--all", help="Set up every supported agent integration."
+    ),
 ) -> None:
     """Interactively detect and configure coding agents for this repository."""
     from .agents.setup import AGENT_ADAPTERS, detect_installed_agents, setup_agent_guidance
@@ -828,7 +1039,9 @@ def setup(
     elif agent:
         invalid = [name for name in agent if name not in supported]
         if invalid:
-            raise typer.BadParameter(f"Unknown agent(s): {', '.join(invalid)}. Choose from: {', '.join(supported)}")
+            raise typer.BadParameter(
+                f"Unknown agent(s): {', '.join(invalid)}. Choose from: {', '.join(supported)}"
+            )
         selected = list(dict.fromkeys(agent))
     else:
         detected = detect_installed_agents(root)
@@ -839,21 +1052,31 @@ def setup(
             typer.echo("No supported coding agent installation was detected.")
         typer.echo(f"Supported integrations: {', '.join(supported)}")
         if not sys.stdin.isatty():
-            raise typer.BadParameter("Interactive setup needs a terminal; pass --agent NAME or --all.")
+            raise typer.BadParameter(
+                "Interactive setup needs a terminal; pass --agent NAME or --all."
+            )
         default = ",".join(detected) if detected else "none"
-        answer = typer.prompt(
-            "Choose integrations by name, 'all' for every integration, or 'none' for AGENTS.md only",
-            default=default,
-        ).strip().lower()
+        answer = (
+            typer.prompt(
+                "Choose integrations by name, 'all' for every integration, or 'none' for AGENTS.md only",
+                default=default,
+            )
+            .strip()
+            .lower()
+        )
         if answer in {"", "none"}:
             selected = []
         elif answer == "all":
             selected = supported
         else:
-            selected = list(dict.fromkeys(part.strip() for part in answer.split(",") if part.strip()))
+            selected = list(
+                dict.fromkeys(part.strip() for part in answer.split(",") if part.strip())
+            )
             invalid = [name for name in selected if name not in supported]
             if invalid:
-                raise typer.BadParameter(f"Unknown agent(s): {', '.join(invalid)}. Choose from: {', '.join(supported)}")
+                raise typer.BadParameter(
+                    f"Unknown agent(s): {', '.join(invalid)}. Choose from: {', '.join(supported)}"
+                )
 
     result = setup_agent_guidance(root, Config(), targets=selected)
     typer.echo(f"Wrote: {', '.join(result['written']) or 'nothing'}")
@@ -864,9 +1087,13 @@ def setup(
 @app.command("setup-agent")
 def setup_agent(
     target: Optional[Path] = typer.Argument(None, help="Repository root."),
-    all_agents: bool = typer.Option(False, "--all", help="Update every supported agent integration."),
+    all_agents: bool = typer.Option(
+        False, "--all", help="Update every supported agent integration."
+    ),
     agent: list[str] = typer.Option([], "--agent", help="Target one agent adapter (repeatable)."),
-    print_config: bool = typer.Option(False, "--print-mcp-config", help="Print MCP server configuration."),
+    print_config: bool = typer.Option(
+        False, "--print-mcp-config", help="Print MCP server configuration."
+    ),
     hooks: bool = typer.Option(False, "--hooks", help="Explicitly allow installing git hooks."),
 ) -> None:
     """Install or update agent instructions and MCP configuration."""
@@ -885,7 +1112,9 @@ def setup_agent(
         typer.echo(mcp_config_snippet(root))
         return
 
-    result = setup_agent_guidance(root, config, all_agents=all_agents, targets=list(agent) or None, hooks=hooks)
+    result = setup_agent_guidance(
+        root, config, all_agents=all_agents, targets=list(agent) or None, hooks=hooks
+    )
     typer.echo(f"Wrote: {', '.join(result['written']) or 'nothing'}")
     if result["skipped"]:
         typer.echo(f"Skipped: {', '.join(result['skipped'])}")
@@ -925,9 +1154,17 @@ def doctor(
             emit_json(payload)
         else:
             for check in data["checks"]:
-                mark = "ok  " if check["ok"] else ("WARN" if check["severity"] == "warning" else "FAIL")
-                color = typer.colors.GREEN if check["ok"] else (
-                    typer.colors.YELLOW if check["severity"] == "warning" else typer.colors.RED
+                mark = (
+                    "ok  "
+                    if check["ok"]
+                    else ("WARN" if check["severity"] == "warning" else "FAIL")
+                )
+                color = (
+                    typer.colors.GREEN
+                    if check["ok"]
+                    else (
+                        typer.colors.YELLOW if check["severity"] == "warning" else typer.colors.RED
+                    )
                 )
                 typer.secho(f"{mark}  {check['name']}  {check['detail']}", fg=color)
             typer.echo("")
@@ -1002,10 +1239,10 @@ def config_show(
         loaded = load_config(index_dir)
         data = {
             "config": loaded.effective(),
-            "origins": {
-                key: loaded.origin_of(key) for key in loaded.effective().get("index", {})
-            },
-            "workspace_config": str(loaded.workspace_config_path) if loaded.workspace_config_path else None,
+            "origins": {key: loaded.origin_of(key) for key in loaded.effective().get("index", {})},
+            "workspace_config": str(loaded.workspace_config_path)
+            if loaded.workspace_config_path
+            else None,
             "user_config": str(loaded.user_config_path) if loaded.user_config_path else None,
         }
         payload = envelope(command=command, data=data)
