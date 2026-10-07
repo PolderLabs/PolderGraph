@@ -29,6 +29,7 @@ import { BreadcrumbBar, type BreadcrumbEntry, type ViewMode } from './components
 import { ContextMenu, type ContextAction } from './components/ContextMenu';
 import { SettingsDialog } from './components/SettingsDialog';
 import { SourceDialog } from './components/SourceDialog';
+import { MemoryWorkspace } from './components/MemoryWorkspace';
 
 import {
   DEFAULT_FILTERS,
@@ -57,6 +58,7 @@ export default function App(): JSX.Element {
   const [preferences, setPreferences] = useState<ViewPreferencesState>(() => loadPreferences());
   const [editorCommand, setEditorCommand] = useState('code --goto {file}:{line}');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<'graph' | 'memory'>('graph');
   const [mobilePanel, setMobilePanel] = useState<'filters' | 'inspector' | null>(null);
 
   useEffect(() => {
@@ -113,6 +115,10 @@ export default function App(): JSX.Element {
   const graphAbort = useRef<AbortController | null>(null);
   const inspectorAbort = useRef<AbortController | null>(null);
   const searchAbort = useRef<AbortController | null>(null);
+  const liveView = useRef(view);
+  const livePreferences = useRef(preferences);
+  liveView.current = view;
+  livePreferences.current = preferences;
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -204,9 +210,10 @@ export default function App(): JSX.Element {
 
   // Initial load and reload whenever the global payload shape changes.
   useEffect(() => {
+    if (workspaceMode !== 'graph') return;
     void loadGlobal(preferences.globalLimit, preferences.aggregate);
     return () => graphAbort.current?.abort();
-  }, [loadGlobal, preferences.globalLimit, preferences.aggregate]);
+  }, [workspaceMode, loadGlobal, preferences.globalLimit, preferences.aggregate]);
 
   /* -------------------------------------------------------------- filtering */
 
@@ -229,25 +236,17 @@ export default function App(): JSX.Element {
   }, [communities]);
 
   /** Applies community collapse after filtering, never before. */
-  const displayNodes = useMemo<FilterableNode[]>(() => {
-    if (!preferences.collapseCommunities) return filtered.nodes;
+  const collapsedGraph = useMemo(() => {
+    if (!preferences.collapseCommunities) return { nodes: filtered.nodes, edges: filtered.edges };
     return collapseCommunities(
       filtered.nodes as GraphNode[],
       filtered.edges as GraphEdge[],
       communityMode,
       communityLabels,
-    ).nodes as FilterableNode[];
+    );
   }, [filtered, preferences.collapseCommunities, communityMode, communityLabels]);
-
-  const displayEdges = useMemo<FilterableEdge[]>(() => {
-    if (!preferences.collapseCommunities) return filtered.edges;
-    return collapseCommunities(
-      filtered.nodes as GraphNode[],
-      filtered.edges as GraphEdge[],
-      communityMode,
-      communityLabels,
-    ).edges as FilterableEdge[];
-  }, [filtered, preferences.collapseCommunities, communityMode, communityLabels]);
+  const displayNodes = collapsedGraph.nodes as FilterableNode[];
+  const displayEdges = collapsedGraph.edges as FilterableEdge[];
 
   /* ------------------------------------------------------------------ path */
 
@@ -358,8 +357,14 @@ export default function App(): JSX.Element {
       searchAbort.current = controller;
       setSearching(true);
       try {
-        const data = await api.search({ q: query.trim(), limit: 50 }, controller.signal);
+        const data = await api.search({ q: query.trim(), limit: 50, includeGraphContext: true, graphContextLimit: 8 }, controller.signal);
         setResults(data.results);
+        if (data.graph) {
+          setGraph({ nodes: data.graph.nodes as FilterableNode[], edges: data.graph.edges as FilterableEdge[], truncated: data.graph.truncated });
+          setGraphError(null);
+          setView('search');
+          setFitToken((token) => token + 1);
+        }
         if (data.results.length > 0 && data.results[0]) {
           selectNode(data.results[0].id);
         }
@@ -372,38 +377,6 @@ export default function App(): JSX.Element {
     },
     [selectNode, showToast],
   );
-
-  /**
-   * Search graph: results plus their most informative connections.
-   * The server's structural-context expansion is what supplies those edges.
-   */
-  const showSearchGraph = useCallback(async () => {
-    if (results.length === 0) return;
-    graphAbort.current?.abort();
-    const controller = new AbortController();
-    graphAbort.current = controller;
-    setGraphLoading(true);
-    try {
-      const resultIds = new Set(results.map((result) => result.id));
-      const payload = await api.globalGraph({ limit: 4000, aggregate: 'none' }, controller.signal);
-      const seeded = payload.nodes as FilterableNode[];
-      // Keep the graph readable: results are highlighted by selection, the rest
-      // of the repository provides the context their edges live in.
-      setGraph({ nodes: seeded, edges: payload.edges as FilterableEdge[], truncated: payload.truncated });
-      setGraphError(null);
-      if (!resultIds.size) setView('global');
-    } catch (error) {
-      if (isAbortError(error)) return;
-      setGraphError(describeError(error));
-    } finally {
-      if (!controller.signal.aborted) setGraphLoading(false);
-    }
-  }, [results]);
-
-  useEffect(() => {
-    if (view === 'search' && results.length > 0) void showSearchGraph();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view]);
 
   /* ------------------------------------------------------------------ path */
 
@@ -464,8 +437,8 @@ export default function App(): JSX.Element {
             );
             return { ...current, nodes, edges };
           });
-          if (change.added.length > 0 && view === 'global') {
-            void loadGlobal(preferences.globalLimit, preferences.aggregate);
+          if (change.added.length > 0 && liveView.current === 'global') {
+            void loadGlobal(livePreferences.current.globalLimit, livePreferences.current.aggregate);
           }
         }
 
@@ -484,7 +457,7 @@ export default function App(): JSX.Element {
 
     client.start();
     return () => client.close();
-  }, [view, preferences.globalLimit, preferences.aggregate, loadGlobal]);
+  }, [loadGlobal]);
 
   /* -------------------------------------------------------------- keyboard */
 
@@ -649,6 +622,8 @@ export default function App(): JSX.Element {
   return (
     <div className="app" data-theme={preferences.theme}>
       <Header
+        workspaceMode={workspaceMode}
+        onWorkspaceModeChange={(mode) => setWorkspaceMode(mode)}
         status={status}
         statusError={statusError}
         eventsStatus={eventsStatus}
@@ -673,7 +648,9 @@ export default function App(): JSX.Element {
         ref={searchRef}
       />
 
-      <main className={`app__body${mobilePanel ? ` app__body--${mobilePanel}` : ''}`}>
+      {workspaceMode === 'memory' ? (
+        <MemoryWorkspace onNotify={showToast} />
+      ) : <main className={`app__body${mobilePanel ? ` app__body--${mobilePanel}` : ''}`}>
         <div className="app__left" aria-label="Graph filters">
           <FilterPanel
             facets={facets}
@@ -805,9 +782,9 @@ export default function App(): JSX.Element {
             onClose={() => selectNode(null)}
           />
         </div>
-      </main>
+      </main>}
 
-      <BreadcrumbBar
+      {workspaceMode === 'graph' && <BreadcrumbBar
         view={view}
         truncated={graph.truncated}
         communityMode={communityMode}
@@ -840,9 +817,9 @@ export default function App(): JSX.Element {
             setView('search');
           }
         }}
-      />
+      />}
 
-      <div className="app__overlays">
+      {workspaceMode === 'graph' && <div className="app__overlays">
         <ForcePanel
           settings={preferences.force}
           open={forceOpen}
@@ -855,9 +832,9 @@ export default function App(): JSX.Element {
             setPreferences((previous) => ({ ...previous, force: DEFAULT_FORCE }))
           }
         />
-      </div>
+      </div>}
 
-      {contextMenu && (
+      {workspaceMode === 'graph' && contextMenu && (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
@@ -868,7 +845,7 @@ export default function App(): JSX.Element {
         />
       )}
 
-      <SettingsDialog
+      {workspaceMode === 'graph' && <SettingsDialog
         open={settingsOpen}
         preferences={preferences}
         onChange={updatePreferences}
@@ -877,9 +854,9 @@ export default function App(): JSX.Element {
         onClearPositions={() => showToast('Saved node positions cleared.')}
         editorCommand={editorCommand}
         onEditorCommandChange={setEditorCommand}
-      />
+      />}
 
-      {sourceTarget && (
+      {workspaceMode === 'graph' && sourceTarget && (
         <SourceDialog
           path={sourceTarget.path}
           line={sourceTarget.line}

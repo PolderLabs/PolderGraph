@@ -170,6 +170,31 @@ class TestDashboardApi:
         assert result["evidence"] in {"exact", "lexical", "semantic", "graph-expanded"}
         assert isinstance(result["score_features"], dict)
 
+    def test_search_graph_context_is_bounded_and_valid(self, api_client):
+        data = api_client.get(
+            "/api/search?q=AuthService&limit=5&include_graph_context=true&graph_context_limit=2&graph_fanout=3"
+        ).json()["data"]
+        graph = data["graph"]
+        assert graph["nodes"]
+        assert len(graph["nodes"]) <= 8
+        ids = {node["id"] for node in graph["nodes"]}
+        assert all(edge["source"] in ids and edge["target"] in ids for edge in graph["edges"])
+
+    def test_memory_api_crud_is_project_scoped(self, api_client):
+        created = api_client.post(
+            "/api/memory", json={"content": "Use the repository's shared API client", "scope": "project", "kind": "workflow", "tags": ["dashboard"]}
+        ).json()
+        assert created["ok"] is True
+        memory_id = created["data"]["id"]
+        found = api_client.get("/api/memory?scope=project").json()["data"]["results"]
+        assert any(item["id"] == memory_id for item in found)
+        updated = api_client.post(f"/api/memory/{memory_id}/update", json={"content": "Keep the dashboard API client shared"}).json()
+        assert updated["ok"] is True
+        forgotten = api_client.post(f"/api/memory/{memory_id}/forget").json()
+        assert forgotten["ok"] is True
+        after = api_client.get("/api/memory?scope=project").json()["data"]["results"]
+        assert all(item["id"] != memory_id for item in after)
+
     def test_entity_relations_use_entity_key(self, api_client):
         graph = api_client.get("/api/graph/global?limit=100").json()["data"]
         entity_id = graph["nodes"][0]["id"]

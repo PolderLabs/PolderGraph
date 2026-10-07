@@ -10,6 +10,9 @@ import type {
   EntityData,
   GraphPayload,
   ImpactData,
+  MemoryEntry,
+  MemoryListData,
+  MemoryStatusData,
   PathData,
   SearchData,
   SourceData,
@@ -207,6 +210,9 @@ export const api = {
       paths?: string[];
       includeSemantic?: boolean;
       includeStructuralContext?: boolean;
+      includeGraphContext?: boolean;
+      graphContextLimit?: number;
+      graphFanout?: number;
     },
     signal?: AbortSignal,
   ): Promise<SearchData> {
@@ -218,6 +224,9 @@ export const api = {
       paths: params.paths?.length ? params.paths.join(',') : undefined,
       include_semantic: params.includeSemantic ?? true,
       include_structural_context: params.includeStructuralContext ?? true,
+      include_graph_context: params.includeGraphContext ?? false,
+      graph_context_limit: params.graphContextLimit,
+      graph_fanout: params.graphFanout,
     });
     return request<SearchData>(`/search${qs}`, { ...(signal ? { signal } : {}) });
   },
@@ -258,6 +267,45 @@ export const api = {
     return request<CommunitiesData>(`/communities${joinQuery({ mode })}`, {
       ...(signal ? { signal } : {}),
     });
+  },
+
+  memoryStatus(signal?: AbortSignal): Promise<MemoryStatusData> {
+    return request<MemoryStatusData>('/memory/status', { ...(signal ? { signal } : {}) });
+  },
+
+  memoryList(scope: string, signal?: AbortSignal): Promise<MemoryListData> {
+    const qs = joinQuery({ scope, limit: 100 });
+    return request<MemoryListData>(`/memory${qs}`, { ...(signal ? { signal } : {}) });
+  },
+
+  memorySearch(
+    params: { q: string; scope: string; semantic: boolean },
+    signal?: AbortSignal,
+  ): Promise<MemoryListData & { query: string }> {
+    const qs = joinQuery({ q: params.q, scope: params.scope, limit: 100, semantic: params.semantic });
+    return request<MemoryListData & { query: string }>(`/memory/search${qs}`, {
+      ...(signal ? { signal } : {}),
+    });
+  },
+
+  memoryAdd(
+    entry: { content: string; scope: 'project' | 'user'; kind: MemoryEntry['kind']; tags: string[] },
+  ): Promise<MemoryEntry> {
+    return request<MemoryEntry>('/memory', { method: 'POST', body: entry });
+  },
+
+  memoryUpdate(
+    id: string,
+    entry: { content: string; kind: MemoryEntry['kind']; tags: string[] },
+  ): Promise<MemoryEntry> {
+    return request<MemoryEntry>(`/memory/${encodeURIComponent(id)}/update`, {
+      method: 'POST',
+      body: entry,
+    });
+  },
+
+  memoryForget(id: string): Promise<MemoryEntry> {
+    return request<MemoryEntry>(`/memory/${encodeURIComponent(id)}/forget`, { method: 'POST' });
   },
 
   savePreferences(preferences: ViewPreferences, signal?: AbortSignal): Promise<ViewPreferences> {
