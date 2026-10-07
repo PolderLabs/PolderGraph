@@ -6,22 +6,21 @@ implementation of search for any surface.
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from ..embedding.protocol import EmbeddingBackend
 from ..errors import UsageError
 from ..graph.metrics import importance_map
+from ..models.edge import Edge
 from ..models.entity import Entity
-from ..models.edge import STRUCTURAL_EDGE_TYPES, Edge, EdgeType
 from ..storage.repository import Repository
 from ..storage.sqlite import get_meta
 from .context import ContextResult, pack_context
 from .lexical import Candidate, exact_matches, lexical_candidates
 from .rerank import RankedResult, dedupe_results, detect_intent, fuse
 from .semantic import neighbors_of, semantic_candidates
-from .structural import ImpactResult, PathResult, expand, find_path, find_tests, impact
+from .structural import PathResult, expand, find_path, find_tests, impact
 
 
 @dataclass
@@ -501,7 +500,10 @@ class QueryService:
         """
         from pathlib import Path
 
-        root = Path.cwd()
+        # Source paths in the index are relative to the indexed workspace, not
+        # the process working directory. This matters for callers that open a
+        # workspace by an explicit path (for example MCP clients).
+        root = self.root or Path.cwd()
         pending = 0
         try:
             records = self.repo.all_files(self.root_id)
