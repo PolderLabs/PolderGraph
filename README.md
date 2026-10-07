@@ -20,20 +20,20 @@ installs the full feature set from the latest GitHub release source archive.
 curl -fsSL \
   -H "Authorization: Bearer $(gh auth token)" \
   -H 'Accept: application/vnd.github.raw+json' \
-  'https://api.github.com/repos/PolderLabs/PolderGraph/contents/scripts/install.sh?ref=v0.1.5' | sh
+  'https://api.github.com/repos/PolderLabs/PolderGraph/contents/scripts/install.sh?ref=v0.1.6' | sh
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
 $headers = @{ Authorization = "Bearer $(gh auth token)"; Accept = 'application/vnd.github.raw+json' }
-Invoke-RestMethod -Headers $headers 'https://api.github.com/repos/PolderLabs/PolderGraph/contents/scripts/install.ps1?ref=v0.1.5' | Invoke-Expression
+Invoke-RestMethod -Headers $headers 'https://api.github.com/repos/PolderLabs/PolderGraph/contents/scripts/install.ps1?ref=v0.1.6' | Invoke-Expression
 ```
 
 Alternatively, install `uv` and Git yourself and run:
 
 ```bash
-uv tool install --force --upgrade "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v0.1.5"
+uv tool install --force --upgrade "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v0.1.6"
 
 # Index the current repository
 poldergraph init
@@ -69,7 +69,7 @@ poldergraph search "session" --explain-score --kind method
 poldergraph explain AuthService
 poldergraph path AuthController UserRepository
 poldergraph related AuthService
-pandergraph impact Session --max-depth 3
+poldergraph impact Session --max-depth 3
 poldergraph context "how does login work?" --json --budget 4000
 
 # Dashboard and MCP

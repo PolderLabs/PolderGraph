@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
 
 from poldergraph.config.models import Config
-from poldergraph.errors import API_VERSION
+from poldergraph.errors import API_VERSION, PolderGraphError
 from poldergraph.workspace import create_index, open_workspace
 
 
@@ -57,8 +56,8 @@ class TestRebuild:
 
     def test_failed_rebuild_preserves_existing_index(self, sample_repo: Path, monkeypatch):
         """If the new index fails checks, the working index must survive."""
-        from poldergraph.storage import integrity
         from poldergraph.rebuild import rebuild_index
+        from poldergraph.storage import integrity
 
         create_index(sample_repo, Config())
         workspace = open_workspace(sample_repo)
@@ -78,7 +77,7 @@ class TestRebuild:
 
         monkeypatch.setattr(integrity, "run_doctor", broken_report)
 
-        with pytest.raises(Exception):
+        with pytest.raises(PolderGraphError):
             rebuild_index(sample_repo, use_backend=False)
 
         assert (sample_repo / ".poldergraph" / "index.sqlite3").read_bytes() == before
@@ -88,7 +87,7 @@ class TestRebuild:
 @pytest.fixture()
 def api_client(sample_repo: Path):
     """A FastAPI test client bound to an indexed repository."""
-    fastapi = pytest.importorskip("fastapi")
+    pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
     from poldergraph.api.server import create_app
@@ -119,6 +118,25 @@ class TestDashboardApi:
         assert payload["data"]["schema_version"] > 0
         assert payload["data"]["languages"]
         assert payload["data"]["roots"][0]["path"]
+
+    def test_status_freshness_uses_workspace_root(self, indexed_workspace, tmp_path: Path, monkeypatch):
+        """An explicit workspace stays fresh when the client runs elsewhere."""
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+
+        service = QueryService(
+            Repository(indexed_workspace.con),
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        assert service.freshness()["fresh"] is True
+
+        caller_dir = tmp_path / "different-cwd"
+        caller_dir.mkdir()
+        monkeypatch.chdir(caller_dir)
+
+        assert service.freshness()["fresh"] is True
 
     def test_global_graph_payload_shape(self, api_client):
         data = api_client.get("/api/graph/global?limit=50").json()["data"]
