@@ -30,7 +30,9 @@ Default bind: `127.0.0.1` only. Open the browser automatically unless `--no-open
 +-----------------------------------------------------------------------+
 ```
 
-The canvas dominates available space.
+The canvas dominates available space. Filters and the inspector stay narrow,
+while the view and result strip uses a compact two-row footer. On narrow screens
+the graph fills the window and filters/inspector open as drawers from the header.
 
 ## Graph technology
 

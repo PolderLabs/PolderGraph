@@ -61,6 +61,7 @@ const LAYOUT_VERSION = 1;
 export class ForceAtlas2Controller {
   private readonly graph: Graph;
   private worker: Worker | null = null;
+  private workerInitialized = false;
   private settings: ForceAtlas2Settings = { ...FA2_DEFAULTS };
   private nodeMatrix: Float32Array | null = null;
   private edgeMatrix: Float32Array | null = null;
@@ -148,6 +149,7 @@ export class ForceAtlas2Controller {
     this.setRunning(false);
     this.worker?.terminate();
     this.worker = null;
+    this.workerInitialized = false;
     this.nodeMatrix = null;
     this.edgeMatrix = null;
     this.index = {};
@@ -183,8 +185,12 @@ export class ForceAtlas2Controller {
       if (message.type === 'tick') {
         this.nodeMatrix = new Float32Array(message.nodes);
         this.iteration = message.iteration;
-        this.flushPositions();
-        if (this.running) this.postStep();
+        // Apply the tick before transferring its buffer back to the worker.
+        // Transferring first detaches the typed array and silently leaves the
+        // graph positions unchanged.
+        this.flushPositions(() => {
+          if (this.running) this.postStep();
+        });
       }
     };
     worker.onerror = () => {
@@ -199,7 +205,7 @@ export class ForceAtlas2Controller {
    * Applies the latest matrix back onto the graph, at most once per frame so a
    * fast worker cannot starve the render loop.
    */
-  private flushPositions(): void {
+  private flushPositions(afterApply?: () => void): void {
     if (this.pendingFrame || !this.nodeMatrix) return;
     this.pendingFrame = true;
     const apply = () => {
@@ -207,6 +213,7 @@ export class ForceAtlas2Controller {
       if (this.destroyed) return;
       this.applyPositions();
       this.onFrame();
+      afterApply?.();
     };
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(apply);
@@ -232,6 +239,19 @@ export class ForceAtlas2Controller {
 
   private postStep(): void {
     if (!this.nodeMatrix || !this.edgeMatrix || !this.worker) return;
+    if (!this.workerInitialized) {
+      this.workerInitialized = true;
+      this.worker.postMessage(
+        {
+          type: 'start',
+          nodes: this.nodeMatrix.buffer,
+          edges: this.edgeMatrix.buffer,
+          settings: this.settings,
+        },
+        [this.nodeMatrix.buffer as ArrayBuffer, this.edgeMatrix.buffer as ArrayBuffer],
+      );
+      return;
+    }
     // Hand the buffers over; they are transferred and re-created each tick.
     this.worker.postMessage(
       { type: 'step', nodes: this.nodeMatrix.buffer },
@@ -328,6 +348,9 @@ export class ForceAtlas2Controller {
 
     this.nodeMatrix = nodes;
     this.edgeMatrix = edges;
+    // A rebuild may change topology, coordinates, pin states, or settings.
+    // Re-send the complete matrices before asking the worker to iterate.
+    this.workerInitialized = false;
     this.index = index;
     this.order = this.graph.nodes();
   }
@@ -338,6 +361,7 @@ export class ForceAtlas2Controller {
     this.rebuildMatrices();
     if (!this.running) return;
     this.ensureWorker();
+    this.workerInitialized = false;
     this.postStep();
   }
 
