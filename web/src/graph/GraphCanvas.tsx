@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Graph from 'graphology';
 import Sigma from 'sigma';
-import { createNodeBorderProgram } from '@sigma/node-border';
+import { layerDashed } from 'sigma/rendering';
+import { numberProp } from 'sigma/primitives';
 import type {
   EdgeDisplayData,
   MouseCoords,
@@ -9,7 +10,6 @@ import type {
   SigmaEventPayload,
   SigmaNodeEventPayload,
 } from 'sigma/types';
-import type { EdgeProgramType } from 'sigma/rendering';
 
 import type { FilterableEdge, FilterableNode } from './filters';
 import {
@@ -20,15 +20,11 @@ import {
   sizeForImportance,
 } from './palette';
 import type { ColorMode, Palette } from './palette';
-import { EdgeDashedProgram } from './dashedEdge';
 import { ForceAtlas2Controller } from './layout';
 import { buildAdjacency, syncGraph, TRANSPARENT } from './sync';
 import type { PgEdgeAttributes, PgNodeAttributes } from './attributes';
 import type { ForceSettingsState } from '../state/preferences';
 import { desaturate } from '../util/color';
-
-/** Program key for the dashed edge program used by semantic evidence. */
-const SEMANTIC_PROGRAM = 'semantic';
 
 /** Sigma instance typed with the attributes this app stores on each item. */
 type PgSigma = Sigma<PgNodeAttributes, PgEdgeAttributes>;
@@ -111,36 +107,64 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       onRunningChange: (running) => propsRef.current.onLayoutRunningChange(running),
     });
 
-    const sigma: PgSigma = new Sigma<PgNodeAttributes, PgEdgeAttributes>(graph, container, {
-      // Resize handling is ours; Sigma would otherwise fight the observer loop.
-      allowInvalidContainer: true,
-      // Edge labels are never drawn globally: at graph scale they are noise.
-      renderEdgeLabels: false,
-      renderLabels: true,
-      labelFont: 'Inter, ui-sans-serif, system-ui, sans-serif',
-      labelSize: 12,
-      labelWeight: '500',
-      labelColor: { attribute: 'labelColor' },
-      labelDensity: 0.08,
-      labelGridCellSize: 110,
-      labelRenderedSizeThreshold: 6,
-      minEdgeThickness: 0.5,
-      autoCenter: false,
-      autoRescale: false,
-      stagePadding: 20,
-      defaultNodeColor: '#7f8ea3',
-      defaultEdgeColor: '#7f8ea3',
-      nodeProgramClasses: { bordered: createNodeBorderProgram() },
-      // Semantic edges get a real dashed program, not just a different colour.
-      edgeProgramClasses: {
-        semantic: EdgeDashedProgram as unknown as EdgeProgramType<
-          PgNodeAttributes,
-          PgEdgeAttributes
-        >,
+    const primitives = {
+      edges: {
+        variables: {
+          dashSize: numberProp(10000, { variable: true }),
+          gapSize: numberProp(0, { variable: true }),
+        },
+        layers: [
+          layerDashed({
+            dashSize: { attribute: 'dashSize', default: 10000, mode: 'pixels' },
+            gapSize: { attribute: 'gapSize', default: 0, mode: 'pixels' },
+          }),
+        ],
       },
-      defaultNodeType: 'bordered',
-      defaultEdgeType: 'line',
-    });
+    } as const;
+    const sigma = new Sigma<
+      PgNodeAttributes,
+      PgEdgeAttributes,
+      {},
+      {},
+      {},
+      {},
+      typeof primitives
+    >(graph, container, {
+      styles: {
+        nodes: {
+          labelColor: { attribute: 'labelColor' },
+          backdropVisibility: 'visible',
+          backdropColor: 'rgba(9, 13, 22, 0.9)',
+          backdropPadding: 3,
+          backdropCornerRadius: 4,
+          backdropBorderColor: { attribute: 'ringColor' },
+          backdropBorderWidth: { attribute: 'ringWidth' },
+          backdropShadowColor: { attribute: 'glowColor' },
+          backdropShadowBlur: { attribute: 'glowBlur' },
+        },
+        edges: {
+          dashSize: { attribute: 'dashSize', defaultValue: 10000 },
+          gapSize: { attribute: 'gapSize', defaultValue: 0 },
+        },
+      } as any,
+      nodeReducer: (node, data, attrs) =>
+        reduceNode(node, { ...data, ...attrs } as NodeDisplayDataWithAttrs, propsRef.current, handleRef.current),
+      edgeReducer: (edge, data, attrs) =>
+        reduceEdge(edge, { ...data, ...attrs } as EdgeDisplayDataWithAttrs, propsRef.current),
+      settings: {
+        // Resize handling is ours; Sigma would otherwise fight the observer loop.
+        allowInvalidContainer: true,
+        // Edge labels are never drawn globally: at graph scale they are noise.
+        renderEdgeLabels: false,
+        renderLabels: true,
+        labelDensity: 0.08,
+        labelGridCellSize: 110,
+        labelRenderedSizeThreshold: 6,
+        minEdgeThickness: 0.5,
+        autoRescale: false,
+        stagePadding: 20,
+      },
+    }) as PgSigma;
 
     handleRef.current = { sigma, graph, controller, adjacency: new Map() };
     setReady(true);
@@ -156,23 +180,6 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       setReady(false);
     };
   }, []);
-
-  /* --------------------------------------------------------------- reducers */
-
-  // Reducers are hot paths: they run for every visible item on every frame.
-  // They are installed once and read live state through `propsRef`/`handle`.
-  useEffect(() => {
-    const handle = handleRef.current;
-    if (!ready || !handle) return;
-
-    handle.sigma.setSetting('nodeReducer', (node, data) =>
-      reduceNode(node, data as NodeDisplayDataWithAttrs, propsRef.current, handle),
-    );
-    handle.sigma.setSetting('edgeReducer', (edge, data) =>
-      reduceEdge(edge, data as EdgeDisplayDataWithAttrs, propsRef.current),
-    );
-    handle.sigma.refresh();
-  }, [ready]);
 
   /* ------------------------------------------------------------ graph payload */
 
@@ -325,7 +332,7 @@ function reduceNode(
   node: string,
   data: NodeDisplayDataWithAttrs,
   props: GraphCanvasProps,
-  handle: CanvasHandle,
+  handle: CanvasHandle | null,
 ): Partial<NodeDisplayDataWithAttrs> {
   const { palette, interaction } = props;
 
@@ -341,7 +348,7 @@ function reduceNode(
   // Selecting or hovering an entity keeps its direct neighbourhood lit, so the
   // structure around it stays readable while the rest of the graph recedes.
   const focusId = interaction.selectedId ?? interaction.hoveredId;
-  const focusNeighbours = focusId === null ? undefined : handle.adjacency.get(focusId);
+  const focusNeighbours = focusId === null ? undefined : handle?.adjacency.get(focusId);
   const nearFocus =
     focusId !== null && (node === focusId || focusNeighbours?.has(node) === true);
 
@@ -362,7 +369,7 @@ function reduceNode(
 
   // The ring is the only place these states are shown, so they never fight the
   // node's own colour for meaning.
-  const borderColor = selected
+  const ringColor = selected
     ? palette.selected
     : changed
       ? palette.changed
@@ -371,19 +378,20 @@ function reduceNode(
         : pinned
           ? palette.accent
           : TRANSPARENT;
-  const borderSize = selected ? 0.42 : changed ? 0.3 : unresolved ? 0.24 : pinned ? 0.2 : 0;
+  const ringWidth = selected ? 1.5 : changed ? 1.1 : unresolved ? 1 : pinned ? 0.8 : 0;
 
   return {
     ...data,
     color,
     size: sizeForImportance(data.pgImportance, data.pgDegree, { min: 2.2, max: 18 }),
     labelColor,
-    borderColor,
-    borderSize,
-    type: 'bordered',
+    ringColor,
+    ringWidth,
+    glowColor: selected ? palette.selected : 'rgba(0,0,0,0)',
+    glowBlur: selected ? 8 : 0,
     zIndex: selected ? 3 : hovered ? 2 : changed ? 1 : 0,
-    forceLabel: selected || hovered,
-    hidden: false,
+    labelVisibility: selected || hovered ? 'visible' : 'auto',
+    visibility: 'visible',
   };
 }
 
@@ -419,12 +427,11 @@ function reduceEdge(
     color,
     size: onPath ? 2.6 : edgeSizeFor(data.provenance, data.edgeType, data.weight),
     label: '',
-    forceLabel: false,
-    // Semantic evidence renders through the dashed program, so it can never be
-    // mistaken for a resolved structural call at a glance.
-    type: data.semantic === 1 ? SEMANTIC_PROGRAM : 'line',
+    // Sigma's dashed primitive makes semantic evidence visually distinct.
+    dashSize: data.semantic === 1 ? 7 : 10000,
+    gapSize: data.semantic === 1 ? 5 : 0,
     zIndex: onPath ? 2 : emphasise ? 1 : 0,
     // Low-value edges stay hidden until focus makes them meaningful.
-    hidden: props.hideLowValueEdges && !emphasise && interaction.selectedId !== null,
+    visibility: props.hideLowValueEdges && !emphasise && interaction.selectedId !== null ? 'hidden' : 'visible',
   };
 }

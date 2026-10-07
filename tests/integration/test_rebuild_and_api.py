@@ -116,6 +116,9 @@ class TestDashboardApi:
         assert payload["api_version"] == API_VERSION
         assert payload["data"]["counts"]["entities"] > 0
         assert set(payload["data"]["communities"]) == {"structural", "hybrid"}
+        assert payload["data"]["schema_version"] > 0
+        assert payload["data"]["languages"]
+        assert payload["data"]["roots"][0]["path"]
 
     def test_global_graph_payload_shape(self, api_client):
         data = api_client.get("/api/graph/global?limit=50").json()["data"]

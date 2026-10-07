@@ -34,7 +34,7 @@ The canvas dominates available space.
 
 ## Graph technology
 
-Use Graphology as client graph representation and Sigma.js as the WebGL renderer. Use a ForceAtlas2 worker for force-directed layout so layout does not block the UI thread.
+Use Graphology as the client graph representation and Sigma 4 alpha as the WebGL renderer. Use Sigma's primitive API for semantic dashed edges and state backdrops. Run ForceAtlas2 in a worker so layout does not block the UI thread.
 
 Do not require server-side layout for ordinary browsing.
 

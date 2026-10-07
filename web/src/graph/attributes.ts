@@ -13,9 +13,11 @@ export interface PgNodeAttributes {
   color: string;
   /** Read by Sigma's label drawing to colour the text per node. */
   labelColor: string;
-  /** Read by the node-border WebGL program. */
-  borderColor: string;
-  borderSize: number;
+  /** Sigma v4 backdrop styling used for state rings and selection glow. */
+  ringColor: string;
+  ringWidth: number;
+  glowColor: string;
+  glowBlur: number;
   pgImportance: number;
   pgDegree: number;
   pgCommunity: string;
@@ -34,6 +36,8 @@ export interface PgEdgeAttributes {
   edgeType: string;
   provenance: string;
   semantic: number;
+  dashSize: number;
+  gapSize: number;
   /** Endpoints, cached so Sigma reducers can test adjacency in O(1). */
   sourceId: string;
   targetId: string;

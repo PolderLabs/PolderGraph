@@ -15,6 +15,7 @@ from ..config.models import Config
 from ..errors import API_VERSION, PolderGraphError, UsageError, envelope
 from ..retrieval.service import QueryService, neighborhood, safe_read
 from ..storage.repository import Repository
+from ..storage.schema import SCHEMA_VERSION
 from ..workspace import Workspace
 
 #: Bundled dashboard assets, produced by the frontend build.
@@ -72,7 +73,17 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
             "status",
             {
                 "root": str(workspace.root),
-                "roots": repo.list_roots(),
+                "roots": [
+                    {**root, "is_primary": bool(root["is_primary"])}
+                    for root in repo.list_roots()
+                ],
+                "schema_version": SCHEMA_VERSION,
+                "languages": sorted(
+                    row[0]
+                    for row in repo.con.execute(
+                        "SELECT DISTINCT language FROM entities WHERE language IS NOT NULL"
+                    ).fetchall()
+                ),
                 "fresh": service.freshness()["fresh"],
                 "counts": counts,
                 "model": config.embedding.model,

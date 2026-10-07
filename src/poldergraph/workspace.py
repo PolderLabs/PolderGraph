@@ -140,7 +140,10 @@ def open_workspace(
             index_dir = index_dir_for(detected)
             if not (index_dir / DB_FILE).is_file():
                 if require_index:
-                    raise IndexMissingError()
+                    raise IndexMissingError(
+                        f"No PolderGraph index found for {detected}.",
+                        details={"path": str(detected)},
+                    )
                 create_index(detected)
             root = index_dir.parent
         else:
