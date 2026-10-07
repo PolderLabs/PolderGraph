@@ -93,6 +93,42 @@ threshold for the application and retain human review for uncertain or
 high-impact decisions. A decision response does not write, update, or delete
 PolderGraph memories by itself.
 
+## Automatic PolderGraph integration
+
+The shared query service and agent memory pipeline use the same API when a
+provider is explicitly enabled in user or project configuration:
+
+```toml
+[decisions]
+provider = "typesafe" # typesafe, openai, laya, or disabled
+confidence_threshold = 0.9
+timeout = 3.0
+```
+
+Use `POLDERGRAPH_DECISIONS__PROVIDER` to select the provider through the
+environment. Hosted credentials remain in `TYPESAFE_API_KEY` or
+`OPENAI_API_KEY`; they are never written to PolderGraph config. With decisions
+enabled:
+
+- Graph search asks typed questions to classify and route only ambiguous
+  natural-language searches. Exact and high-coverage lexical hits keep the
+  fast deterministic path. A confident lexical route skips vector search; a
+  graph route adds bounded structural expansion.
+- Agent context asks about candidate memory relevance in one batched request
+  and removes only weak matches that are confidently irrelevant.
+- Automatic user-preference capture remains bounded by local
+  explicit-statement rules; candidates are evaluated together in one request,
+  and a confident model rejection can veto a candidate but cannot invent or
+  expand saved memories.
+- CLI, MCP, and dashboard search use the shared routing and memory logic.
+
+Uncertain results, missing credentials, timeouts, refusals, and provider errors
+fall back to deterministic retrieval and memory behavior. Decisions are cached
+for five minutes by content hash; raw prompts and memory text are not retained
+in that cache. Hosted providers receive only the short query or candidate
+excerpts needed for each decision. Enabling a hosted provider is an explicit
+data-sharing choice; the default remains fully local.
+
 ## References
 
 - [TypeSafe System One API](https://api.typesafe.ai/docs)

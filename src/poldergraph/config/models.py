@@ -134,6 +134,30 @@ class PrivacyConfig(BaseModel):
     telemetry: bool = False
 
 
+class DecisionsConfig(BaseModel):
+    """Optional typed-decision routing; disabled keeps all inference local."""
+
+    provider: Literal["disabled", "typesafe", "openai", "laya"] = "disabled"
+    model: str | None = None
+    endpoint: str | None = None
+    timeout: float = 3.0
+    confidence_threshold: float = 0.9
+
+    @field_validator("timeout")
+    @classmethod
+    def _check_timeout(cls, value: float) -> float:
+        if not 0.1 <= value <= 120:
+            raise ValueError("timeout must be between 0.1 and 120 seconds")
+        return value
+
+    @field_validator("confidence_threshold")
+    @classmethod
+    def _check_confidence_threshold(cls, value: float) -> float:
+        if not 0.5 < value <= 1:
+            raise ValueError("confidence_threshold must be greater than 0.5 and at most 1")
+        return value
+
+
 class Config(BaseModel):
     version: int = CONFIG_VERSION
     index: IndexConfig = Field(default_factory=IndexConfig)
@@ -143,6 +167,7 @@ class Config(BaseModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
+    decisions: DecisionsConfig = Field(default_factory=DecisionsConfig)
     exclude: list[str] = Field(default_factory=list)
     include: list[str] = Field(default_factory=list)
 
@@ -160,6 +185,7 @@ class Config(BaseModel):
             },
             "ui": self.ui.model_dump(),
             "privacy": self.privacy.model_dump(),
+            "decisions": self.decisions.model_dump(),
             "exclude": self.exclude,
             "include": self.include,
         }

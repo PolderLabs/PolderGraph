@@ -61,6 +61,13 @@ open_browser = true
 allow_model_downloads = true
 allow_remote_embedding = false
 telemetry = false
+
+[decisions]
+provider = "disabled"
+model = ""
+endpoint = ""
+timeout = 3.0
+confidence_threshold = 0.9
 ```
 
 ## Environment variables
@@ -71,6 +78,7 @@ Use the `POLDERGRAPH_` prefix with double underscores for nesting:
 POLDERGRAPH_EMBEDDING__DEVICE=cuda
 POLDERGRAPH_INDEX__DIMENSIONS=512
 POLDERGRAPH_UI__PORT=8080
+POLDERGRAPH_DECISIONS__PROVIDER=typesafe
 ```
 
 ## Configuration sections
@@ -141,3 +149,23 @@ POLDERGRAPH_UI__PORT=8080
 | `allow_model_downloads` | bool | true | Allow downloading the embedding model |
 | `allow_remote_embedding` | bool | false | Allow remote embedding endpoints |
 | `telemetry` | bool | false | Send telemetry (always false by default) |
+
+### `[decisions]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `provider` | string | `disabled` | `disabled`, `typesafe`, `openai`, or `laya`; setting a provider opts into automatic typed decisions |
+| `model` | string | empty | Optional model override |
+| `endpoint` | string | empty | Optional compatible API endpoint override |
+| `timeout` | float | 3.0 | Hosted request timeout in seconds |
+| `confidence_threshold` | float | 0.9 | Minimum probability for model decisions; uncertain answers keep the deterministic result |
+
+Hosted providers read credentials from `TYPESAFE_API_KEY` or `OPENAI_API_KEY`.
+`laya` uses the optional `poldergraph[decision-laya]` extra and runs locally.
+No provider is enabled by default. When enabled, PolderGraph sends only the
+query or candidate memory text needed for a decision; hosted requests can
+contain repository queries and excerpts from private memories. Search routing
+uses typed decisions for ambiguous natural-language queries after exact and
+high-confidence lexical matches. Memory automation drops only confidently
+irrelevant context and confidently unsuitable auto-capture candidates;
+uncertain answers and provider failures keep the existing local behavior.

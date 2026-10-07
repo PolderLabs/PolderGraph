@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..decision_runtime import decide_query_route, provider_enabled
 from ..embedding.protocol import EmbeddingBackend
 from ..errors import UsageError
 from ..graph.metrics import importance_map
@@ -46,6 +47,7 @@ class SearchResponse:
     results: list[RankedResult]
     degraded: list[str] = field(default_factory=list)
     truncated: bool = False
+    routing: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self, *, explain: bool = False) -> dict[str, Any]:
         return {
@@ -73,6 +75,7 @@ class SearchResponse:
             ],
             "degraded": self.degraded,
             "truncated": self.truncated,
+            "routing": self.routing,
         }
 
 
@@ -133,7 +136,7 @@ class QueryService:
     ) -> SearchResponse:
         """Run hybrid retrieval across the independent evidence channels."""
         filters = filters or SearchFilters()
-        intent = detect_intent(query)
+        baseline_intent = detect_intent(query)
         degraded: list[str] = []
 
         candidates: dict[str, Candidate] = {}
@@ -149,22 +152,64 @@ class QueryService:
                 existing.channels |= candidate.channels
 
         # Exact channel has the highest priority and is never scored away.
-        absorb(exact_matches(self.repo, query, root_id=self.root_id))
+        exact = exact_matches(self.repo, query, root_id=self.root_id)
+        absorb(exact)
         # Lexical channel.
-        absorb(
-            lexical_candidates(
-                self.repo,
-                query,
-                limit=self.config.retrieval.lexical_candidates,
-                kinds=filters.kinds or None,
-                languages=filters.languages or None,
-                root_id=self.root_id,
-                path_prefixes=filters.path_prefixes or None,
-            )
+        lexical = lexical_candidates(
+            self.repo,
+            query,
+            limit=self.config.retrieval.lexical_candidates,
+            kinds=filters.kinds or None,
+            languages=filters.languages or None,
+            root_id=self.root_id,
+            path_prefixes=filters.path_prefixes or None,
         )
+        absorb(lexical)
+
+        # Exact identifiers and high-coverage lexical matches use the fast path.
+        # Configured decision models see only ambiguous natural-language queries.
+        strong_lexical = any(candidate.score >= 0.8 for candidate in lexical)
+        route = None
+        decision_eligible = (
+            baseline_intent.value == "semantic"
+            and not exact
+            and not strong_lexical
+            and provider_enabled(self.config)
+        )
+        if decision_eligible:
+            route = decide_query_route(query, baseline_intent.value, self.config)
+        intent_value = (route or {}).get("intent", {}).get("value", baseline_intent.value)
+        retrieval_plan = (route or {}).get("retrieval", {}).get("value")
+        effective_semantic = include_semantic
+        effective_structural = include_structural_context
+        if retrieval_plan == "lexical":
+            effective_semantic = False
+        elif retrieval_plan == "graph":
+            effective_structural = True
+        decision_status = (route or {}).get("status")
+        if decision_status is None:
+            decision_status = "fallback" if decision_eligible else (
+                "fast_path" if provider_enabled(self.config) else "disabled"
+            )
+        route_confidence = {
+            key: answer["confidence"]
+            for key in ("intent", "retrieval")
+            if route and isinstance((answer := route.get(key)), dict) and "confidence" in answer
+        }
+        routing = {
+            "intent": intent_value,
+            "strategy": "graph" if effective_structural else "hybrid" if effective_semantic else "lexical",
+            "decision_plan": retrieval_plan,
+            "source": "decision" if route and ("intent" in route or "retrieval" in route) else "deterministic",
+            "provider": (route or {}).get("provider")
+            or (self.config.decisions.provider if provider_enabled(self.config) else None),
+            "model": (route or {}).get("model"),
+            "decision_status": decision_status,
+            "confidence": route_confidence,
+        }
         # Semantic channel.
         semantic_degraded = None
-        if include_semantic:
+        if effective_semantic:
             semantic, semantic_degraded = semantic_candidates(
                 self.repo,
                 query,
@@ -180,7 +225,7 @@ class QueryService:
         candidate_list = list(candidates.values())
 
         expansion_ids: set[str] = set()
-        if include_structural_context and candidate_list:
+        if effective_structural and candidate_list:
             seeds = [c.entity_id for c in candidate_list[:10]]
             expansion = expand(
                 self.repo,
@@ -208,10 +253,11 @@ class QueryService:
         filtered = self._apply_filters(ranked, filters)
         return SearchResponse(
             query=query,
-            intent=str(intent),
+            intent=str(intent_value),
             results=filtered[:limit],
             degraded=degraded,
             truncated=truncated,
+            routing=routing,
         )
 
     def _apply_filters(self, results: list[RankedResult], filters: SearchFilters) -> list[RankedResult]:

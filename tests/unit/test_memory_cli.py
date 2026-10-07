@@ -21,12 +21,20 @@ class FakeMemoryBackend:
 
 
 def test_memory_cli_crud_is_machine_readable(tmp_path, monkeypatch):
+    from poldergraph import decision_runtime
     from poldergraph.cli import app
 
     monkeypatch.setenv("POLDERGRAPH_MEMORY_DB", str(tmp_path / "memory.sqlite3"))
     monkeypatch.setattr(
         "poldergraph.memory.memory_backend", lambda preferred=None: FakeMemoryBackend()
     )
+    decision_calls = []
+
+    def retain_with_decision(query, results, config):
+        decision_calls.append(query)
+        return results, {"status": "applied", "filtered": 0}
+
+    monkeypatch.setattr(decision_runtime, "decide_memory_relevance", retain_with_decision)
     runner = CliRunner()
 
     saved = runner.invoke(
@@ -52,7 +60,10 @@ def test_memory_cli_crud_is_machine_readable(tmp_path, monkeypatch):
 
     recalled = runner.invoke(app, ["memory", "search", "brief response", "--json"])
     assert recalled.exit_code == 0, recalled.output
-    assert json.loads(recalled.output)["data"]["results"][0]["id"] == memory_id
+    recalled_data = json.loads(recalled.output)["data"]
+    assert recalled_data["results"][0]["id"] == memory_id
+    assert recalled_data["memory_decision"] == {"status": "applied", "filtered": 0}
+    assert decision_calls == ["brief response"]
 
     updated = runner.invoke(
         app, ["memory", "update", memory_id, "--kind", "fact", "--clear-tags", "--json"]

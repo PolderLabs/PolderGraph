@@ -47,6 +47,107 @@ def shared_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Memor
 
 
 class TestMemoryStore:
+    def test_typed_decision_can_veto_only_existing_explicit_auto_capture(
+        self, shared_store: tuple[MemoryStore, Path], monkeypatch: pytest.MonkeyPatch
+    ):
+        from types import SimpleNamespace
+
+        from poldergraph import decision_runtime
+
+        store, _ = shared_store
+        monkeypatch.setattr(
+            decision_runtime,
+            "run_decision",
+            lambda *_: {
+                "provider": "typesafe",
+                "model": "test",
+                "answers": {
+                    "capture_0": {
+                        "choice": "reject",
+                        "probabilities": {"reject": 0.97, "store": 0.03},
+                    }
+                },
+            },
+        )
+        config = SimpleNamespace(
+            provider="typesafe", model=None, endpoint=None, timeout=1.0, confidence_threshold=0.9
+        )
+        captured = capture_explicit_user_preferences(
+            store,
+            "I prefer short responses.",
+            decision_config=SimpleNamespace(decisions=config),
+        )
+        assert captured == []
+        assert store.list() == []
+
+    def test_auto_capture_batches_typed_decisions_for_multiple_candidates(
+        self, shared_store: tuple[MemoryStore, Path], monkeypatch: pytest.MonkeyPatch
+    ):
+        from types import SimpleNamespace
+
+        from poldergraph import decision_runtime
+
+        store, _ = shared_store
+        calls = []
+
+        def fake_decision(state, questions, config):
+            calls.append((state, questions))
+            return {
+                "provider": "typesafe",
+                "answers": {
+                    "capture_0": {
+                        "choice": "store",
+                        "probabilities": {"store": 0.97, "reject": 0.03},
+                    },
+                    "capture_1": {
+                        "choice": "reject",
+                        "probabilities": {"store": 0.02, "reject": 0.98},
+                    },
+                },
+            }
+
+        monkeypatch.setattr(decision_runtime, "run_decision", fake_decision)
+        config = SimpleNamespace(
+            decisions=SimpleNamespace(
+                provider="typesafe", model=None, endpoint=None, timeout=1.0,
+                confidence_threshold=0.9,
+            )
+        )
+        saved = capture_explicit_user_preferences(
+            store,
+            "I prefer short replies.\nI generally use spaces for indentation.",
+            decision_config=config,
+        )
+        assert len(calls) == 1
+        assert len(calls[0][1]) == 2
+        assert [item["content"] for item in saved] == ["I prefer short replies."]
+
+    def test_explicit_memory_secret_is_rejected_before_decision_provider(
+        self, shared_store: tuple[MemoryStore, Path], monkeypatch: pytest.MonkeyPatch
+    ):
+        from types import SimpleNamespace
+
+        from poldergraph import decision_runtime
+
+        store, _ = shared_store
+        monkeypatch.setattr(
+            decision_runtime,
+            "run_decision",
+            lambda *args: (_ for _ in ()).throw(AssertionError("secret must not be sent")),
+        )
+        config = SimpleNamespace(
+            decisions=SimpleNamespace(
+                provider="typesafe", model=None, endpoint=None, timeout=1.0,
+                confidence_threshold=0.9,
+            )
+        )
+        assert capture_explicit_user_preferences(
+            store,
+            "I prefer api key: sk-" + "x" * 30,
+            decision_config=config,
+        ) == []
+        assert store.list() == []
+
     def test_project_and_user_memories_share_one_store_without_cross_project_leaks(
         self, shared_store: tuple[MemoryStore, Path], tmp_path: Path
     ):
@@ -217,3 +318,44 @@ class TestMemoryStore:
         assert data["memory_retrieval"] in {"hybrid", "semantic", "lexical"}
         assert data["token_estimate"] <= 500
         assert data["memories"][0]["scope"] == "project"
+
+    def test_context_uses_typed_decision_only_to_remove_weak_memory_matches(
+        self, shared_store: tuple[MemoryStore, Path], monkeypatch: pytest.MonkeyPatch
+    ):
+        from types import SimpleNamespace
+
+        from poldergraph import decision_runtime
+
+        store, _ = shared_store
+        store.add("Current project authentication details", backend=FakeMemoryBackend())
+        weak = {
+            "id": "weak-match", "scope": "project", "kind": "fact", "content": "Old unrelated note",
+            "tags": [], "score": 0.5, "matched_terms": ["project"], "lexical_score": 0.5,
+            "semantic_score": None, "retrieval": "lexical",
+        }
+        strong = {
+            **weak, "id": "strong-match", "content": "Authentication details",
+            "score": 0.96, "lexical_score": 0.96,
+        }
+        store.search = lambda *args, **kwargs: [weak, strong]  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            decision_runtime,
+            "run_decision",
+            lambda *_: {
+                "provider": "typesafe", "model": "test",
+                "answers": {"relevant_0": {"probability": 0.01}},
+            },
+        )
+        config = SimpleNamespace(
+            decisions=SimpleNamespace(
+                provider="typesafe", model=None, endpoint=None, timeout=1.0,
+                confidence_threshold=0.9,
+            )
+        )
+        data = {"token_estimate": 10, "truncated": False}
+        add_memories_to_context(
+            data, store, "How are settings configured?", 500,
+            backend=FakeMemoryBackend(), decision_config=config,
+        )
+        assert [memory["id"] for memory in data["memories"]] == ["strong-match"]
+        assert data["memory_decision"]["filtered"] == 1

@@ -243,6 +243,7 @@ class TestToolResponses:
         assert isinstance(payload["data"]["tests"], list)
 
     def test_memory_tools_support_search_save_and_forget(self, server, monkeypatch):
+        from poldergraph import decision_runtime
         from poldergraph.memory import MemoryStore
 
         class FakeBackend:
@@ -260,6 +261,13 @@ class TestToolResponses:
         monkeypatch.setattr(
             "poldergraph.memory.memory_backend", lambda preferred=None: FakeBackend()
         )
+        decision_calls = []
+
+        def retain_with_decision(query, results, config):
+            decision_calls.append((query, config.provider))
+            return results, {"status": "applied", "filtered": 0}
+
+        monkeypatch.setattr(decision_runtime, "decide_memory_relevance", retain_with_decision)
         added = _call(
             server,
             "pg_memory_add",
@@ -278,6 +286,8 @@ class TestToolResponses:
         self._assert_envelope(recalled, "pg_memory_search")
         assert recalled["data"]["results"][0]["id"] == memory_id
         assert recalled["data"]["results"][0]["retrieval"] == "semantic"
+        assert recalled["data"]["memory_decision"] == {"status": "applied", "filtered": 0}
+        assert decision_calls[0][0] == "credential checks"
 
         status = _call(server, "pg_memory_status", {})
         self._assert_envelope(status, "pg_memory_status")

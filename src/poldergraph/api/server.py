@@ -296,13 +296,18 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
         try:
             store = MemoryStore(workspace.root)
             backend_for_memory = memory_backend() if semantic else None
+            results = store.search(q, scope=scope, limit=limit, backend=backend_for_memory)
+            from ..decision_runtime import decide_memory_relevance
+
+            results, decision_info = decide_memory_relevance(
+                q, results, workspace.config.decisions
+            )
+            data = {"query": q, "scope": scope, "results": results}
+            if decision_info is not None:
+                data["memory_decision"] = decision_info
             return ok(
                 "memory.search",
-                {
-                    "query": q,
-                    "scope": scope,
-                    "results": store.search(q, scope=scope, limit=limit, backend=backend_for_memory),
-                },
+                data,
             )
         except PolderGraphError as exc:
             return fail("memory.search", exc)
