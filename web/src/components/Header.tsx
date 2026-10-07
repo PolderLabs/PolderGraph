@@ -23,7 +23,8 @@ export const Header = forwardRef<HTMLInputElement, HeaderProps>(function Header(
   const { status, statusError, eventsStatus, theme, palette } = props;
 
   const roots = status?.roots ?? [];
-  const workspace = roots.length > 0 ? roots.join(', ') : 'workspace';
+  const rootPaths = roots.map((root) => root.path);
+  const workspace = rootPaths.length > 0 ? rootPaths.join(', ') : 'workspace';
 
   return (
     <header className="header" style={{ color: palette.text }}>
@@ -32,7 +33,7 @@ export const Header = forwardRef<HTMLInputElement, HeaderProps>(function Header(
         <span className="header__title">PolderGraph</span>
       </div>
 
-      <div className="header__workspace" title={roots.join('\n')}>
+      <div className="header__workspace" title={rootPaths.join('\n')}>
         <span className="header__workspaceLabel">workspace</span>
         <span className="header__workspaceName">{workspace}</span>
       </div>

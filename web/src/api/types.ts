@@ -136,7 +136,12 @@ export interface GraphPayload {
 }
 
 export interface StatusData {
-  roots: string[];
+  roots: Array<{
+    root_id: string;
+    path: string;
+    name: string;
+    is_primary: boolean;
+  }>;
   fresh: boolean;
   counts: Record<string, number>;
   model: string;

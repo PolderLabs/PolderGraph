@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@sigma/node-border':
-        specifier: ^3.0.0
-        version: 3.0.0(sigma@3.0.3(graphology-types@0.24.8))
       graphology:
         specifier: ^0.25.4
         version: 0.25.4(graphology-types@0.24.8)
@@ -30,8 +27,8 @@ importers:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
       sigma:
-        specifier: ^3.0.0
-        version: 3.0.3(graphology-types@0.24.8)
+        specifier: 4.0.0-alpha.7
+        version: 4.0.0-alpha.7(graphology-types@0.24.8)
     devDependencies:
       '@eslint/js':
         specifier: ^9.17.0
@@ -532,11 +529,6 @@ packages:
     resolution: {integrity: sha512-nl+CTWIgOGszQmUz/kanfgrfFZ4qiwxKIfT/ryl3N3Ewk5tqizmYtNXiqb7Bu/fDtNgu1kyxdFiAUJNur3iysg==}
     cpu: [x64]
     os: [win32]
-
-  '@sigma/node-border@3.0.0':
-    resolution: {integrity: sha512-mE3zUfjvJVuAMhSjiP/zdlkqe0OVTETxd04XHUwof01YqdzTk0OB4ACJIhWrwgsBXl7tTd9lPuKoroafLh8MtQ==}
-    peerDependencies:
-      sigma: '>=3.0.0-beta.17'
 
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
@@ -1071,8 +1063,8 @@ packages:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
 
-  sigma@3.0.3:
-    resolution: {integrity: sha512-5H0zFlx6/NTQpqBg4Rm569ZOpnBOXMaS25UQThIWMU3XyzI5AhmorK/gnl87BvJBLhQd0tW4C0LIp3enWzMoNw==}
+  sigma@4.0.0-alpha.7:
+    resolution: {integrity: sha512-Lodw/vVcXIyBIuW0t+cZJBchsOhif/9FoplGiqSp7nhHO7hUGNeNQS7Ad3nBmRveaVOr6ccAurIiYfIFKI7fWg==}
 
   source-map-js@1.2.2:
     resolution: {integrity: sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==}
@@ -1532,10 +1524,6 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.64.0':
     optional: true
-
-  '@sigma/node-border@3.0.0(sigma@3.0.3(graphology-types@0.24.8))':
-    dependencies:
-      sigma: 3.0.3(graphology-types@0.24.8)
 
   '@types/babel__core@7.20.5':
     dependencies:
@@ -2117,7 +2105,7 @@ snapshots:
 
   shebang-regex@3.0.0: {}
 
-  sigma@3.0.3(graphology-types@0.24.8):
+  sigma@4.0.0-alpha.7(graphology-types@0.24.8):
     dependencies:
       events: 3.3.0
       graphology-utils: 2.5.2(graphology-types@0.24.8)

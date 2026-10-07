@@ -1,9 +1,9 @@
 :root {
   color-scheme: dark;
-  --pg-bg: #0e1117;
-  --pg-surface: #151a23;
-  --pg-surface-2: #1b2230;
-  --pg-border: #263041;
+  --pg-bg: #0b0f17;
+  --pg-surface: #111722;
+  --pg-surface-2: #182131;
+  --pg-border: #263449;
   --pg-text: #e6edf5;
   --pg-muted: #8b98a9;
   --pg-accent: #6ea8fe;
@@ -11,7 +11,7 @@
   --pg-changed: #4ade80;
   --pg-unresolved: #ff6b6b;
   --pg-path: #f472b6;
-  --pg-radius: 8px;
+  --pg-radius: 10px;
   --pg-font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --pg-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
@@ -74,7 +74,8 @@ button {
   gap: 14px;
   padding: 0 12px;
   border-bottom: 1px solid var(--pg-border);
-  background: var(--pg-surface);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--pg-surface) 96%, white), var(--pg-surface));
+  box-shadow: 0 1px 0 rgb(255 255 255 / 2%);
 }
 
 .header__brand {
@@ -86,10 +87,11 @@ button {
 }
 
 .header__logo {
-  width: 14px;
-  height: 14px;
-  border-radius: 4px;
-  background: linear-gradient(135deg, #6ea8fe, #a78bfa 60%, #4ade80);
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #70b8ff, #9885ff 58%, #56ddb4);
+  box-shadow: 0 0 16px rgb(110 168 254 / 28%);
 }
 
 .header__workspace {
@@ -232,6 +234,7 @@ button {
   min-width: 0;
   min-height: 0;
   background: var(--pg-bg);
+  isolation: isolate;
 }
 
 /* The canvas must own the space: it is the dominant surface. */
@@ -239,6 +242,9 @@ button {
   position: absolute;
   inset: 0;
   background: var(--pg-canvas-bg, var(--pg-bg));
+  background-image: radial-gradient(circle, rgb(133 158 192 / 15%) 1px, transparent 1.3px),
+    radial-gradient(ellipse at 50% 42%, rgb(75 103 157 / 12%), transparent 68%);
+  background-size: 24px 24px, 100% 100%;
 }
 
 .graph-canvas canvas {
@@ -258,13 +264,17 @@ button {
   padding: 5px 10px;
   font-size: 12px;
   border: 1px solid var(--pg-border);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--pg-surface) 88%, transparent);
-  backdrop-filter: blur(6px);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--pg-surface) 84%, transparent);
+  box-shadow: 0 5px 18px rgb(0 0 0 / 18%);
+  backdrop-filter: blur(12px);
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
 }
 
 .canvasControls button:hover {
   border-color: var(--pg-accent);
+  background: color-mix(in srgb, var(--pg-surface-2) 88%, transparent);
+  transform: translateY(-1px);
 }
 
 .canvasBadge {
@@ -276,7 +286,9 @@ button {
   font-size: 12px;
   border-radius: 999px;
   border: 1px solid var(--pg-border);
-  background: color-mix(in srgb, var(--pg-surface) 90%, transparent);
+  background: color-mix(in srgb, var(--pg-surface) 82%, transparent);
+  box-shadow: 0 5px 18px rgb(0 0 0 / 16%);
+  backdrop-filter: blur(12px);
   z-index: 3;
 }
 
@@ -502,8 +514,9 @@ input[type='range'] {
   font-size: 11px;
   border: 1px solid var(--pg-border);
   border-radius: var(--pg-radius);
-  background: color-mix(in srgb, var(--pg-surface) 90%, transparent);
-  backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--pg-surface) 84%, transparent);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 20%);
+  backdrop-filter: blur(12px);
 }
 
 .legend__group + .legend__group {

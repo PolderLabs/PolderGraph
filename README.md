@@ -193,7 +193,7 @@ configuration is available through `/poldergraph config`. See
 
 ## Dashboard
 
-The interactive graph dashboard uses Sigma.js (WebGL), Graphology, and ForceAtlas2 in a web worker. Run `poldergraph ui` to open it at `http://127.0.0.1:7432`.
+The interactive graph dashboard uses Sigma 4 alpha (WebGL), Graphology, and ForceAtlas2 in a web worker. Run `poldergraph ui` to open it at `http://127.0.0.1:7432`.
 
 Features:
 - Global graph with community aggregation

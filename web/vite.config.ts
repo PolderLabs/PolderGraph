@@ -38,7 +38,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          sigma: ['sigma', '@sigma/node-border'],
+          sigma: ['sigma'],
           graphology: [
             'graphology',
             'graphology-types',
