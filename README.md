@@ -17,19 +17,19 @@ dashboard assets.
 ### Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PolderLabs/PolderGraph/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/PolderLabs/PolderGraph/v0.1.3/scripts/install.sh | sh
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/PolderLabs/PolderGraph/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/PolderLabs/PolderGraph/v0.1.3/scripts/install.ps1 | iex
 ```
 
 Alternatively, install `uv` and Git yourself and run:
 
 ```bash
-uv tool install --force --upgrade "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v0.1.2"
+uv tool install --force --upgrade "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v0.1.3"
 
 # Index the current repository
 poldergraph init
