@@ -102,6 +102,20 @@ class TestConfigPrecedence:
         assert loaded.config.index.dimensions == original.index.dimensions
         assert loaded.config.retrieval.weights == original.retrieval.weights
         assert loaded.config.ui.port == original.ui.port
+        assert loaded.config.decisions.provider == "disabled"
+        assert loaded.config.decisions.confidence_threshold == 0.9
+
+    def test_typed_decision_config_uses_nested_environment_overrides(self):
+        loaded = load_config(
+            environ={
+                "POLDERGRAPH_DECISIONS__PROVIDER": "typesafe",
+                "POLDERGRAPH_DECISIONS__CONFIDENCE_THRESHOLD": "0.96",
+            },
+            user_path=Path("/path/that/does/not/exist"),
+        )
+        assert loaded.config.decisions.provider == "typesafe"
+        assert loaded.config.decisions.confidence_threshold == 0.96
+        assert loaded.origin_of("decisions.provider") == "env"
 
     def test_env_var_nesting(self):
         assert env_overrides({"POLDERGRAPH_EMBEDDING__DEVICE": "cuda"}) == {

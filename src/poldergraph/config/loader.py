@@ -197,7 +197,9 @@ def write_config(config: Config, index_dir: Path) -> Path:
     path = index_dir / "config.toml"
     data = config.to_toml_dict()
     lines: list[str] = [f"version = {_toml_value(data['version'])}"]
-    for section in ("index", "embedding", "semantic_edges", "graph", "retrieval", "ui", "privacy"):
+    for section in (
+        "index", "embedding", "semantic_edges", "graph", "retrieval", "ui", "privacy", "decisions"
+    ):
         _toml_table(section, data[section], lines)
     if data.get("exclude"):
         lines.append("")

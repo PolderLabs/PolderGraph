@@ -318,13 +318,17 @@ def memory_backend(preferred: EmbeddingBackend | None = None) -> EmbeddingBacken
 
 
 def capture_explicit_user_preferences(
-    store: MemoryStore, prompt: str, *, backend: EmbeddingBackend | None = None
+    store: MemoryStore,
+    prompt: str,
+    *,
+    backend: EmbeddingBackend | None = None,
+    decision_config: Any = None,
 ) -> list[dict[str, Any]]:
     """Save only explicit, first-person durable preferences from a task prompt.
 
-    This intentionally avoids LLM-based extraction. It runs locally and only
-    captures statements whose subject is the user and whose wording signals a
-    preference or durable need; task-specific instructions are skipped.
+    Deterministic parsing admits only explicit durable statements. An explicitly
+    configured typed-decision provider may reject an ambiguous candidate; it
+    cannot expand capture beyond these local rules.
     """
     prompt = re.sub(r"```.*?```|~~~.*?~~~", "", prompt, flags=re.DOTALL)
     candidates: dict[str, str] = {}
@@ -339,7 +343,21 @@ def capture_explicit_user_preferences(
                 continue
             candidates.setdefault(_normalize_content(statement), statement)
     saved = []
+    from .decision_runtime import rejected_memory_candidates
+
+    valid_candidates = []
     for statement in candidates.values():
+        try:
+            _checked_content(statement)
+        except UsageError as exc:
+            if exc.code == "MEMORY_SECRET_REJECTED":
+                continue
+            raise
+        valid_candidates.append(statement)
+    rejected = rejected_memory_candidates(valid_candidates, decision_config)
+    for index, statement in enumerate(valid_candidates):
+        if index in rejected:
+            continue
         try:
             prior = next(
                 (
@@ -956,6 +974,7 @@ def add_memories_to_context(
     budget: int,
     *,
     backend: EmbeddingBackend | None = None,
+    decision_config: Any = None,
 ) -> dict[str, Any]:
     """Attach matching shared/project memories while respecting the context budget."""
     from .retrieval.context import estimate_tokens
@@ -971,6 +990,11 @@ def add_memories_to_context(
         except Exception:
             active_backend = None
     matches = store.search(query, limit=12, backend=active_backend)
+    from .decision_runtime import decide_memory_relevance
+
+    matches, decision_info = decide_memory_relevance(query, matches, decision_config)
+    if decision_info is not None:
+        data["memory_decision"] = decision_info
     data["memory_retrieval"] = (
         matches[0]["retrieval"] if matches else ("lexical" if available else "none")
     )

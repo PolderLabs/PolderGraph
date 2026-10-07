@@ -47,6 +47,7 @@ class ContextResult:
     communities: list[dict[str, Any]] = field(default_factory=list)
     unresolved: list[dict[str, Any]] = field(default_factory=list)
     retrieval: dict[str, bool] = field(default_factory=dict)
+    routing: dict[str, Any] = field(default_factory=dict)
     token_estimate: int = 0
     truncated: bool = False
 
@@ -62,6 +63,7 @@ class ContextResult:
             "communities": self.communities,
             "unresolved": self.unresolved,
             "retrieval": self.retrieval,
+            "routing": self.routing,
             "token_estimate": self.token_estimate,
             "truncated": self.truncated,
         }
@@ -112,6 +114,7 @@ def pack_context(
             "lexical": any(r.features.get("lexical") for r in response.results),
             "structural": True,
         },
+        routing=dict(getattr(response, "routing", {})),
     )
 
     seen_spans: set[tuple[str | None, int | None, int | None]] = set()

@@ -209,9 +209,13 @@ def build_server(root: Path | None = None) -> Any:
 
             memory_store = MemoryStore(service.root)
             captured = capture_explicit_user_preferences(
-                memory_store, query, backend=service.backend
+                memory_store, query, backend=service.backend,
+                decision_config=service.config.decisions,
             )
-            add_memories_to_context(result, memory_store, query, budget, backend=service.backend)
+            add_memories_to_context(
+                result, memory_store, query, budget, backend=service.backend,
+                decision_config=service.config.decisions,
+            )
             result["memories_learned"] = len(captured)
             return _envelope("pg_context") | {"data": result}
 
@@ -346,14 +350,22 @@ def build_server(root: Path | None = None) -> Any:
                 limit=_clamp(limit, 10),
                 backend=memory_backend(service.backend),
             )
+            from ..decision_runtime import decide_memory_relevance
+
+            results, decision_info = decide_memory_relevance(
+                query, results, service.config.decisions
+            )
+            data = {
+                "query": query,
+                "scope": scope,
+                "results": results,
+                "store": str(store.database),
+            }
+            if decision_info is not None:
+                data["memory_decision"] = decision_info
             return envelope(
                 command="pg_memory_search",
-                data={
-                    "query": query,
-                    "scope": scope,
-                    "results": results,
-                    "store": str(store.database),
-                },
+                data=data,
             )
 
         return _guard("pg_memory_search", run)

@@ -742,8 +742,13 @@ def context(
         from .memory import MemoryStore, add_memories_to_context, capture_explicit_user_preferences
 
         memory_store = MemoryStore(service.root)
-        captured = capture_explicit_user_preferences(memory_store, query, backend=service.backend)
-        add_memories_to_context(data, memory_store, query, budget, backend=service.backend)
+        captured = capture_explicit_user_preferences(
+            memory_store, query, backend=service.backend, decision_config=service.config.decisions
+        )
+        add_memories_to_context(
+            data, memory_store, query, budget, backend=service.backend,
+            decision_config=service.config.decisions,
+        )
         data["memories_learned"] = len(captured)
         payload = envelope(command=command, index=freshness_payload(service), data=data)
         if json_output:
@@ -862,13 +867,22 @@ def memory_search(
     store = MemoryStore(root)
 
     def run():
+        from .config.loader import load_config
+        from .workspace import find_index_dir
+
         results = store.search(
             query,
             scope=scope,
             limit=limit,
             backend=None if lexical_only else _memory_backend_or_none(),
         )
+        from .decision_runtime import decide_memory_relevance
+
+        decision_config = load_config(find_index_dir(store.root)).config.decisions
+        results, decision_info = decide_memory_relevance(query, results, decision_config)
         data = {"query": query, "scope": scope, "results": results, "store": str(store.database)}
+        if decision_info is not None:
+            data["memory_decision"] = decision_info
         lines = [
             f"{item['id']}  [{item['scope']} · {item['kind']} · {item['retrieval']} · {item['score']:.2f}]\n"
             f"  {item['content']}"

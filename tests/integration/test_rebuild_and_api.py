@@ -85,12 +85,14 @@ class TestRebuild:
 
 
 @pytest.fixture()
-def api_client(sample_repo: Path):
+def api_client(sample_repo: Path, tmp_path: Path, monkeypatch):
     """A FastAPI test client bound to an indexed repository."""
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
     from poldergraph.api.server import create_app
+
+    monkeypatch.setenv("POLDERGRAPH_MEMORY_DB", str(tmp_path / "shared-memory.sqlite3"))
 
     create_index(sample_repo, Config())
     workspace = open_workspace(sample_repo)
@@ -180,6 +182,80 @@ class TestDashboardApi:
         ids = {node["id"] for node in graph["nodes"]}
         assert all(edge["source"] in ids and edge["target"] in ids for edge in graph["edges"])
 
+    def test_configured_typed_decision_routes_ambiguous_graph_search(
+        self, api_client, monkeypatch
+    ):
+        from poldergraph.retrieval import service as retrieval_service
+
+        monkeypatch.setattr(retrieval_service, "provider_enabled", lambda config: True)
+        monkeypatch.setattr(retrieval_service, "exact_matches", lambda *args, **kwargs: [])
+        monkeypatch.setattr(retrieval_service, "lexical_candidates", lambda *args, **kwargs: [])
+        monkeypatch.setattr(
+            retrieval_service,
+            "decide_query_route",
+            lambda *args: {
+                "status": "applied",
+                "provider": "typesafe",
+                "model": "test-model",
+                "intent": {"value": "architecture", "confidence": 0.97},
+                "retrieval": {"value": "lexical", "confidence": 0.94},
+            },
+        )
+        monkeypatch.setattr(
+            retrieval_service,
+            "semantic_candidates",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("lexical route must skip vectors")),
+        )
+        data = api_client.get("/api/search?q=explain+the+overall+organization").json()["data"]
+        assert data["intent"] == "architecture"
+        assert data["routing"] == {
+            "intent": "architecture",
+            "strategy": "lexical",
+            "decision_plan": "lexical",
+            "source": "decision",
+            "provider": "typesafe",
+            "model": "test-model",
+            "decision_status": "applied",
+            "confidence": {"intent": 0.97, "retrieval": 0.94},
+        }
+
+        from types import SimpleNamespace
+
+        from poldergraph.retrieval.lexical import Candidate
+
+        expansions = []
+        monkeypatch.setattr(
+            retrieval_service,
+            "decide_query_route",
+            lambda *args: {
+                "status": "applied",
+                "provider": "typesafe",
+                "model": "test-model",
+                "intent": {"value": "how_reaches", "confidence": 0.97},
+                "retrieval": {"value": "graph", "confidence": 0.94},
+            },
+        )
+        monkeypatch.setattr(
+            retrieval_service,
+            "lexical_candidates",
+            lambda *args, **kwargs: [Candidate("seed", features={"score": 0.5})],
+        )
+        monkeypatch.setattr(
+            retrieval_service,
+            "expand",
+            lambda _repo, seeds, **kwargs: (
+                expansions.append((seeds, kwargs))
+                or SimpleNamespace(entity_ids=[], truncated=False)
+            ),
+        )
+        monkeypatch.setattr(retrieval_service, "fuse", lambda *args, **kwargs: [])
+        graph_data = api_client.get(
+            "/api/search?q=trace+the+service+flow&include_semantic=false"
+        ).json()["data"]
+        assert graph_data["routing"]["strategy"] == "graph"
+        assert graph_data["intent"] == "how_reaches"
+        assert expansions and expansions[0][0] == ["seed"]
+
     def test_memory_api_crud_is_project_scoped(self, api_client):
         created = api_client.post(
             "/api/memory", json={"content": "Use the repository's shared API client", "scope": "project", "kind": "workflow", "tags": ["dashboard"]}
@@ -194,6 +270,85 @@ class TestDashboardApi:
         assert forgotten["ok"] is True
         after = api_client.get("/api/memory?scope=project").json()["data"]["results"]
         assert all(item["id"] != memory_id for item in after)
+
+    def test_memory_search_api_applies_shared_typed_relevance_gate(self, api_client, monkeypatch):
+        from poldergraph import decision_runtime
+
+        added = api_client.post(
+            "/api/memory", json={"content": "The repository uses a stable project API", "scope": "project"}
+        ).json()["data"]
+        assert added["id"]
+        monkeypatch.setattr(
+            decision_runtime,
+            "decide_memory_relevance",
+            lambda query, results, config: ([], {"status": "applied", "filtered": 1}),
+        )
+        result = api_client.get("/api/memory/search?q=project+api&semantic=false").json()["data"]
+        assert result["results"] == []
+        assert result["memory_decision"] == {"status": "applied", "filtered": 1}
+
+    def test_query_service_calls_typed_decisions_and_uses_selected_route(
+        self, indexed_workspace, monkeypatch
+    ):
+        from poldergraph import decisions
+        from poldergraph.retrieval import service as retrieval_service
+        from poldergraph.retrieval.lexical import Candidate
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+
+        workspace = indexed_workspace
+        workspace.config.decisions.provider = "typesafe"
+        repo = Repository(workspace.con)
+        service = QueryService(repo, workspace.config, root_id=workspace.root_id(), workspace=workspace)
+        monkeypatch.setattr(retrieval_service, "exact_matches", lambda *args, **kwargs: [])
+        monkeypatch.setattr(retrieval_service, "lexical_candidates", lambda *args, **kwargs: [])
+        semantic_calls = []
+        monkeypatch.setattr(
+            retrieval_service,
+            "semantic_candidates",
+            lambda *args, **kwargs: semantic_calls.append(args[1]) or ([], None),
+        )
+        request = {}
+        provider_calls = []
+
+        def fake_post(url, token, payload, timeout):
+            provider_calls.append(1)
+            request.update(url=url, token=token, payload=payload, timeout=timeout)
+            return {
+                "model": "jev-test",
+                "answers": {
+                    "intent": {
+                        "choice": "architecture",
+                        "probabilities": {"architecture": 0.97, "semantic": 0.03},
+                    },
+                    "retrieval": {
+                        "choice": "lexical",
+                        "probabilities": {"lexical": 0.96, "hybrid": 0.04},
+                    },
+                },
+                "usage": {},
+            }
+
+        monkeypatch.setattr(decisions, "_post_json", fake_post)
+        monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+        response = service.search("what happens with requests across layers")
+        assert request["url"] == "https://api.typesafe.ai/v1/systemone"
+        assert request["payload"]["questions"]["retrieval"]["type"] == "choice"
+        assert response.routing["source"] == "decision"
+        assert response.routing["strategy"] == "lexical"
+        assert response.intent == "architecture"
+        assert semantic_calls == []
+        assert provider_calls == [1]
+
+        monkeypatch.setattr(
+            retrieval_service,
+            "lexical_candidates",
+            lambda *args, **kwargs: [Candidate("strong-hit", features={"score": 0.91})],
+        )
+        fast_response = service.search("what happens with requests across layers")
+        assert fast_response.routing["decision_status"] == "fast_path"
+        assert fast_response.routing["provider"] == "typesafe"
+        assert provider_calls == [1]
 
     def test_entity_relations_use_entity_key(self, api_client):
         graph = api_client.get("/api/graph/global?limit=100").json()["data"]
