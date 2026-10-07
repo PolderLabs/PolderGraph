@@ -70,6 +70,7 @@ poldergraph context "how does login work?" --json --budget 4000
 # Dashboard and MCP
 poldergraph ui                            # Interactive graph dashboard
 poldergraph mcp                           # MCP server for coding agents
+poldergraph setup                         # Interactive agent integration setup
 poldergraph setup-agent                   # Generate AGENTS.md + MCP config
 
 # Diagnostics
@@ -158,7 +159,7 @@ Install PolderGraph, initialize the repository, then enable Codex integration:
 ```bash
 uv tool install "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git"
 poldergraph init
-poldergraph setup-agent --agent codex
+poldergraph setup --agent codex
 ```
 
 This adds a repository skill under `.agents/skills/poldergraph/`, PolderGraph
@@ -166,7 +167,8 @@ guidance in `AGENTS.md`, and a project-scoped MCP server in
 `.codex/config.toml`. Trust the repository in Codex and restart or reload the
 Codex session so the skill and MCP tools become available. Initialize or update
 the index with `poldergraph init` when needed. See [docs/agents.md](docs/agents.md)
-for details.
+for details. Run `poldergraph setup` without options to interactively choose
+integrations for agents detected on your machine.
 
 ## Oh My Pi extension
 

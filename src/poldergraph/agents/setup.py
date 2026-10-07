@@ -168,7 +168,7 @@ def write_codex_mcp_config(root: Path) -> tuple[bool, str]:
     block = (
         f"{CODEX_MCP_START}\n[mcp_servers.poldergraph]\n"
         f"command = {json.dumps(executable)}\n"
-        f"args = {json.dumps(['mcp', str(root)])}\n{CODEX_MCP_END}"
+        f"args = {json.dumps(['mcp'])}\n{CODEX_MCP_END}"
     )
     if CODEX_MCP_START in existing and CODEX_MCP_END in existing:
         start = existing.index(CODEX_MCP_START)
@@ -194,6 +194,39 @@ def detect_agents(root: Path) -> list[AgentAdapter]:
         if adapter.path(root).exists():
             found.append(adapter)
     return found
+
+
+def detect_installed_agents(root: Path) -> list[str]:
+    """Detect coding agents available to this user or configured in the project."""
+    home = Path.home()
+    signals: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+        "claude": (("claude",), (".claude", "CLAUDE.md")),
+        "cursor": (("cursor",), (".cursor",)),
+        "copilot": (("copilot",), (".github/copilot-instructions.md",)),
+        "codex": (("codex",), (".codex", ".agents/skills")),
+        "gemini": (("gemini",), (".gemini",)),
+        "opencode": (("opencode",), (".opencode", "opencode.json")),
+        "omp": (("omp",), (".omp",)),
+    }
+    user_paths: dict[str, tuple[str, ...]] = {
+        "claude": (".claude",),
+        "cursor": (".cursor",),
+        "copilot": (".config/github-copilot", ".copilot"),
+        "codex": (".codex", ".agents/skills"),
+        "gemini": (".gemini",),
+        "opencode": (".opencode", ".config/opencode"),
+        "omp": (".omp",),
+    }
+    detected: list[str] = []
+    for adapter in AGENT_ADAPTERS:
+        commands, project_markers = signals[adapter.name]
+        if (
+            any(shutil.which(command) for command in commands)
+            or any((root / marker).exists() for marker in project_markers)
+            or any((home / marker).exists() for marker in user_paths[adapter.name])
+        ):
+            detected.append(adapter.name)
+    return detected
 
 
 def mcp_config_snippet(root: Path) -> str:
@@ -233,7 +266,7 @@ def setup_agent_guidance(
         skipped.append("AGENTS.md (already current)")
 
     selected: list[AgentAdapter]
-    if targets:
+    if targets is not None:
         selected = [a for a in AGENT_ADAPTERS if a.name in targets and a.relative_path != "AGENTS.md"]
     elif all_agents:
         selected = [a for a in AGENT_ADAPTERS if a.relative_path != "AGENTS.md"]

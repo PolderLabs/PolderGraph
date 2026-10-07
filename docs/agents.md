@@ -147,7 +147,14 @@ If `AGENTS.md` exists, preserve all user content and replace only the fenced Pol
 
 ## Agent-specific integration
 
-`poldergraph setup-agent --all` may detect and update instruction mechanisms for:
+Run `poldergraph setup` to detect agents available on the machine or already
+configured in the repository. Detected agents are preselected; choose a
+comma-separated list of agent names, `all`, or `none` at the prompt. Use
+`poldergraph setup --agent codex --agent omp` or `poldergraph setup --all` for
+non-interactive setup. Supported integrations are Claude Code, Cursor, GitHub
+Copilot, Codex, Gemini CLI, OpenCode, and OMP.
+
+`poldergraph setup-agent --all` configures every supported instruction mechanism:
 - Claude Code
 - Codex
 - Cursor
@@ -162,13 +169,13 @@ plugin adds task context automatically and exposes focused graph tools; the
 generated OMP skill remains a lightweight fallback when the extension is not
 installed.
 
-For Codex, run `poldergraph setup-agent --agent codex` in the repository. This
+For Codex, run `poldergraph setup --agent codex` in the repository. This
 installs a Codex skill in `.agents/skills/poldergraph/SKILL.md` and adds a
 repository-scoped `poldergraph` MCP server to `.codex/config.toml` without
 replacing other Codex settings. Codex project MCP servers require a trusted
-repository; restart/reload Codex after setup. The MCP server runs
-`poldergraph mcp <repository-root>` and queries the same local index as the
-CLI. Initialize the index once with `poldergraph init` if it does not exist.
+repository; restart/reload Codex after setup. The server runs `poldergraph mcp`
+from Codex's current workspace and queries the same local index as the CLI.
+Initialize the index once with `poldergraph init` if it does not exist.
 
 These adapters contain minimal guidance that points back to the canonical CLI/MCP contract. Avoid duplicating pages of instructions in each integration.
 
