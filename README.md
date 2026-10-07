@@ -8,9 +8,27 @@ No Docker, cloud database, remote embedding API, account, API key, or chat LLM i
 
 ## Quick start
 
+Requirements: Python 3.11 or newer and about 2 GB of free disk space for the
+EmbeddingGemma 2 model downloaded on first indexing. The installers below set up
+`uv` if needed and install PolderGraph with its full feature set directly from
+GitHub (a PyPI release is not available yet).
+
+### Linux
+
 ```bash
-# Install
-uv tool install poldergraph
+curl -fsSL https://raw.githubusercontent.com/PolderLabs/PolderGraph/main/scripts/install.sh | sh
+```
+
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/PolderLabs/PolderGraph/main/scripts/install.ps1 | iex
+```
+
+Alternatively, install `uv` yourself and run:
+
+```bash
+uv tool install --from "git+https://github.com/PolderLabs/PolderGraph.git" "poldergraph[all]"
 
 # Index the current repository
 poldergraph init
