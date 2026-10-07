@@ -57,6 +57,9 @@ api = [
   "fastapi>=0.115",
   "uvicorn>=0.32",
 ]
+decision-laya = [
+  "laya>=0.4",
+]
 all = [
   "poldergraph[semantic,vectors,communities,api]",
 ]
