@@ -1,0 +1,63 @@
+name: Attach release distributions
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and attach distributions for
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Select release tag
+        id: release
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="$EVENT_TAG"
+          if [ -z "$tag" ]; then tag="$INPUT_TAG"; fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a stable semantic version tag; got: $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+
+      - name: Build and verify release files
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          package_version="$(uv run --no-sync python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [ "$package_version" != "$RELEASE_VERSION" ]; then
+            echo "Tag version $RELEASE_VERSION does not match package version $package_version" >&2
+            exit 1
+          fi
+          uv build
+          test -s "dist/poldergraph-$RELEASE_VERSION.tar.gz"
+          compgen -G "dist/poldergraph-$RELEASE_VERSION-*.whl" >/dev/null
+
+      - name: Attach wheel and source distribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          wheel=(dist/poldergraph-"$RELEASE_VERSION"-*.whl)
+          gh release upload "$RELEASE_TAG" "${wheel[@]}" "dist/poldergraph-$RELEASE_VERSION.tar.gz"
