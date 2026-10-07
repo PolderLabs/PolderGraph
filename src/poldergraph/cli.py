@@ -119,7 +119,7 @@ def init(
         if workspace.config.embedding.backend != "none":
             try:
                 backend = create_backend(
-                    workspace.config, cache_dir=workspace.index_dir / "cache" / "model"
+                    workspace.config, cache_dir=None
                 )
                 # Force model acquisition now so the first query is fast.
                 backend.model_info()
@@ -263,7 +263,7 @@ def update(
         if workspace.config.embedding.backend != "none":
             try:
                 indexer.backend = create_backend(
-                    workspace.config, cache_dir=workspace.index_dir / "cache" / "model", offline=offline
+                    workspace.config, cache_dir=None, offline=offline
                 )
             except PolderGraphError as exc:
                 indexer.backend = None

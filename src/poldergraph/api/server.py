@@ -322,7 +322,7 @@ def _build_backend(workspace: Workspace) -> Any:
     if workspace.config.embedding.backend == "none":
         return None
     try:
-        return create_backend(workspace.config, cache_dir=workspace.index_dir / "cache" / "model")
+        return create_backend(workspace.config, cache_dir=None)
     except PolderGraphError:
         return None
 

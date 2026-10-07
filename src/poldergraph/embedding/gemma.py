@@ -11,6 +11,19 @@ import os
 from pathlib import Path
 from typing import Any
 
+# Set HF_HUB_OFFLINE before any huggingface_hub import when the model is
+# already cached. This avoids a 60-second Hub API round-trip on every CLI
+# invocation. The check runs once at module import time.
+try:
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    _default_model_id = "google/embeddinggemma-2"
+    _model_cache = Path(HF_HUB_CACHE) / f"models--{_default_model_id.replace('/', '--')}"
+    if _model_cache.is_dir() and any(_model_cache.iterdir()):
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+except Exception:
+    pass
+
 from ..errors import BackendUnavailableError
 from .protocol import (
     DOCUMENT_TASK,
@@ -50,6 +63,9 @@ class NativeGemmaBackend(EmbeddingBackend):
         self.dimensions = dimensions
         self.requested_revision = revision
         self.offline = offline
+        # Only set cache_dir when explicitly requested; the default HuggingFace
+        # cache (~/.cache/huggingface/hub/) is shared across workspaces and
+        # avoids re-downloading the model for each new index.
         self.cache_dir = cache_dir
         self.max_tokens = max_tokens
         self._model: Any = None
@@ -63,9 +79,9 @@ class NativeGemmaBackend(EmbeddingBackend):
         if self._model is not None:
             return self._model
         if self.offline:
-            # Forbid any network access for model acquisition.
             os.environ.setdefault("HF_HUB_OFFLINE", "1")
             os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
