@@ -8,7 +8,11 @@ import pytest
 
 from poldergraph.embedding.protocol import ModelInfo
 from poldergraph.errors import UsageError
-from poldergraph.memory import MemoryStore, add_memories_to_context
+from poldergraph.memory import (
+    MemoryStore,
+    add_memories_to_context,
+    capture_explicit_user_preferences,
+)
 
 
 class FakeMemoryBackend:
@@ -81,6 +85,7 @@ class TestMemoryStore:
         semantic = store.search("credential authorization", backend=backend)
         assert semantic[0]["id"] == first["id"]
         assert semantic[0]["retrieval"] == "semantic"
+        assert store.search("credential authorization", backend=backend) == semantic
 
         updated = store.update(
             first["id"], content="Use brief validation messages", kind="decision", backend=backend
@@ -102,7 +107,7 @@ class TestMemoryStore:
             "Keep explanations concise", scope="user", kind="preference", backend=backend
         )
 
-        hybrid = store.search("bearer credentials", backend=backend)
+        hybrid = store.search("bearer credentials routes api", backend=backend)
         assert hybrid[0]["id"] == project["id"]
         assert hybrid[0]["retrieval"] == "hybrid"
         assert store.search("brief answers", scope="project", backend=backend) == []
@@ -133,6 +138,66 @@ class TestMemoryStore:
         with pytest.raises(UsageError, match="scope"):
             store.list(scope="everything")
 
+    def test_search_abstains_on_stopwords_and_incidental_single_term_matches(
+        self, shared_store: tuple[MemoryStore, Path]
+    ):
+        store, _ = shared_store
+        store.add("The central SQLite database stores local vector embeddings.")
+        assert store.search("does this run") == []
+        assert store.search("PostgreSQL sharding replicas") == []
+        assert store.search("what is") == []
+
+    def test_exact_token_matching_does_not_match_substrings(
+        self, shared_store: tuple[MemoryStore, Path]
+    ):
+        store, _ = shared_store
+        store.add("This system indexes Python source files.")
+        assert store.search("is") == []
+        assert store.search("source index")
+
+    def test_context_capture_learns_only_explicit_durable_user_preferences(
+        self, shared_store: tuple[MemoryStore, Path]
+    ):
+        store, _ = shared_store
+        backend = FakeMemoryBackend()
+        learned = capture_explicit_user_preferences(
+            store,
+            "I prefer concise explanations with clear examples.\n"
+            "I need a new route for this task.\n"
+            "```text\nI prefer saving passwords in notes.\n```",
+            backend=backend,
+        )
+        assert len(learned) == 1
+        assert learned[0]["scope"] == "user"
+        assert learned[0]["kind"] == "preference"
+        assert learned[0]["vectorized"] is True
+        assert "I prefer concise explanations" in learned[0]["content"]
+        assert len(store.list(scope="user")) == 1
+
+    def test_context_capture_does_not_store_secret_like_preferences(
+        self, shared_store: tuple[MemoryStore, Path]
+    ):
+        store, _ = shared_store
+        learned = capture_explicit_user_preferences(
+            store, "I prefer password=do-not-store-this in config files."
+        )
+        assert learned == []
+        assert store.list(scope="user") == []
+
+    def test_new_explicit_preference_replaces_a_directly_contradictory_preference(
+        self, shared_store: tuple[MemoryStore, Path]
+    ):
+        store, _ = shared_store
+        backend = FakeMemoryBackend()
+        first = capture_explicit_user_preferences(
+            store, "I prefer concise answers.", backend=backend
+        )[0]
+        correction = capture_explicit_user_preferences(
+            store, "I prefer detailed answers.", backend=backend
+        )[0]
+        assert correction["id"] == first["id"]
+        assert store.list(scope="user")[0]["content"] == "I prefer detailed answers."
+
     def test_context_includes_relevant_memories_within_the_budget(
         self, shared_store: tuple[MemoryStore, Path]
     ):
@@ -149,6 +214,6 @@ class TestMemoryStore:
         )
 
         assert data["memories"]
-        assert data["memory_retrieval"] in {"hybrid", "semantic"}
+        assert data["memory_retrieval"] in {"hybrid", "semantic", "lexical"}
         assert data["token_estimate"] <= 500
         assert data["memories"][0]["scope"] == "project"

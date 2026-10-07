@@ -201,11 +201,18 @@ def build_server(root: Path | None = None) -> Any:
             filters = SearchFilters(kinds=kinds or [], languages=languages or [])
             budget = max(500, min(int(token_budget), MAX_BUDGET_TOKENS))
             result = service.context(query, token_budget=budget, filters=filters).to_dict()
-            from ..memory import MemoryStore, add_memories_to_context
-
-            add_memories_to_context(
-                result, MemoryStore(service.root), query, budget, backend=service.backend
+            from ..memory import (
+                MemoryStore,
+                add_memories_to_context,
+                capture_explicit_user_preferences,
             )
+
+            memory_store = MemoryStore(service.root)
+            captured = capture_explicit_user_preferences(
+                memory_store, query, backend=service.backend
+            )
+            add_memories_to_context(result, memory_store, query, budget, backend=service.backend)
+            result["memories_learned"] = len(captured)
             return _envelope("pg_context") | {"data": result}
 
         return _guard("pg_context", run)

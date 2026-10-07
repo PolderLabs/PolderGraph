@@ -5,7 +5,7 @@
 Primary:
 
 ```bash
-uv tool install --force --upgrade "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v0.1.6"
+uv tool install --force --upgrade "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v0.1.7"
 ```
 
 Each GitHub release includes the compiled dashboard (`web/dist`) in its source

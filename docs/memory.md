@@ -45,24 +45,32 @@ role and task queries use the query role. Vector tables include model revision
 and dimensions in their identity, so memories work across projects even when
 they use different embedding backends. Retrieval uses sqlite-vec when available
 and a bounded in-process brute-force fallback otherwise. Results combine
-semantic neighbors with FTS5 keyword matches, apply project-scope priority, and
-are capped before they enter agent context. If the embedding model is
+semantic neighbors with FTS5 keyword matches, prefer project-scoped notes when
+scores tie, and cap results before they enter agent context. If the embedding model is
 unavailable, keyword search remains available and reports that it degraded.
+Lexical matching removes common stop words, uses token boundaries and a small
+set of common inflections, and requires meaningful term coverage. Semantic-only
+matches must clear a conservative similarity threshold. High-coverage exact
+keyword matches skip embedding inference, which improves latency and avoids
+weak embedding neighbors crowding out precise evidence.
 
 ## Automatic agent flow
 
 OMP and Codex receive matching user/project memories automatically in
 `poldergraph context` / `pg_context` before repository work. Context packing
-counts memory text against the same token budget and marks truncation. Agents
-also receive memory tools for direct search and maintenance. Generated
-instructions tell agents to save stable user preferences and non-obvious
-project decisions when they become clear, without interrupting the user. Agents
-must not write speculative facts or one-time task data.
+counts memory text against the same token budget and marks truncation. An
+explicit first-person statement such as “I prefer concise answers” is captured
+as a user preference during context construction. This local deterministic
+extractor does not send prompts elsewhere and ignores task-specific statements
+such as “for this task.” Agents also receive memory tools for direct search and
+maintenance. Generated instructions tell agents to save stable user preferences
+and non-obvious project decisions when they become clear, without interrupting
+the user. Agents must not write speculative facts or one-time task data.
 
-The agent-controlled write decision is intentional: project decisions and user
-taste are inferred from conversation and work, so a coding agent should save
-only durable, clearly supported information. Automatic *recall* does not depend
-on the agent remembering to search first.
+Project decisions are not inferred from arbitrary task prose; the coding agent
+must save them when it establishes durable, evidence-backed knowledge.
+Automatic recall and explicit first-person preference capture do not depend on
+the agent remembering to search or write first.
 
 ## CLI
 

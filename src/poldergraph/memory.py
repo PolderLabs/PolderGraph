@@ -38,30 +38,128 @@ VECTOR_BATCH_SIZE = 32
 MEMORY_MIN_VECTOR_SIMILARITY = 0.28
 _backend_lock = threading.RLock()
 _STOP_WORDS = {
+    "a",
     "about",
     "after",
+    "again",
+    "against",
+    "all",
     "also",
+    "am",
+    "an",
     "and",
+    "any",
     "are",
+    "as",
+    "at",
+    "be",
+    "because",
+    "been",
+    "before",
+    "being",
+    "between",
+    "both",
+    "but",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "doing",
+    "down",
+    "during",
+    "each",
+    "few",
     "for",
     "from",
+    "further",
+    "had",
+    "has",
+    "have",
+    "having",
+    "he",
+    "her",
+    "here",
+    "hers",
+    "him",
+    "his",
     "how",
+    "i",
+    "if",
+    "in",
     "into",
+    "is",
+    "it",
     "its",
+    "itself",
+    "just",
+    "me",
+    "more",
+    "most",
+    "my",
+    "myself",
+    "no",
+    "nor",
+    "not",
+    "of",
+    "off",
+    "on",
+    "once",
+    "only",
+    "or",
+    "other",
+    "our",
+    "ours",
+    "ourselves",
+    "out",
+    "over",
+    "own",
+    "same",
+    "she",
+    "should",
+    "so",
+    "some",
+    "such",
+    "than",
     "that",
     "the",
     "their",
+    "theirs",
+    "them",
+    "themselves",
     "then",
     "there",
+    "these",
+    "they",
     "this",
+    "those",
+    "through",
+    "to",
+    "too",
+    "under",
+    "until",
+    "up",
+    "very",
+    "was",
+    "we",
+    "were",
     "what",
     "when",
     "where",
     "which",
+    "while",
+    "who",
+    "whom",
+    "why",
+    "will",
     "with",
     "would",
-    "your",
     "you",
+    "your",
+    "yours",
+    "yourself",
+    "yourselves",
     "task",
     "project",
     "code",
@@ -72,7 +170,34 @@ _SECRET_PATTERNS = (
     re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{24,}\b"),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    re.compile(r"(?i)\b(?:password|passwd|api[_ -]?key|access[_ -]?token|secret)\s*[:=]\s*\S+"),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{16,}"),
 )
+_USER_PREFERENCE_PATTERNS = (
+    re.compile(
+        r"(?im)^[ \t]*(?:remember that\s+)?(?P<statement>I\s+(?:always|usually|generally|typically|prefer|like|dislike|don't like|do not like)\b[^\n.!?]{1,400}[.!?]?)"
+    ),
+)
+_SEARCH_SYNONYMS = {
+    "response": {"output", "reply", "result", "envelope"},
+    "responses": {"output", "reply", "result", "envelope"},
+    "formatted": {"format", "envelope"},
+    "format": {"formatted", "envelope"},
+    "upload": {"send"},
+    "uploads": {"send"},
+    "checks": {"test", "tests", "validation"},
+    "check": {"test", "tests", "validation"},
+    "integration": {"test", "tests"},
+    "unit": {"test", "tests"},
+    "suite": {"test", "tests"},
+}
+_PREFERENCE_CONTRADICTIONS = {
+    frozenset(("brief", "verbose")),
+    frozenset(("concise", "detailed")),
+    frozenset(("concise", "verbose")),
+    frozenset(("short", "long")),
+    frozenset(("formal", "casual")),
+}
 
 
 def default_memory_path() -> Path:
@@ -98,6 +223,47 @@ def _project_key(root: Path) -> str:
 
 def _normalize_content(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+def _term_variants(term: str) -> set[str]:
+    """Return a tiny deterministic stem set for common inflections."""
+    variants = {term}
+    if len(term) > 5 and term.endswith("ies"):
+        variants.add(term[:-3] + "y")
+    elif len(term) > 5 and term.endswith(("ches", "shes", "sses", "xes", "zes")):
+        variants.add(term[:-2])
+    elif len(term) > 4 and term.endswith("s"):
+        variants.add(term[:-1])
+    if len(term) > 5 and term.endswith("ing"):
+        stem = term[:-3]
+        variants.add(stem[:-1] if len(stem) > 2 and stem[-1] == stem[-2] else stem)
+    elif len(term) > 4 and term.endswith("ed"):
+        stem = term[:-2]
+        variants.add(stem[:-1] if len(stem) > 2 and stem[-1] == stem[-2] else stem)
+    return variants
+
+
+def _matches_term(term: str, tokens: set[str]) -> bool:
+    return any(
+        variant == token
+        or (len(variant) >= 5 and token.startswith(variant))
+        or (len(token) >= 5 and variant.startswith(token))
+        for variant in _term_variants(term) | _SEARCH_SYNONYMS.get(term, set())
+        for token in tokens
+    )
+
+
+def _preference_conflicts(existing: str, incoming: str) -> bool:
+    old_tokens = set(re.findall(r"[\w'-]+", existing.casefold()))
+    new_tokens = set(re.findall(r"[\w'-]+", incoming.casefold()))
+    if not (old_tokens & new_tokens):
+        return False
+    return any(
+        len(pair & old_tokens) == 1
+        and len(pair & new_tokens) == 1
+        and (pair & old_tokens) != (pair & new_tokens)
+        for pair in _PREFERENCE_CONTRADICTIONS
+    )
 
 
 def _checked_scope(scope: str) -> str:
@@ -149,6 +315,66 @@ def memory_backend(preferred: EmbeddingBackend | None = None) -> EmbeddingBacken
     if preferred is not None:
         return preferred
     return _default_memory_backend()
+
+
+def capture_explicit_user_preferences(
+    store: MemoryStore, prompt: str, *, backend: EmbeddingBackend | None = None
+) -> list[dict[str, Any]]:
+    """Save only explicit, first-person durable preferences from a task prompt.
+
+    This intentionally avoids LLM-based extraction. It runs locally and only
+    captures statements whose subject is the user and whose wording signals a
+    preference or durable need; task-specific instructions are skipped.
+    """
+    prompt = re.sub(r"```.*?```|~~~.*?~~~", "", prompt, flags=re.DOTALL)
+    candidates: dict[str, str] = {}
+    for pattern in _USER_PREFERENCE_PATTERNS:
+        for match in pattern.finditer(prompt):
+            statement = " ".join(match.group("statement").split())
+            lowered = statement.casefold()
+            if any(
+                phrase in lowered
+                for phrase in ("for this task", "this time", "for now", "in this change")
+            ):
+                continue
+            candidates.setdefault(_normalize_content(statement), statement)
+    saved = []
+    for statement in candidates.values():
+        try:
+            prior = next(
+                (
+                    item
+                    for item in store.list(scope="user", limit=MAX_RESULTS)
+                    if item["kind"] == "preference"
+                    and _preference_conflicts(item["content"], statement)
+                ),
+                None,
+            )
+            if prior is not None:
+                saved.append(
+                    store.update(
+                        prior["id"],
+                        content=statement,
+                        tags=list(dict.fromkeys([*prior["tags"], "explicit-user-statement"])),
+                        backend=backend,
+                    )
+                )
+                continue
+            saved.append(
+                store.add(
+                    statement,
+                    scope="user",
+                    kind="preference",
+                    tags=["explicit-user-statement"],
+                    backend=backend,
+                )
+            )
+        except UsageError as exc:
+            # A credential-like line is never persisted; other validation
+            # failures should not break the agent's context retrieval.
+            if exc.code != "MEMORY_SECRET_REJECTED":
+                raise
+    return saved
 
 
 class MemoryStore:
@@ -251,6 +477,7 @@ class MemoryStore:
         content_hash = hashlib.sha256(_normalize_content(content).encode("utf-8")).hexdigest()
         now = int(time.time())
         con = self._connect()
+        needs_index = False
         try:
             row = con.execute(
                 "SELECT * FROM memories WHERE scope = ? AND project_key = ? AND content_hash = ?",
@@ -258,6 +485,7 @@ class MemoryStore:
             ).fetchone()
             created = row is None
             if row is None:
+                needs_index = True
                 memory_id = f"mem_{uuid.uuid4().hex[:20]}"
                 con.execute(
                     "INSERT INTO memories(id,scope,project_key,project_root,kind,content,content_hash,tags_json,created_at,updated_at) "
@@ -277,23 +505,32 @@ class MemoryStore:
                 )
             else:
                 memory_id = row["id"]
+                needs_index = row["kind"] != kind or json.loads(row["tags_json"]) != tags
+                if needs_index:
+                    con.execute(
+                        "UPDATE memories SET kind=?, tags_json=?, updated_at=? WHERE id=?",
+                        (kind, json.dumps(tags), now, memory_id),
+                    )
+            if needs_index:
+                con.execute("DELETE FROM memory_fts WHERE id = ?", (memory_id,))
                 con.execute(
-                    "UPDATE memories SET kind=?, tags_json=?, updated_at=? WHERE id=?",
-                    (kind, json.dumps(tags), now, memory_id),
+                    "INSERT INTO memory_fts(id, searchable) VALUES(?, ?)",
+                    (memory_id, self._searchable(content, kind, tags)),
                 )
-            con.execute("DELETE FROM memory_fts WHERE id = ?", (memory_id,))
-            con.execute(
-                "INSERT INTO memory_fts(id, searchable) VALUES(?, ?)",
-                (memory_id, self._searchable(content, kind, tags)),
-            )
             con.commit()
             row = con.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
             result = self._decode(row)
             result["created"] = created
         finally:
             con.close()
-        vector_count, vector_warning = self._index_memories([memory_id], backend)
-        result["vectorized"] = vector_count > 0
+        already_vectorized = False
+        if not needs_index and backend is not None:
+            already_vectorized = self._has_vector(memory_id, backend)
+            needs_index = not already_vectorized
+        vector_count, vector_warning = (
+            self._index_memories([memory_id], backend) if needs_index else (0, None)
+        )
+        result["vectorized"] = vector_count > 0 or already_vectorized
         if vector_warning:
             result["vector_warning"] = vector_warning
         result["store"] = str(self.database)
@@ -332,14 +569,13 @@ class MemoryStore:
         con = self._connect()
         try:
             if not terms:
-                rows = con.execute(
-                    f"SELECT * FROM memories WHERE {where} ORDER BY updated_at DESC, id LIMIT ?",
-                    (*params, limit),
-                ).fetchall()
-                return [self._decode(row) | {"score": 0.0, "matched_terms": []} for row in rows]
+                return []
 
+            expanded_terms = set().union(
+                *(_term_variants(term) | _SEARCH_SYNONYMS.get(term, set()) for term in terms[:20])
+            )
             match = " OR ".join(
-                f'"{term.replace(chr(34), chr(34) * 2)}"' for term in dict.fromkeys(terms[:20])
+                f'"{term.replace(chr(34), chr(34) * 2)}"' for term in sorted(expanded_terms)
             )
             lexical_rows = con.execute(
                 f"SELECT m.* FROM memory_fts JOIN memories m ON m.id = memory_fts.id "
@@ -348,24 +584,32 @@ class MemoryStore:
             ).fetchall()
             lexical_scores: dict[str, tuple[float, list[str]]] = {}
             phrase = " ".join(terms)
+            query_terms = set(terms)
             for row in lexical_rows:
                 tags = json.loads(row["tags_json"])
-                content = row["content"].casefold()
-                tag_text = " ".join(tags).casefold()
-                matched = [
-                    term
-                    for term in set(terms)
-                    if term in content or term in tag_text or term in row["kind"].casefold()
-                ]
+                content = set(re.findall(r"[\w'-]+", row["content"].casefold()))
+                tag_tokens = set(re.findall(r"[\w'-]+", " ".join(tags).casefold()))
+                metadata_tokens = tag_tokens | set(row["kind"].casefold().split())
+                all_tokens = content | metadata_tokens
+                matched = sorted(term for term in query_terms if _matches_term(term, all_tokens))
                 if not matched:
                     continue
-                weighted = sum(1.6 if term in tag_text else 1.0 for term in matched)
-                score = weighted / max(1, len(set(terms)))
-                if phrase in content:
-                    score += 0.35
+                weighted = sum(1.25 if term in metadata_tokens else 1.0 for term in matched)
+                score = weighted / max(1, len(query_terms))
+                normalized_content = " ".join(re.findall(r"[\w'-]+", row["content"].casefold()))
+                if phrase and phrase in normalized_content:
+                    score += 0.2
                 lexical_scores[row["id"]] = (score, matched)
 
-            vector_scores, vector_warning = self._vector_search(con, query, where, params, backend)
+            # Exact, high-coverage FTS matches are already sufficiently precise;
+            # avoid loading or invoking a heavyweight embedding model for them.
+            precise_lexical_match = any(score >= 0.8 for score, _matched in lexical_scores.values())
+            if precise_lexical_match:
+                vector_scores, vector_warning = {}, None
+            else:
+                vector_scores, vector_warning = self._vector_search(
+                    con, query, where, params, backend
+                )
             ids = set(lexical_scores) | set(vector_scores)
             if not ids:
                 return []
@@ -374,7 +618,6 @@ class MemoryStore:
                 f"SELECT * FROM memories WHERE id IN ({placeholders})", tuple(ids)
             ).fetchall()
             lookup = {row["id"]: row for row in result_rows}
-            max_lexical = max((value[0] for value in lexical_scores.values()), default=1.0) or 1.0
             ranked: list[dict[str, Any]] = []
             for memory_id in ids:
                 row = lookup.get(memory_id)
@@ -382,16 +625,19 @@ class MemoryStore:
                     continue
                 lexical_score, matched = lexical_scores.get(memory_id, (0.0, []))
                 semantic_score = vector_scores.get(memory_id)
-                lexical_normalized = min(1.0, lexical_score / max_lexical)
+                lexical_normalized = min(1.0, lexical_score)
                 if semantic_score is None:
                     score = lexical_normalized
                     strategy = "lexical"
                 else:
-                    semantic_normalized = max(0.0, min(1.0, (semantic_score + 1.0) / 2.0))
+                    semantic_normalized = max(0.0, min(1.0, (semantic_score - 0.35) / 0.5))
                     score = 0.45 * lexical_normalized + 0.55 * semantic_normalized
                     strategy = "hybrid" if lexical_score else "semantic"
-                if row["scope"] == "project":
-                    score += 0.04
+                # A single incidental word or a weak embedding neighbor must not
+                # enter automatic agent context. Strong lexical coverage survives
+                # at any vector score; semantic-only matches need high similarity.
+                if lexical_normalized < 0.4 and (semantic_score is None or semantic_score < 0.75):
+                    continue
                 item = self._decode(row, score=min(score, 1.0), matched_terms=matched)
                 item["lexical_score"] = round(lexical_normalized, 4)
                 item["semantic_score"] = (
@@ -401,7 +647,17 @@ class MemoryStore:
                 if vector_warning:
                     item["vector_warning"] = vector_warning
                 ranked.append(item)
-            ranked.sort(key=lambda item: (item["score"], item["updated_at"]), reverse=True)
+            ranked.sort(
+                key=lambda item: (
+                    item["score"],
+                    item["lexical_score"],
+                    item["semantic_score"] if item["semantic_score"] is not None else -1.0,
+                    item["scope"] == "project",
+                    item["updated_at"],
+                    item["content"].casefold(),
+                ),
+                reverse=True,
+            )
             return ranked[:limit]
         finally:
             con.close()
@@ -504,6 +760,31 @@ class MemoryStore:
         return create_vector_store(
             con, dimensions=info.dimensions, model_id=f"{model_id}_r{revision}", task_type="memory"
         )
+
+    def _has_vector(self, memory_id: str, backend: EmbeddingBackend) -> bool:
+        if not backend.capabilities():
+            return False
+        con = self._connect()
+        try:
+            with _backend_lock:
+                info = backend.model_info()
+            store = self._vector_store(con, info)
+            store.ensure_table()
+            if hasattr(store, "shadow_table"):
+                return bool(
+                    con.execute(
+                        f'SELECT 1 FROM "{store.shadow_table}" WHERE entity_id=? AND dimensions=? LIMIT 1',
+                        (memory_id, info.dimensions),
+                    ).fetchone()
+                )
+            return bool(
+                con.execute(
+                    f'SELECT 1 FROM "{store.table}" WHERE entity_id=? AND dimensions=? AND model_id=? LIMIT 1',
+                    (memory_id, info.dimensions, store.model_id),
+                ).fetchone()
+            )
+        finally:
+            con.close()
 
     def _delete_vector(self, con: sqlite3.Connection, memory_id: str) -> None:
         from .storage.sqlite import load_vec_extension

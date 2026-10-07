@@ -192,7 +192,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 					...event.systemPrompt,
 					"PolderGraph repository context (local index; use as navigation evidence, then inspect the cited source files. Semantic similarity is not proof of a dependency):\n" +
 						JSON.stringify(context.data),
-					"PolderGraph memory is shared locally across projects. Relevant user preferences and project notes are already included above. When the user shares a lasting preference or you establish durable project knowledge, save it with poldergraph_remember without interrupting the user. Never store credentials or one-off task details.",
+					"PolderGraph memory is shared locally across projects. Relevant user preferences and project notes are already included above. Explicit first-person user preferences are captured automatically. When you establish durable project knowledge, save it with poldergraph_remember without interrupting the user. If a user corrects a preference, update or forget the older note. Never store credentials or one-off task details.",
 				],
 			};
 		} catch (error) {

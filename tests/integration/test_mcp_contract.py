@@ -205,6 +205,20 @@ class TestToolResponses:
         assert data["token_estimate"] <= 2000
         assert "memories" in data
 
+        learned = _call(
+            server,
+            "pg_context",
+            {
+                "query": "I prefer concise answers with a concrete example.",
+                "token_budget": 2000,
+            },
+        )
+        assert learned["data"]["memories_learned"] == 1
+        assert any(
+            item["scope"] == "user" and "I prefer concise answers" in item["content"]
+            for item in learned["data"]["memories"]
+        )
+
     def test_pg_entity(self, server):
         payload = _call(server, "pg_entity", {"entity": "AuthService"})
         self._assert_envelope(payload, "pg_entity")
@@ -275,7 +289,7 @@ class TestToolResponses:
 
         forgotten = _call(server, "pg_memory_forget", {"memory_id": memory_id})
         self._assert_envelope(forgotten, "pg_memory_forget")
-        assert MemoryStore(server.poldergraph_session.service().root).list() == []
+        assert MemoryStore(server.poldergraph_session.service().root).list(scope="project") == []
 
     def test_pg_update_is_idempotent(self, server):
         first = _call(server, "pg_update", {})

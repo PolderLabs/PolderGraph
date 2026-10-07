@@ -180,7 +180,7 @@ PolderGraph keeps one private memory database for your user account and separate
 - **User memories** carry across every project, such as writing preferences and recurring workflow choices.
 - **Project memories** stay available only when an agent is working in that repository, such as architecture decisions and local conventions.
 
-OMP and Codex retrieve relevant memories automatically when they build task context. Agents can save lasting preferences and useful project knowledge as they work; no separate memory service or repository file is needed. Memory search combines local EmbeddingGemma vectors with keyword matching, and the same bounded results are available through the CLI and MCP.
+OMP and Codex retrieve relevant memories automatically when they build task context. Explicit first-person preferences such as “I prefer concise explanations” are learned automatically from that context request; durable project decisions are saved by the agent when established. No separate memory service or repository file is needed. Memory search combines local EmbeddingGemma vectors with keyword matching, rejects weak matches, and avoids model inference when exact keyword evidence is already strong. The same bounded results are available through the CLI and MCP.
 
 ```bash
 # Save a preference for all projects
@@ -198,6 +198,18 @@ poldergraph memory forget mem_...
 ```
 
 The database lives under your OS user-data directory (`%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS, or `$XDG_DATA_HOME`/`~/.local/share` on Linux). Set `POLDERGRAPH_MEMORY_DB` to move it. Project source and memories stay local; memory records are never written into Git. Do not save passwords, API keys, private keys, or one-off task details. See [the memory guide](docs/memory.md) for retrieval, controls, and privacy details.
+
+### Memory retrieval benchmark
+
+We benchmarked local retrieval against a standard coding-agent baseline with no persistent memory. On a fixed synthetic set of 20 coding-memory questions and 8 unrelated abstention questions, EmbeddingGemma 2 on CPU achieved **100% Hit@5**, **0.910 MRR**, and **100% abstention** on unrelated questions. The no-memory baseline achieved **0% Hit@5** because it had no cross-session evidence. PolderGraph returned an average of **40 estimated memory tokens per positive query**; warm lookup averaged **190 ms** (p95 **251 ms**) after the model was loaded. First-query model initialization took **23.6 s** on this CPU environment.
+
+This measures retrieval only, not end-to-end coding-task completion or developer productivity. The benchmark and dataset are reproducible with:
+
+```bash
+uv run --extra semantic --extra vectors python scripts/benchmark_memory.py --device auto
+```
+
+The test follows the separation of accurate retrieval and abstention emphasized by [LongMemEval](https://arxiv.org/abs/2410.10813) and [MemoryAgentBench](https://arxiv.org/abs/2507.05257). These results are local to the recorded dataset, model, and CPU; rerun on the target machine before comparing performance.
 
 ## Codex setup
 
