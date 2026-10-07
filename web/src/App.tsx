@@ -57,6 +57,7 @@ export default function App(): JSX.Element {
   const [preferences, setPreferences] = useState<ViewPreferencesState>(() => loadPreferences());
   const [editorCommand, setEditorCommand] = useState('code --goto {file}:{line}');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState<'filters' | 'inspector' | null>(null);
 
   useEffect(() => {
     savePreferences(preferences);
@@ -102,6 +103,7 @@ export default function App(): JSX.Element {
   const [layoutRunning, setLayoutRunning] = useState(true);
   const [forceOpen, setForceOpen] = useState(false);
   const [fitToken, setFitToken] = useState(0);
+  const [layoutResetToken, setLayoutResetToken] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string | null } | null>(null);
   const [sourceTarget, setSourceTarget] = useState<{ path: string; line: number | null } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -558,7 +560,11 @@ export default function App(): JSX.Element {
       setContextMenu(null);
       if (!nodeId) {
         if (actionId === 'fit') setFitToken((token) => token + 1);
-        if (actionId === 'reset-layout') setFitToken((token) => token + 1);
+        if (actionId === 'reset-layout') {
+          setLayoutRunning(true);
+          setLayoutResetToken((token) => token + 1);
+          setFitToken((token) => token + 1);
+        }
         if (actionId === 'collapse') {
           setPreferences((previous) => ({
             ...previous,
@@ -634,6 +640,11 @@ export default function App(): JSX.Element {
   const canPreventOverlap = displayNodes.length <= PREVENT_OVERLAP_MAX_NODES;
 
   const updatePreferences = useCallback((next: ViewPreferencesState) => setPreferences(next), []);
+  const resetLayout = useCallback(() => {
+    setLayoutRunning(true);
+    setLayoutResetToken((token) => token + 1);
+    setFitToken((token) => token + 1);
+  }, []);
 
   return (
     <div className="app" data-theme={preferences.theme}>
@@ -657,11 +668,13 @@ export default function App(): JSX.Element {
           setPreferences((previous) => ({ ...previous, showLegend: !previous.showLegend }))
         }
         onOpenSettings={() => setSettingsOpen(true)}
+        onToggleFilters={() => setMobilePanel((panel) => panel === 'filters' ? null : 'filters')}
+        onToggleInspector={() => setMobilePanel((panel) => panel === 'inspector' ? null : 'inspector')}
         ref={searchRef}
       />
 
-      <main className="app__body">
-        <div className="app__left">
+      <main className={`app__body${mobilePanel ? ` app__body--${mobilePanel}` : ''}`}>
+        <div className="app__left" aria-label="Graph filters">
           <FilterPanel
             facets={facets}
             filters={preferences.filters}
@@ -698,6 +711,7 @@ export default function App(): JSX.Element {
               colorMode={preferences.colorMode as ColorMode}
               interaction={interaction}
               forceSettings={preferences.force}
+              layoutResetToken={layoutResetToken}
               layoutRunning={layoutRunning}
               showLabels={preferences.showLabels}
               hideLowValueEdges={preferences.hideLowValueEdges}
@@ -739,7 +753,7 @@ export default function App(): JSX.Element {
             </button>
             <button
               type="button"
-              onClick={() => setFitToken((token) => token + 1)}
+              onClick={resetLayout}
               title="Re-seed positions"
             >
               reset layout
@@ -761,7 +775,7 @@ export default function App(): JSX.Element {
           )}
         </section>
 
-        <div className="app__right">
+        <div className="app__right" aria-label="Selected entity details">
           <Inspector
             entity={entity}
             impact={impact}
@@ -859,7 +873,7 @@ export default function App(): JSX.Element {
         preferences={preferences}
         onChange={updatePreferences}
         onClose={() => setSettingsOpen(false)}
-        onResetLayout={() => setFitToken((token) => token + 1)}
+        onResetLayout={resetLayout}
         onClearPositions={() => showToast('Saved node positions cleared.')}
         editorCommand={editorCommand}
         onEditorCommandChange={setEditorCommand}

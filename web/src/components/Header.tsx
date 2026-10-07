@@ -16,6 +16,8 @@ export interface HeaderProps {
   onToggleTheme: () => void;
   onToggleLegend: () => void;
   onOpenSettings: () => void;
+  onToggleFilters: () => void;
+  onToggleInspector: () => void;
 }
 
 /** Top bar: workspace identity, search, index status and global controls. */
@@ -71,6 +73,24 @@ export const Header = forwardRef<HTMLInputElement, HeaderProps>(function Header(
           tone={eventsStatus === 'open' ? 'ok' : eventsStatus === 'connecting' ? 'warn' : 'muted'}
           title="Live index updates over SSE"
         />
+        <button
+          type="button"
+          className="header__iconButton header__mobileAction"
+          onClick={props.onToggleFilters}
+          title="Show filters"
+          aria-label="Show filters"
+        >
+          ≡
+        </button>
+        <button
+          type="button"
+          className="header__iconButton header__mobileAction"
+          onClick={props.onToggleInspector}
+          title="Show selected entity"
+          aria-label="Show selected entity"
+        >
+          ◇
+        </button>
         <button
           type="button"
           className="header__iconButton"

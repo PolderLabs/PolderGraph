@@ -59,6 +59,8 @@ export interface GraphCanvasProps {
   hideLowValueEdges: boolean;
   /** Bumping this refits the camera (view switch, reset). */
   fitToken: number;
+  /** Bumping this re-seeds node positions and resumes the layout worker. */
+  layoutResetToken: number;
   onSelect: (id: string | null) => void;
   onHover: (id: string | null) => void;
   onFocusNode: (id: string) => void;
@@ -124,12 +126,13 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     const sigma = new Sigma<
       PgNodeAttributes,
       PgEdgeAttributes,
-      {},
-      {},
-      {},
-      {},
+      Record<string, unknown>,
+      Record<string, never>,
+      Record<string, never>,
+      Record<string, never>,
       typeof primitives
     >(graph, container, {
+      primitives,
       styles: {
         nodes: {
           labelColor: { attribute: 'labelColor' },
@@ -161,7 +164,9 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
         labelGridCellSize: 110,
         labelRenderedSizeThreshold: 6,
         minEdgeThickness: 0.5,
-        autoRescale: false,
+        // ForceAtlas2 changes coordinate bounds while settling; keep all nodes
+        // fitted so layout movement remains visible across desktop and mobile.
+        autoRescale: true,
         stagePadding: 20,
       },
     }) as PgSigma;
@@ -189,8 +194,12 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
 
     const topologyChanged = syncGraph(handle.graph, handle.controller, props.nodes, props.edges);
     if (topologyChanged) handle.adjacency = buildAdjacency(handle.graph);
+    // The initial layout-running effect can fire before the async graph payload
+    // arrives. Start here as soon as the first nodes exist instead of waiting
+    // for the user to toggle pause/resume.
+    if (topologyChanged && props.layoutRunning) handle.controller.start();
     handle.sigma.refresh();
-  }, [ready, props.nodes, props.edges]);
+  }, [ready, props.nodes, props.edges, props.layoutRunning]);
 
   /* -------------------------------------------------------- layout controls */
 
@@ -255,6 +264,12 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     if (!ready || !handle || props.fitToken === 0) return;
     void handle.sigma.getCamera().animatedReset({ duration: 320 });
   }, [ready, props.fitToken]);
+
+  useEffect(() => {
+    const handle = handleRef.current;
+    if (!ready || !handle || props.layoutResetToken === 0) return;
+    handle.controller.resetLayout();
+  }, [ready, props.layoutResetToken]);
 
   /* ----------------------------------------------------------------- events */
 
@@ -383,7 +398,9 @@ function reduceNode(
   return {
     ...data,
     color,
-    size: sizeForImportance(data.pgImportance, data.pgDegree, { min: 2.2, max: 18 }),
+    // Sigma's fitted graph scale magnifies graph-space sizes; keep these small
+    // so a handful of nearby nodes does not balloon into canvas-sized discs.
+    size: sizeForImportance(data.pgImportance, data.pgDegree, { min: 0.08, max: 0.55 }),
     labelColor,
     ringColor,
     ringWidth,
