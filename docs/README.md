@@ -67,6 +67,7 @@ The persistent index under `.poldergraph/` is canonical. CLI, dashboard, MCP, ID
 - [dashboard.md](dashboard.md) — interactive Obsidian-style graph explorer
 - [agents.md](agents.md) — MCP, CLI, AGENTS.md generation and agent interaction contract
 - [memory.md](memory.md) — centralized per-user and per-project agent memory, vector RAG and privacy
+- [decisions.md](decisions.md) — provider-neutral typed decisions using Jev, OpenAI Decisions, or local Laya
 - [cli-config.md](cli-config.md) — command surface, configuration and installation UX
 - [testing-performance.md](testing-performance.md) — correctness, scale, benchmark and security requirements
 - [implementation-checklist.md](implementation-checklist.md) — complete one-shot implementation acceptance checklist
