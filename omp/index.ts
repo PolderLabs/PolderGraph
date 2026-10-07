@@ -286,7 +286,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 			if (subcommand === "ui" || subcommand === "dashboard") {
 				try {
 					await ensureIndex(ctx.cwd);
-					const child = spawn(await resolveCli(ctx.cwd), ["ui", "--no-open"], {
+					const child = spawn(await resolveCli(ctx.cwd), ["ui"], {
 						cwd: ctx.cwd,
 						detached: true,
 						stdio: "ignore",
