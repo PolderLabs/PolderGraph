@@ -47,11 +47,7 @@ def build_service(
     repo = Repository(workspace.con)
     backend = None
     if need_backend and workspace.config.embedding.backend != "none":
-        backend = create_backend(
-            workspace.config,
-            cache_dir=workspace.index_dir / "cache" / "model",
-            offline=offline,
-        )
+        backend = create_backend(workspace.config, offline=offline)
     service = QueryService(
         repo, workspace.config, backend, root_id=workspace.root_id(), workspace=workspace
     )

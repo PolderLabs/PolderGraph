@@ -111,7 +111,7 @@ def apply_changes(workspace: Any) -> Any:
     indexer = Indexer(workspace, backend=None)
     if workspace.config.embedding.backend != "none":
         indexer.backend = create_backend(
-            workspace.config, cache_dir=workspace.index_dir / "cache" / "model", offline=True
+            workspace.config, cache_dir=None, offline=True
         )
 
     discovered = indexer.discover()

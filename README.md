@@ -9,26 +9,31 @@ No Docker, cloud database, remote embedding API, account, API key, or chat LLM i
 ## Quick start
 
 Requirements: Python 3.11 or newer and about 2 GB of free disk space for the
-EmbeddingGemma 2 model downloaded on first indexing. The installers below set up
-`uv` if needed and install PolderGraph with its full feature set directly from
-GitHub (a PyPI release is not available yet).
+EmbeddingGemma 2 model downloaded on first indexing. Because this GitHub
+repository is private, authenticate with `gh auth login` or set `GH_TOKEN` /
+`GITHUB_TOKEN` before running the installer. It sets up `uv` if needed and
+installs the full feature set from the latest GitHub release source archive.
 
 ### Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PolderLabs/PolderGraph/main/scripts/install.sh | sh
+curl -fsSL \
+  -H "Authorization: Bearer $(gh auth token)" \
+  -H 'Accept: application/vnd.github.raw+json' \
+  'https://api.github.com/repos/PolderLabs/PolderGraph/contents/scripts/install.sh?ref=v0.1.4' | sh
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/PolderLabs/PolderGraph/main/scripts/install.ps1 | iex
+$headers = @{ Authorization = "Bearer $(gh auth token)"; Accept = 'application/vnd.github.raw+json' }
+Invoke-RestMethod -Headers $headers 'https://api.github.com/repos/PolderLabs/PolderGraph/contents/scripts/install.ps1?ref=v0.1.4' | Invoke-Expression
 ```
 
-Alternatively, install `uv` yourself and run:
+Alternatively, install `uv` and Git yourself and run:
 
 ```bash
-uv tool install "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git"
+uv tool install --force --upgrade "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v0.1.4"
 
 # Index the current repository
 poldergraph init

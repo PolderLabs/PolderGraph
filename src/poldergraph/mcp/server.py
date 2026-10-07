@@ -78,7 +78,7 @@ def build_server(root: Path | None = None) -> Any:
                     try:
                         self._service.backend = create_backend(
                             config,
-                            cache_dir=self._workspace.index_dir / "cache" / "model",  # type: ignore[union-attr]
+                            cache_dir=None,  # type: ignore[union-attr]
                         )
                     except Exception:
                         # Model load can fail for many reasons (disk, network,
