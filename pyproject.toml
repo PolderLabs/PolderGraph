@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "poldergraph"
-version = "0.1.6"
+version = "0.1.7"
 description = "Fully local, zero-cloud code intelligence graph for developers and coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -78,7 +78,7 @@ packages = ["src/poldergraph"]
 "web/dist" = "poldergraph/web/dist"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/poldergraph", "omp", "package.json", "web/src", "web/dist", "web/package.json", "web/vite.config.ts", "web/tsconfig.json", "docs", "README.md", "AGENTS.md", "LICENSE", "tests"]
+include = ["src/poldergraph", "omp", "package.json", "web/src", "web/dist", "web/package.json", "web/vite.config.ts", "web/tsconfig.json", "docs", "scripts", "README.md", "AGENTS.md", "LICENSE", "tests"]
 
 [tool.hatch.build.targets.sdist.force-include]
 "web/dist" = "web/dist"

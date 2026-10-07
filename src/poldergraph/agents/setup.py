@@ -30,17 +30,22 @@ When a task depends on understanding repository structure, finding implementatio
 tracing dependencies, locating tests, or estimating change impact:
 
 1. Prefer the PolderGraph MCP tools when available.
-2. Otherwise run:
+2. Start with `pg_status` and `pg_context`; context includes relevant shared user
+   preferences and this project's saved knowledge. Without MCP, run:
    `poldergraph context "<your task or question>" --json`
-3. If the result says the index is stale, run:
+3. If the result says the code index is stale, run:
    `poldergraph update --quiet`
    then query again.
-4. Use `poldergraph path "<A>" "<B>" --json` for relationship/path questions.
-5. Use `poldergraph explain "<symbol>" --json` for a focused symbol.
-6. Use `poldergraph impact "<symbol-or-path>" --json` before broad refactors.
-7. Read/edit the actual source files returned by PolderGraph; do not treat semantic
+4. Use `pg_memory_search` to recall preferences or prior decisions directly.
+   When the user states a lasting preference or you establish durable project
+   knowledge, save it with `pg_memory_add` using `user` or `project` scope.
+   Do this without interrupting the user; do not store secrets or transient task data.
+5. Use `poldergraph path "<A>" "<B>" --json` for relationship/path questions.
+6. Use `poldergraph explain "<symbol>" --json` for a focused symbol.
+7. Use `poldergraph impact "<symbol-or-path>" --json` before broad refactors.
+8. Read/edit the actual source files returned by PolderGraph; do not treat semantic
    similarity as proof of a source-code dependency.
-8. After substantial source changes, run `poldergraph update --quiet`.
+9. After substantial source changes, run `poldergraph update --quiet`.
 
 Do not read `.poldergraph/index.sqlite3` directly.
 <!-- poldergraph:end -->"""
@@ -49,10 +54,13 @@ Do not read `.poldergraph/index.sqlite3` directly.
 ADAPTER_BLOCK = """<!-- poldergraph:start -->
 ## PolderGraph repository intelligence
 
-This repository is indexed by PolderGraph. Before reading files broadly, run
-`poldergraph context "<task>" --json` (or use the PolderGraph MCP tools) to
-locate the exact implementations, then read only the source locations returned.
-Run `poldergraph update --quiet` after substantial edits.
+This repository is indexed by PolderGraph. Before reading files broadly, use
+`pg_context` or run `poldergraph context "<task>" --json`; relevant saved
+project knowledge and user preferences are included automatically. Save lasting
+user preferences with `pg_memory_add(scope="user", kind="preference")` and
+durable project decisions with `pg_memory_add(scope="project", kind="decision")`.
+Do not store credentials or transient task details. Run `poldergraph update --quiet`
+after substantial edits.
 Do not read `.poldergraph/index.sqlite3` directly.
 <!-- poldergraph:end -->"""
 
@@ -60,9 +68,17 @@ CODEX_SKILL_BLOCK = """<!-- poldergraph:start -->
 ## Use PolderGraph for repository intelligence
 
 Before broad source exploration, use the `poldergraph` MCP tools when available, starting
-with `pg_status` and `pg_context` for the current task. If MCP is unavailable,
-run `poldergraph context "<task>" --json`. Refresh a stale index with
+with `pg_status` and `pg_context` for the current task. Context automatically includes
+relevant shared user preferences and memories scoped to this project. If MCP is
+unavailable, run `poldergraph context "<task>" --json`. Refresh a stale index with
 `pg_update` or `poldergraph update --quiet` and query again.
+
+`pg_context` retrieves matching memories and automatically captures explicit first-person
+preferences such as “I prefer concise answers.” Do not redundantly save those. When a task
+establishes a durable project decision, save it with `pg_memory_add(scope="project")`;
+search prior notes with `pg_memory_search` before making decisions. When a user corrects a
+previous preference, update or forget the older note instead of keeping conflicting versions.
+Never store credentials, private keys, or one-off task details.
 
 Use `pg_path`, `pg_entity`, `pg_impact`, and `pg_find_tests` for focused graph
 questions. Read the cited source files before drawing conclusions; semantic
@@ -115,7 +131,11 @@ def update_block(existing: str, block: str) -> tuple[str, bool]:
         updated = existing[:start] + block + existing[end:]
         return updated, updated != existing
 
-    separator = "" if not existing or existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
+    separator = (
+        ""
+        if not existing or existing.endswith("\n\n")
+        else ("\n" if existing.endswith("\n") else "\n\n")
+    )
     return f"{existing}{separator}{block}\n", True
 
 
@@ -180,7 +200,11 @@ def write_codex_mcp_config(root: Path) -> tuple[bool, str]:
         servers = config.get("mcp_servers", {})
         if isinstance(servers, dict) and "poldergraph" in servers:
             return False, f"{path.relative_to(root)} already configures the poldergraph MCP server"
-        separator = "" if not existing or existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
+        separator = (
+            ""
+            if not existing or existing.endswith("\n\n")
+            else ("\n" if existing.endswith("\n") else "\n\n")
+        )
         updated = f"{existing}{separator}{block}\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(updated, encoding="utf-8")
@@ -267,7 +291,9 @@ def setup_agent_guidance(
 
     selected: list[AgentAdapter]
     if targets is not None:
-        selected = [a for a in AGENT_ADAPTERS if a.name in targets and a.relative_path != "AGENTS.md"]
+        selected = [
+            a for a in AGENT_ADAPTERS if a.name in targets and a.relative_path != "AGENTS.md"
+        ]
     elif all_agents:
         selected = [a for a in AGENT_ADAPTERS if a.relative_path != "AGENTS.md"]
     else:
@@ -277,7 +303,11 @@ def setup_agent_guidance(
         path = adapter.path(root)
         if path == agents_md:
             continue
-        changed = write_codex_skill(path) if adapter.name == "codex" else write_instructions(path, adapter.block)
+        changed = (
+            write_codex_skill(path)
+            if adapter.name == "codex"
+            else write_instructions(path, adapter.block)
+        )
         if changed:
             written.append(adapter.relative_path)
         else:

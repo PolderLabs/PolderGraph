@@ -154,7 +154,14 @@ class BruteForceStore:
     Correctness over speed; documented as unsuitable for large indexes.
     """
 
-    def __init__(self, con: sqlite3.Connection, *, dimensions: int, model_id: str, task_type: str = "document") -> None:
+    def __init__(
+        self,
+        con: sqlite3.Connection,
+        *,
+        dimensions: int,
+        model_id: str,
+        task_type: str = "document",
+    ) -> None:
         self.con = con
         self.dimensions = dimensions
         self.model_id = model_id
@@ -200,9 +207,7 @@ class BruteForceStore:
         if not ids:
             return
         self.ensure_table()
-        self.con.executemany(
-            f"DELETE FROM {self.table} WHERE embedding_id=?", [(i,) for i in ids]
-        )
+        self.con.executemany(f"DELETE FROM {self.table} WHERE embedding_id=?", [(i,) for i in ids])
 
     def delete_by_entity(self, entity_ids: list[str]) -> None:
         if not entity_ids:
@@ -220,9 +225,15 @@ class BruteForceStore:
         qnorm = math.sqrt(sum(v * v for v in query)) or 1.0
         clause = ""
         params: list[Any] = []
+        conditions = []
         if filters and filters.get("modality"):
-            clause = " WHERE modality = ?"
+            conditions.append("modality = ?")
             params.append(filters["modality"])
+        if filters and filters.get("model_id"):
+            conditions.append("model_id = ?")
+            params.append(filters["model_id"])
+        if conditions:
+            clause = " WHERE " + " AND ".join(conditions)
         rows = self.con.execute(
             f"SELECT embedding_id, entity_id, modality, vector, dimensions FROM {self.table}{clause}",
             params,
@@ -247,7 +258,14 @@ class BruteForceStore:
 class SQLiteVecStore:
     """Default vector backend using the sqlite-vec extension."""
 
-    def __init__(self, con: sqlite3.Connection, *, dimensions: int, model_id: str, task_type: str = "document") -> None:
+    def __init__(
+        self,
+        con: sqlite3.Connection,
+        *,
+        dimensions: int,
+        model_id: str,
+        task_type: str = "document",
+    ) -> None:
         self.con = con
         self.dimensions = dimensions
         self.model_id = model_id
@@ -297,7 +315,9 @@ class SQLiteVecStore:
         self.ensure_table()
         for record in records:
             record = record.normalized()
-            self.con.execute(f"DELETE FROM {self.table} WHERE embedding_id=?", (record.embedding_id,))
+            self.con.execute(
+                f"DELETE FROM {self.table} WHERE embedding_id=?", (record.embedding_id,)
+            )
             self.con.execute(
                 f"INSERT INTO {self.table}(embedding_id, entity_id, modality, embedding) VALUES(?, ?, ?, ?)",
                 (record.embedding_id, record.entity_id, record.modality, record.to_blob()),
@@ -305,7 +325,13 @@ class SQLiteVecStore:
             self.con.execute(
                 f"INSERT OR REPLACE INTO {self.shadow_table}"
                 "(embedding_id, entity_id, modality, dimensions, vector) VALUES(?,?,?,?,?)",
-                (record.embedding_id, record.entity_id, record.modality, record.dimensions, record.to_blob()),
+                (
+                    record.embedding_id,
+                    record.entity_id,
+                    record.modality,
+                    record.dimensions,
+                    record.to_blob(),
+                ),
             )
 
     def delete(self, ids: list[str]) -> None:
@@ -409,7 +435,9 @@ def backend_name(store: VectorStore) -> str:
     return "sqlite-vec" if isinstance(store, SQLiteVecStore) else "brute-force"
 
 
-def embedding_id_for(entity_id: str, model_id: str, revision: str, dimensions: int, task: str, input_hash: str) -> str:
+def embedding_id_for(
+    entity_id: str, model_id: str, revision: str, dimensions: int, task: str, input_hash: str
+) -> str:
     """Stable embedding identity including model revision and dimensions."""
     import hashlib
 

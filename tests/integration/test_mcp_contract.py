@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import os
 
 import pytest
 
@@ -20,6 +20,12 @@ REQUIRED_TOOLS: dict[str, list[str]] = {
     "pg_impact": ["entity"],
     "pg_update": [],
     "pg_find_tests": [],
+    "pg_memory_status": [],
+    "pg_memory_search": ["query"],
+    "pg_memory_list": [],
+    "pg_memory_add": ["content"],
+    "pg_memory_update": ["memory_id"],
+    "pg_memory_forget": ["memory_id"],
 }
 
 
@@ -31,13 +37,13 @@ def server(tmp_path_factory):
     root = tmp_path_factory.mktemp("mcp_repo") / "repo"
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "auth.py").write_text(
-        'from .models import Session\n'
-        '\n'
-        'class AuthService:\n'
+        "from .models import Session\n"
+        "\n"
+        "class AuthService:\n"
         '    """Validate session tokens."""\n'
-        '    def validate_session(self, token: str) -> Session:\n'
+        "    def validate_session(self, token: str) -> Session:\n"
         '        """Check token."""\n'
-        '        return Session(token)\n'
+        "        return Session(token)\n"
     )
     (root / "pkg" / "models.py").write_text(
         'class Session:\n    """A user session."""\n    def __init__(self, t): self.t = t\n'
@@ -60,11 +66,18 @@ def server(tmp_path_factory):
     indexer.run(indexer.discover())
     run_graph_stage(workspace, workspace.config, Repository(workspace.con), None)
 
+    memory_db = tmp_path_factory.mktemp("central_memory") / "memory.sqlite3"
+    previous_memory_db = os.environ.get("POLDERGRAPH_MEMORY_DB")
+    os.environ["POLDERGRAPH_MEMORY_DB"] = str(memory_db)
     instance = build_server(root)
     yield instance
     session = getattr(instance, "poldergraph_session", None)
     if session is not None:
         session.close()
+    if previous_memory_db is None:
+        os.environ.pop("POLDERGRAPH_MEMORY_DB", None)
+    else:
+        os.environ["POLDERGRAPH_MEMORY_DB"] = previous_memory_db
 
 
 def _tools(server) -> dict:
@@ -154,8 +167,25 @@ class TestToolResponses:
         assert results[0]["evidence"] in {"exact", "lexical", "semantic", "graph-expanded"}
         assert isinstance(results[0]["score_features"], dict)
 
-    def test_pg_context_shape(self, server):
-        payload = _call(server, "pg_context", {"query": "how does login work", "token_budget": 2000})
+    def test_pg_context_shape(self, server, monkeypatch):
+        from poldergraph.embedding.protocol import ModelInfo
+
+        class FakeBackend:
+            def capabilities(self):
+                return {"text"}
+
+            def model_info(self):
+                return ModelInfo(model_id="fake/context", revision="test", dimensions=3)
+
+            def embed_texts(self, items, *, task, dimensions):
+                return [[1.0, 0.0, 0.0] for _ in items]
+
+        monkeypatch.setattr(
+            "poldergraph.embedding.gemma.create_backend", lambda config, **kwargs: FakeBackend()
+        )
+        payload = _call(
+            server, "pg_context", {"query": "how does login work", "token_budget": 2000}
+        )
         self._assert_envelope(payload, "pg_context")
         data = payload["data"]
         for key in (
@@ -173,6 +203,21 @@ class TestToolResponses:
         ):
             assert key in data, f"context payload missing {key}"
         assert data["token_estimate"] <= 2000
+        assert "memories" in data
+
+        learned = _call(
+            server,
+            "pg_context",
+            {
+                "query": "I prefer concise answers with a concrete example.",
+                "token_budget": 2000,
+            },
+        )
+        assert learned["data"]["memories_learned"] == 1
+        assert any(
+            item["scope"] == "user" and "I prefer concise answers" in item["content"]
+            for item in learned["data"]["memories"]
+        )
 
     def test_pg_entity(self, server):
         payload = _call(server, "pg_entity", {"entity": "AuthService"})
@@ -196,6 +241,55 @@ class TestToolResponses:
         payload = _call(server, "pg_find_tests", {"entity": "AuthService"})
         self._assert_envelope(payload, "pg_find_tests")
         assert isinstance(payload["data"]["tests"], list)
+
+    def test_memory_tools_support_search_save_and_forget(self, server, monkeypatch):
+        from poldergraph.memory import MemoryStore
+
+        class FakeBackend:
+            def capabilities(self):
+                return {"text"}
+
+            def model_info(self):
+                from poldergraph.embedding.protocol import ModelInfo
+
+                return ModelInfo(model_id="fake/mcp", revision="test", dimensions=3)
+
+            def embed_texts(self, items, *, task, dimensions):
+                return [[1.0, 0.0, 0.0] for _ in items]
+
+        monkeypatch.setattr(
+            "poldergraph.memory.memory_backend", lambda preferred=None: FakeBackend()
+        )
+        added = _call(
+            server,
+            "pg_memory_add",
+            {
+                "content": "The auth resolver validates bearer tokens before API access.",
+                "scope": "project",
+                "kind": "decision",
+                "tags": ["security"],
+            },
+        )
+        self._assert_envelope(added, "pg_memory_add")
+        memory_id = added["data"]["id"]
+        assert added["data"]["vectorized"] is True
+
+        recalled = _call(server, "pg_memory_search", {"query": "credential checks"})
+        self._assert_envelope(recalled, "pg_memory_search")
+        assert recalled["data"]["results"][0]["id"] == memory_id
+        assert recalled["data"]["results"][0]["retrieval"] == "semantic"
+
+        status = _call(server, "pg_memory_status", {})
+        self._assert_envelope(status, "pg_memory_status")
+        assert status["data"]["project_memories"] == 1
+
+        updated = _call(server, "pg_memory_update", {"memory_id": memory_id, "kind": "fact"})
+        self._assert_envelope(updated, "pg_memory_update")
+        assert updated["data"]["kind"] == "fact"
+
+        forgotten = _call(server, "pg_memory_forget", {"memory_id": memory_id})
+        self._assert_envelope(forgotten, "pg_memory_forget")
+        assert MemoryStore(server.poldergraph_session.service().root).list(scope="project") == []
 
     def test_pg_update_is_idempotent(self, server):
         first = _call(server, "pg_update", {})

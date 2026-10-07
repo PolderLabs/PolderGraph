@@ -154,6 +154,15 @@ This is not a phased roadmap. The initial implementation is considered complete 
 - [ ] post-change refresh guidance
 - [ ] no agent loop behavior
 
+## Shared coding-agent memory
+- [x] one central per-user SQLite memory database outside repositories
+- [x] isolated per-project scope plus user-wide facts and preferences
+- [x] lexical and vector memory retrieval with bounded hybrid RAG context
+- [x] CLI and MCP create/read/update/delete operations
+- [x] automatic context recall for OMP and Codex
+- [x] agent guidance for saving durable preferences/decisions without storing secrets
+- [x] memory retrieval/token budget and project-scope tests
+
 ## Dashboard
 - [ ] FastAPI local server
 - [ ] React/TypeScript
