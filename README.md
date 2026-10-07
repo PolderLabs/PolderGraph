@@ -1,48 +1,58 @@
 # PolderGraph
 
-PolderGraph is a fully local, zero-cloud code intelligence graph for developers and coding agents.
+<p align="center">
+  <img src="assets/poldergraph-banner.svg" alt="PolderGraph — a clear map of your codebase" width="100%" />
+</p>
 
-It combines deterministic source-code relationships with EmbeddingGemma 2 semantic embeddings, stores everything locally in a single SQLite database, exposes a simple MCP/CLI interface for agents, and provides an Obsidian-style interactive graph dashboard.
+<p align="center">
+  <a href="https://github.com/PolderLabs/PolderGraph/releases/latest"><img src="https://img.shields.io/github/v/release/PolderLabs/PolderGraph?style=flat-square&color=647cff" alt="Latest release" /></a>
+  <a href="https://github.com/PolderLabs/PolderGraph/blob/main/LICENSE"><img src="https://img.shields.io/github/license/PolderLabs/PolderGraph?style=flat-square&color=36b8aa" alt="Apache 2.0 license" /></a>
+  <img src="https://img.shields.io/badge/Python-3.11%2B-3776ab?style=flat-square" alt="Python 3.11 or newer" />
+  <img src="https://img.shields.io/badge/runs-locally-36b8aa?style=flat-square" alt="Runs locally" />
+</p>
 
-No Docker, cloud database, remote embedding API, account, API key, or chat LLM is required.
+**Give yourself and your coding agent a useful map of a repository.** PolderGraph connects code structure, meaning, and tests so you can find where a behavior lives, trace what it depends on, and get grounded context for the next change.
 
-## Quick start
+Start with one command. Explore the graph in your browser, or connect your coding agent through MCP. Your source and index stay on your machine; semantic search runs locally.
 
-Requirements: Python 3.11 or newer and about 2 GB of free disk space for the
-EmbeddingGemma 2 model downloaded on first indexing. Because this GitHub
-repository is private, authenticate with `gh auth login` or set `GH_TOKEN` /
-`GITHUB_TOKEN` before running the installer. It sets up `uv` if needed and
-installs the full feature set from the latest GitHub release source archive.
+## Install
 
-### Linux
+Requirements: Python 3.11 or newer, `curl`, and internet access for installing dependencies and downloading the embedding model the first time you index a repository. The model takes about 2 GB of disk space. No API key or cloud service is required.
+
+### Linux and macOS
 
 ```bash
-curl -fsSL \
-  -H "Authorization: Bearer $(gh auth token)" \
-  -H 'Accept: application/vnd.github.raw+json' \
-  'https://api.github.com/repos/PolderLabs/PolderGraph/contents/scripts/install.sh?ref=v0.1.6' | sh
+curl -fsSL https://raw.githubusercontent.com/PolderLabs/PolderGraph/main/scripts/install.sh | sh
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
-$headers = @{ Authorization = "Bearer $(gh auth token)"; Accept = 'application/vnd.github.raw+json' }
-Invoke-RestMethod -Headers $headers 'https://api.github.com/repos/PolderLabs/PolderGraph/contents/scripts/install.ps1?ref=v0.1.6' | Invoke-Expression
+irm https://raw.githubusercontent.com/PolderLabs/PolderGraph/main/scripts/install.ps1 | iex
 ```
 
-Alternatively, install `uv` and Git yourself and run:
+The installer sets up `uv` if needed and installs the latest GitHub release. Then, from the repository you want to explore:
 
 ```bash
-uv tool install --force --upgrade "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v0.1.6"
-
-# Index the current repository
 poldergraph init
-
-# Open the interactive graph dashboard
 poldergraph ui
 ```
 
-That's it. PolderGraph discovers your files, parses them with tree-sitter, extracts entities and relationships, generates embeddings, builds the graph, and opens a browser with an interactive visualization.
+`init` indexes the project and prepares local search. `ui` opens the interactive graph. To connect an agent, run `poldergraph setup-agent` or configure `poldergraph mcp` in your MCP client.
+
+<p align="center">
+  <img src="assets/dashboard-preview.svg" alt="PolderGraph dashboard with repository filters, a connected code graph, and source inspection" width="100%" />
+</p>
+
+## Why PolderGraph?
+
+- **Find code by intent.** Ask questions like “where is authorization checked?” and search by meaning, names, and file contents.
+- **Follow real relationships.** Trace calls, imports, inheritance, and tests back to their source locations.
+- **Understand impact before changing code.** Explore callers, dependencies, and related tests.
+- **Keep context local.** Source, embeddings, and the index stay on your machine. No hosted database, remote inference, or telemetry by default.
+- **Use the tools you already have.** Work in the dashboard, use the CLI, or let an MCP-capable agent query the same index.
+
+PolderGraph keeps parsed structural facts separate from semantic similarity, so “these concepts are related” is never presented as “this function calls that function.”
 
 ## What it does
 

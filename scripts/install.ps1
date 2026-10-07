@@ -3,14 +3,6 @@ $ErrorActionPreference = 'Stop'
 $repo = 'PolderLabs/PolderGraph'
 $releaseApi = "https://api.github.com/repos/$repo/releases/latest"
 
-$githubToken = if ($env:GH_TOKEN) { $env:GH_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { $null }
-if (-not $githubToken -and (Get-Command gh -ErrorAction SilentlyContinue)) {
-    $githubToken = gh auth token 2>$null
-}
-if (-not $githubToken) {
-    throw 'This private repository requires GH_TOKEN/GITHUB_TOKEN or an authenticated GitHub CLI session.'
-}
-
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Host 'Installing uv...'
     Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
@@ -22,17 +14,14 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 
 if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
-    throw 'curl.exe is required to download the private release archive.'
+    throw 'curl.exe is required to download the release archive.'
 }
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     throw 'uv was installed but could not be found. Add %USERPROFILE%\.local\bin to PATH and retry.'
 }
 
-$headers = @{
-    Authorization = "Bearer $githubToken"
-    Accept = 'application/vnd.github+json'
-}
+$headers = @{ Accept = 'application/vnd.github+json' }
 $release = Invoke-RestMethod -Headers $headers $releaseApi
 if (-not $release.tag_name) {
     throw "The latest GitHub release for $repo has no tag."
@@ -45,7 +34,6 @@ try {
     $archive = Join-Path $tempDir 'source.tar.gz'
     $archiveUrl = "https://api.github.com/repos/$repo/tarball/$($release.tag_name)"
     & curl.exe --fail --silent --show-error --location `
-        --header "Authorization: Bearer $githubToken" `
         --header 'Accept: application/vnd.github+json' `
         --output $archive $archiveUrl
     if ($LASTEXITCODE -ne 0) {
