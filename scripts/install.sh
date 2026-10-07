@@ -25,6 +25,6 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 echo 'Installing PolderGraph...'
-uv tool install --from "git+$repo" 'poldergraph[all]'
+uv tool install "poldergraph[all] @ git+$repo"
 echo 'PolderGraph is installed. Open a new shell if the poldergraph command is not on PATH.'
 echo 'Run "poldergraph init" from the repository you want to index.'

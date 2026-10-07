@@ -28,7 +28,9 @@ export default defineConfig({
     format: 'es',
   },
   build: {
-    outDir: 'dist',
+    // Keep the production bundle inside the Python package so Hatch includes it
+    // in both wheels and source distributions without a Node build at install time.
+    outDir: '../src/poldergraph/web/dist',
     emptyOutDir: true,
     target: 'es2022',
     sourcemap: false,

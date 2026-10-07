@@ -21,7 +21,7 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 
 Write-Host 'Installing PolderGraph...'
-uv tool install --from "git+$repo" 'poldergraph[all]'
+uv tool install "poldergraph[all] @ git+$repo"
 if ($LASTEXITCODE -ne 0) {
     throw "PolderGraph installation failed (uv exit code $LASTEXITCODE)."
 }

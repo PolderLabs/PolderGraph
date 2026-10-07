@@ -69,11 +69,8 @@ Documentation = "https://github.com/poldergraph/poldergraph/tree/main/docs"
 [tool.hatch.build.targets.wheel]
 packages = ["src/poldergraph"]
 
-# The dashboard is built by `pnpm --dir web build` into web/dist and force-
-# included into the wheel at src/poldergraph/web/dist, so `poldergraph ui`
-# needs no Node.js on the end-user machine.
-[tool.hatch.build.targets.wheel.force-include]
-"web/dist" = "poldergraph/web/dist"
+# The dashboard production bundle is committed under src/poldergraph/web/dist,
+# so installed packages need no Node.js on the end-user machine.
 
 [tool.hatch.build.targets.sdist]
 include = ["src/poldergraph", "omp", "package.json", "web/src", "web/package.json", "web/vite.config.ts", "web/tsconfig.json", "docs", "README.md", "AGENTS.md", "LICENSE", "tests"]

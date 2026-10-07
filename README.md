@@ -28,7 +28,7 @@ irm https://raw.githubusercontent.com/PolderLabs/PolderGraph/main/scripts/instal
 Alternatively, install `uv` yourself and run:
 
 ```bash
-uv tool install --from "git+https://github.com/PolderLabs/PolderGraph.git" "poldergraph[all]"
+uv tool install "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git"
 
 # Index the current repository
 poldergraph init
@@ -153,19 +153,19 @@ tracing dependencies, locating tests, or estimating change impact:
 
 ## Oh My Pi extension
 
-PolderGraph ships with an installable OMP extension that automatically checks
-the index, refreshes stale data, and adds task-specific local graph context to
-each prompt. Install the Python CLI, install the extension, and initialize a
-repository:
+PolderGraph ships with an installable OMP extension. Install it once; it
+automatically installs the local CLI, indexes each repository in the
+background, refreshes after edits, and adds task-specific graph context to
+agent prompts:
 
 ```bash
-uv tool install --from "git+https://github.com/PolderLabs/PolderGraph.git" "poldergraph[all]"
 omp install github:PolderLabs/PolderGraph
-poldergraph init
 ```
 
-See [docs/omp.md](docs/omp.md) for the OMP tools, local development setup, and
-runtime behavior.
+The first setup needs `uv`, network access for package/model downloads, and
+several gigabytes of disk space. Open the graph with `/poldergraph ui`; basic
+configuration is available through `/poldergraph config`. See
+[docs/omp.md](docs/omp.md) for details.
 
 ## Dashboard
 
