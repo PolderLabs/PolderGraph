@@ -1,0 +1,10 @@
+{
+  "name": "@polderlabs/poldergraph-omp",
+  "version": "0.1.0",
+  "description": "Oh My Pi extension for automatic PolderGraph repository intelligence",
+  "license": "Apache-2.0",
+  "private": false,
+  "omp": {
+    "extensions": ["./omp/index.ts"]
+  }
+}

@@ -151,6 +151,22 @@ tracing dependencies, locating tests, or estimating change impact:
 | `pg_update` | Incremental index refresh |
 | `pg_find_tests` | Structurally or lexically linked tests |
 
+## Oh My Pi extension
+
+PolderGraph ships with an installable OMP extension that automatically checks
+the index, refreshes stale data, and adds task-specific local graph context to
+each prompt. Install the Python CLI, install the extension, and initialize a
+repository:
+
+```bash
+uv tool install --from "git+https://github.com/PolderLabs/PolderGraph.git" "poldergraph[all]"
+omp install github:PolderLabs/PolderGraph
+poldergraph init
+```
+
+See [docs/omp.md](docs/omp.md) for the OMP tools, local development setup, and
+runtime behavior.
+
 ## Dashboard
 
 The interactive graph dashboard uses Sigma.js (WebGL), Graphology, and ForceAtlas2 in a web worker. Run `poldergraph ui` to open it at `http://127.0.0.1:7432`.

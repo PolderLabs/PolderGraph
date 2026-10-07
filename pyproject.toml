@@ -76,7 +76,7 @@ packages = ["src/poldergraph"]
 "web/dist" = "poldergraph/web/dist"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/poldergraph", "web/src", "web/package.json", "web/vite.config.ts", "web/tsconfig.json", "docs", "README.md", "AGENTS.md", "LICENSE", "tests"]
+include = ["src/poldergraph", "omp", "package.json", "web/src", "web/package.json", "web/vite.config.ts", "web/tsconfig.json", "docs", "README.md", "AGENTS.md", "LICENSE", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

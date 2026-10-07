@@ -156,6 +156,12 @@ If `AGENTS.md` exists, preserve all user content and replace only the fenced Pol
 - OpenCode
 - OMP/oh-my-pi compatible instruction/skill locations
 
+For native OMP runtime integration, install the repository as an OMP plugin
+using `omp install github:PolderLabs/PolderGraph`. See [omp.md](omp.md). The
+plugin adds task context automatically and exposes focused graph tools; the
+generated OMP skill remains a lightweight fallback when the extension is not
+installed.
+
 These adapters contain minimal guidance that points back to the canonical CLI/MCP contract. Avoid duplicating pages of instructions in each integration.
 
 ## MCP configuration generation
