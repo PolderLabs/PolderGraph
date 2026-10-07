@@ -5,12 +5,12 @@
 Primary:
 
 ```bash
-uv tool install --force --upgrade "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v0.1.3"
+uv tool install --force --upgrade "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v0.1.4"
 ```
 
 Each GitHub release includes the compiled dashboard (`web/dist`) in its source
-archive. Git is required. The platform installer scripts resolve the latest
-release tag automatically.
+archive. The platform installer scripts use an authenticated GitHub API request
+to resolve and download the latest release source archive.
 
 Also support standard Python packaging installation.
 
