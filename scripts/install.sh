@@ -34,6 +34,6 @@ if [ -z "$tag" ]; then
 fi
 
 echo "Installing PolderGraph from GitHub release $tag..."
-uv tool install --upgrade --from "git+$source@$tag" 'poldergraph[all]'
+uv tool install --force --upgrade "poldergraph[all] @ git+$source@$tag"
 echo 'PolderGraph is installed. Open a new shell if the poldergraph command is not on PATH.'
 echo 'Run "poldergraph init" from the repository you want to index.'

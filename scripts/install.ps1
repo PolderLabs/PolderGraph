@@ -28,7 +28,7 @@ if (-not $release.tag_name) {
 }
 
 Write-Host "Installing PolderGraph from GitHub release $($release.tag_name)..."
-uv tool install --upgrade --from "git+$source@$($release.tag_name)" 'poldergraph[all]'
+uv tool install --force --upgrade "poldergraph[all] @ git+$source@$($release.tag_name)"
 if ($LASTEXITCODE -ne 0) {
     throw "PolderGraph installation failed (uv exit code $LASTEXITCODE)."
 }
