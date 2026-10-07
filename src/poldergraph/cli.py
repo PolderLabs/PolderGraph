@@ -810,10 +810,61 @@ def mcp(
 # ------------------------------------------------------------- setup-agent
 
 
+@app.command("setup")
+def setup(
+    target: Optional[Path] = typer.Argument(None, help="Repository root."),
+    agent: list[str] = typer.Option([], "--agent", help="Set up one named agent integration (repeatable)."),
+    all_agents: bool = typer.Option(False, "--all", help="Set up every supported agent integration."),
+) -> None:
+    """Interactively detect and configure coding agents for this repository."""
+    from .agents.setup import AGENT_ADAPTERS, detect_installed_agents, setup_agent_guidance
+
+    root = (target or Path.cwd()).resolve()
+    supported = [adapter.name for adapter in AGENT_ADAPTERS]
+    if all_agents and agent:
+        raise typer.BadParameter("Use either --all or --agent, not both.")
+    if all_agents:
+        selected = supported
+    elif agent:
+        invalid = [name for name in agent if name not in supported]
+        if invalid:
+            raise typer.BadParameter(f"Unknown agent(s): {', '.join(invalid)}. Choose from: {', '.join(supported)}")
+        selected = list(dict.fromkeys(agent))
+    else:
+        detected = detect_installed_agents(root)
+        typer.echo(f"Repository: {root}")
+        if detected:
+            typer.echo(f"Detected installed agents (recommended): {', '.join(detected)}")
+        else:
+            typer.echo("No supported coding agent installation was detected.")
+        typer.echo(f"Supported integrations: {', '.join(supported)}")
+        if not sys.stdin.isatty():
+            raise typer.BadParameter("Interactive setup needs a terminal; pass --agent NAME or --all.")
+        default = ",".join(detected) if detected else "none"
+        answer = typer.prompt(
+            "Choose integrations by name, 'all' for every integration, or 'none' for AGENTS.md only",
+            default=default,
+        ).strip().lower()
+        if answer in {"", "none"}:
+            selected = []
+        elif answer == "all":
+            selected = supported
+        else:
+            selected = list(dict.fromkeys(part.strip() for part in answer.split(",") if part.strip()))
+            invalid = [name for name in selected if name not in supported]
+            if invalid:
+                raise typer.BadParameter(f"Unknown agent(s): {', '.join(invalid)}. Choose from: {', '.join(supported)}")
+
+    result = setup_agent_guidance(root, Config(), targets=selected)
+    typer.echo(f"Wrote: {', '.join(result['written']) or 'nothing'}")
+    if result["skipped"]:
+        typer.echo(f"Skipped: {', '.join(result['skipped'])}")
+
+
 @app.command("setup-agent")
 def setup_agent(
     target: Optional[Path] = typer.Argument(None, help="Repository root."),
-    all_agents: bool = typer.Option(False, "--all", help="Update every detected agent integration."),
+    all_agents: bool = typer.Option(False, "--all", help="Update every supported agent integration."),
     agent: list[str] = typer.Option([], "--agent", help="Target one agent adapter (repeatable)."),
     print_config: bool = typer.Option(False, "--print-mcp-config", help="Print MCP server configuration."),
     hooks: bool = typer.Option(False, "--hooks", help="Explicitly allow installing git hooks."),

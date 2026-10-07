@@ -1,0 +1,315 @@
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { spawn } from "node:child_process";
+import { join } from "node:path";
+
+const CONTEXT_BUDGET = 3000;
+const COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
+const MAX_TOOL_OUTPUT = 24_000;
+const POLDERGRAPH_SOURCE = "git+https://github.com/PolderLabs/PolderGraph.git";
+
+type JsonEnvelope = {
+	ok?: boolean;
+	command?: string;
+	index?: { fresh?: boolean; root?: string };
+	data?: unknown;
+	error?: { code?: string; message?: string; remediation?: string } | null;
+	warnings?: string[];
+};
+
+function formatResult(result: JsonEnvelope): string {
+	if (!result.ok) {
+		const error = result.error;
+		return [error?.message ?? "PolderGraph command failed.", error?.remediation]
+			.filter(Boolean)
+			.join("\n");
+	}
+	return JSON.stringify(result, null, 2);
+}
+
+function splitCommandLine(input: string): string[] {
+	const parts: string[] = [];
+	let current = "";
+	let quote: "'" | '"' | null = null;
+	let escaped = false;
+	for (const char of input) {
+		if (escaped) {
+			current += char;
+			escaped = false;
+		} else if (char === "\\" && quote !== "'") {
+			escaped = true;
+		} else if (quote) {
+			if (char === quote) quote = null;
+			else current += char;
+		} else if (char === "'" || char === '"') {
+			quote = char;
+		} else if (/\s/.test(char)) {
+			if (current) parts.push(current);
+			current = "";
+		} else {
+			current += char;
+		}
+	}
+	if (escaped) current += "\\";
+	if (current) parts.push(current);
+	return parts;
+}
+
+export default function polderGraphExtension(pi: ExtensionAPI) {
+	const z = pi.zod;
+	const indexing = new Map<string, Promise<void>>();
+	let cliPath: string | undefined;
+	let cliSetup: Promise<string> | undefined;
+
+	async function resolveCli(cwd: string): Promise<string> {
+		if (cliPath) return cliPath;
+		if (cliSetup) return cliSetup;
+		cliSetup = (async () => {
+			const found = await pi.exec("poldergraph", ["--version"], { cwd, timeout: 10_000 });
+			if (found.code === 0) return "poldergraph";
+			const uv = await pi.exec("uv", ["--version"], { cwd, timeout: 10_000 });
+			if (uv.code !== 0) throw new Error("PolderGraph and uv are both unavailable; install uv to enable automatic PolderGraph setup.");
+			const bin = await pi.exec("uv", ["tool", "dir", "--bin"], { cwd, timeout: 10_000 });
+			if (bin.code !== 0 || !bin.stdout.trim()) throw new Error(bin.stderr || "Could not locate the uv tool executable directory.");
+			const candidate = join(bin.stdout.trim(), process.platform === "win32" ? "poldergraph.exe" : "poldergraph");
+			let installed = await pi.exec(candidate, ["--version"], { cwd, timeout: 10_000 });
+			if (installed.code !== 0) {
+				const install = await pi.exec("uv", ["tool", "install", `poldergraph[all] @ ${POLDERGRAPH_SOURCE}`], { cwd, timeout: COMMAND_TIMEOUT_MS });
+				if (install.code !== 0 || install.killed) throw new Error(install.stderr || "Automatic PolderGraph installation failed.");
+				installed = await pi.exec(candidate, ["--version"], { cwd, timeout: 10_000 });
+			}
+			if (installed.code !== 0) throw new Error(installed.stderr || "PolderGraph installation did not produce a working executable.");
+			return candidate;
+		})();
+		try {
+			cliPath = await cliSetup;
+			return cliPath;
+		} finally {
+			cliSetup = undefined;
+		}
+	}
+
+	async function run(
+		args: string[],
+		cwd: string,
+		signal?: AbortSignal,
+	): Promise<{ code: number; stdout: string; stderr: string; killed: boolean }> {
+		return pi.exec(await resolveCli(cwd), args, { cwd, signal, timeout: COMMAND_TIMEOUT_MS });
+	}
+
+	async function runJson(args: string[], cwd: string, signal?: AbortSignal): Promise<JsonEnvelope> {
+		const result = await run([...args, "--json"], cwd, signal);
+		if (result.killed) throw new Error("PolderGraph command timed out or was cancelled.");
+		if (!result.stdout.trim()) {
+			throw new Error(result.stderr.trim() || `poldergraph ${args[0]} exited with code ${result.code}`);
+		}
+		try {
+			return JSON.parse(result.stdout) as JsonEnvelope;
+		} catch {
+			throw new Error(`PolderGraph returned invalid JSON: ${result.stderr || result.stdout}`);
+		}
+	}
+
+	async function ensureIndex(cwd: string): Promise<void> {
+		const active = indexing.get(cwd);
+		if (active) return active;
+		const work = (async () => {
+			const status = await runJson(["status"], cwd);
+			if (!status.ok && status.error?.code === "INDEX_MISSING") {
+				const initialized = await runJson(["init"], cwd);
+				if (!initialized.ok) throw new Error(formatResult(initialized));
+				return;
+			}
+			if (!status.ok) throw new Error(formatResult(status));
+			if (status.index?.fresh === false) {
+				const updated = await runJson(["update"], cwd);
+				if (!updated.ok) throw new Error(formatResult(updated));
+			}
+		})();
+		indexing.set(cwd, work);
+		try {
+			await work;
+		} finally {
+			indexing.delete(cwd);
+		}
+	}
+
+	async function toolResult(args: string[], cwd: string, signal?: AbortSignal) {
+		try {
+			const result = await runJson(args, cwd, signal);
+			const text = formatResult(result);
+			return {
+				content: [{ type: "text" as const, text: text.length > MAX_TOOL_OUTPUT ? `${text.slice(0, MAX_TOOL_OUTPUT)}\n[output truncated]` : text }],
+				details: result,
+				isError: !result.ok,
+			};
+		} catch (error) {
+			return {
+				content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }],
+				isError: true,
+			};
+		}
+	}
+
+	pi.setLabel("PolderGraph");
+
+	// Start indexing without blocking session startup. The first task joins this
+	// job before receiving context, and later turns refresh stale data.
+	pi.on("session_start", (_event, ctx) => {
+		void ensureIndex(ctx.cwd).catch((error) => {
+			pi.logger.warn(`PolderGraph automatic setup failed: ${error instanceof Error ? error.message : String(error)}`);
+		});
+	});
+	pi.on("tool_result", (event, ctx) => {
+		if (event.isError || (event.toolName !== "edit" && event.toolName !== "write")) return;
+		void ensureIndex(ctx.cwd).catch((error) => {
+			pi.logger.warn(`PolderGraph background refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+		});
+	});
+
+	pi.registerTool({
+		name: "poldergraph_status",
+		label: "PolderGraph Status",
+		description: "Check whether the local PolderGraph repository index exists and is fresh.",
+		parameters: z.object({}),
+		async execute(_id, _params, signal, _onUpdate, ctx) {
+			return toolResult(["status"], ctx.cwd, signal);
+		},
+	});
+
+	// Add grounded repository context before each task from the local index.
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (!event.prompt.trim()) return;
+		try {
+			await ensureIndex(ctx.cwd);
+
+			const context = await runJson(
+				["context", event.prompt, "--budget", String(CONTEXT_BUDGET)],
+				ctx.cwd,
+			);
+			if (!context.ok || !context.data) return;
+			return {
+				systemPrompt: [
+					...event.systemPrompt,
+					"PolderGraph repository context (local index; use as navigation evidence, then inspect the cited source files. Semantic similarity is not proof of a dependency):\n" +
+						JSON.stringify(context.data),
+				],
+			};
+		} catch (error) {
+			return {
+				systemPrompt: [
+					...event.systemPrompt,
+					`PolderGraph automatic setup or refresh failed: ${error instanceof Error ? error.message : String(error)}. Continue with normal repository inspection and retry PolderGraph on a later task.`,
+				],
+			};
+		}
+	});
+
+	pi.registerTool({
+		name: "poldergraph_search",
+		label: "PolderGraph Search",
+		description: "Search the local PolderGraph code intelligence index using hybrid lexical, semantic, and structural retrieval.",
+		parameters: z.object({ query: z.string().describe("Question, concept, symbol, or path to search for"), limit: z.number().int().min(1).max(50).default(10).describe("Maximum results") }),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			return toolResult(["search", params.query, "--limit", String(params.limit)], ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "poldergraph_context",
+		label: "PolderGraph Context",
+		description: "Retrieve a focused, token-budgeted context pack for a repository task from PolderGraph.",
+		parameters: z.object({ query: z.string().describe("Repository question or task"), budget: z.number().int().min(256).max(12000).default(CONTEXT_BUDGET).describe("Approximate context token budget") }),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			return toolResult(["context", params.query, "--budget", String(params.budget)], ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "poldergraph_explain",
+		label: "PolderGraph Explain",
+		description: "Inspect a symbol or path and its indexed relationships in PolderGraph.",
+		parameters: z.object({ entity: z.string().describe("Entity ID, symbol name, qualified name, or path") }),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			return toolResult(["explain", params.entity], ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "poldergraph_path",
+		label: "PolderGraph Path",
+		description: "Find a relationship path between two repository entities.",
+		parameters: z.object({ source: z.string(), target: z.string() }),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			return toolResult(["path", params.source, params.target], ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "poldergraph_impact",
+		label: "PolderGraph Impact",
+		description: "Find code and tests that may be affected by changing an entity or path.",
+		parameters: z.object({ target: z.string(), max_depth: z.number().int().min(1).max(8).default(3) }),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			return toolResult(["impact", params.target, "--max-depth", String(params.max_depth)], ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "poldergraph_related",
+		label: "PolderGraph Related",
+		description: "Find semantically related entities and distinguish semantic neighbors from structural connections.",
+		parameters: z.object({ entity: z.string(), limit: z.number().int().min(1).max(50).default(10) }),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			return toolResult(["related", params.entity, "--limit", String(params.limit)], ctx.cwd, signal);
+		},
+	});
+
+	pi.registerTool({
+		name: "poldergraph_update",
+		label: "PolderGraph Update",
+		description: "Incrementally refresh the local PolderGraph index after repository changes.",
+		parameters: z.object({}),
+		async execute(_id, _params, signal, _onUpdate, ctx) {
+			const result = await run(["update", "--json"], ctx.cwd, signal);
+			return {
+				content: [{ type: "text" as const, text: result.stdout || result.stderr || `poldergraph update exited with code ${result.code}` }],
+				isError: result.code !== 0 || result.killed,
+			};
+		},
+	});
+
+	pi.registerCommand("poldergraph", {
+		description: "Open the graph dashboard, configure PolderGraph, or run an index command",
+		handler: async (args, ctx) => {
+			const parsed = splitCommandLine(args);
+			const subcommand = parsed[0] || "status";
+			if (subcommand === "ui" || subcommand === "dashboard") {
+				try {
+					await ensureIndex(ctx.cwd);
+					const child = spawn(await resolveCli(ctx.cwd), ["ui"], {
+						cwd: ctx.cwd,
+						detached: true,
+						stdio: "ignore",
+						windowsHide: true,
+					});
+					child.once("error", (error) => pi.logger.warn(`Could not start PolderGraph dashboard: ${error.message}`));
+					child.unref();
+					ctx.ui.notify("PolderGraph dashboard: http://127.0.0.1:7432", "info");
+				} catch (error) {
+					ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
+				}
+				return;
+			}
+			const allowed = new Set(["status", "search", "context", "explain", "path", "related", "impact", "update", "config"]);
+			if (!allowed.has(subcommand)) {
+				ctx.ui.notify("Supported commands: ui, config, status, search, context, explain, path, related, impact, update", "warning");
+				return;
+			}
+			const commandArgs = [subcommand, ...parsed.slice(1)];
+			if (!(subcommand === "config" && parsed[1] === "set")) commandArgs.push("--json");
+			const result = await run(commandArgs, ctx.cwd);
+			const output = result.stdout || result.stderr || `poldergraph ${subcommand} exited with code ${result.code}`;
+			ctx.ui.notify(output.slice(0, 1000), result.code === 0 ? "info" : "warning");
+		},
+	});
+}

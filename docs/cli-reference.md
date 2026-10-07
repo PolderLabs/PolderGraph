@@ -110,15 +110,31 @@ Options:
 
 Start the stdio MCP server.
 
+### `poldergraph setup [PATH]`
+
+Interactively detect installed coding agents and choose which integrations to
+configure for this repository. Detected agents are selected by default. The
+prompt also accepts any supported agent name, a comma-separated list, `all`,
+or `none` (which writes only the general `AGENTS.md` guidance).
+
+Options:
+- `--agent NAME` — configure one or more named integrations without prompting
+- `--all` — configure every supported integration without prompting
+
+Example: `poldergraph setup --agent codex --agent omp`.
+
 ### `poldergraph setup-agent`
 
 Install or update agent instructions and MCP configuration.
 
 Options:
-- `--all` — update every detected agent integration
+- `--all` — update every supported agent integration
 - `--agent NAME` — target one agent adapter (repeatable)
 - `--print-mcp-config` — print MCP server configuration
 - `--hooks` — explicitly allow installing git hooks
+
+For Codex, `poldergraph setup --agent codex` writes a project skill and
+the repository-scoped MCP server config at `.codex/config.toml`.
 
 ### `poldergraph doctor`
 

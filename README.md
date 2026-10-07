@@ -75,6 +75,7 @@ poldergraph context "how does login work?" --json --budget 4000
 # Dashboard and MCP
 poldergraph ui                            # Interactive graph dashboard
 poldergraph mcp                           # MCP server for coding agents
+poldergraph setup                         # Interactive agent integration setup
 poldergraph setup-agent                   # Generate AGENTS.md + MCP config
 
 # Diagnostics
@@ -155,6 +156,40 @@ tracing dependencies, locating tests, or estimating change impact:
 | `pg_impact` | Reverse dependency / change impact analysis |
 | `pg_update` | Incremental index refresh |
 | `pg_find_tests` | Structurally or lexically linked tests |
+
+## Codex setup
+
+Install PolderGraph, initialize the repository, then enable Codex integration:
+
+```bash
+uv tool install "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git"
+poldergraph init
+poldergraph setup --agent codex
+```
+
+This adds a repository skill under `.agents/skills/poldergraph/`, PolderGraph
+guidance in `AGENTS.md`, and a project-scoped MCP server in
+`.codex/config.toml`. Trust the repository in Codex and restart or reload the
+Codex session so the skill and MCP tools become available. Initialize or update
+the index with `poldergraph init` when needed. See [docs/agents.md](docs/agents.md)
+for details. Run `poldergraph setup` without options to interactively choose
+integrations for agents detected on your machine.
+
+## Oh My Pi extension
+
+PolderGraph ships with an installable OMP extension. Install it once; it
+automatically installs the local CLI, indexes each repository in the
+background, refreshes after edits, and adds task-specific graph context to
+agent prompts:
+
+```bash
+omp install github:PolderLabs/PolderGraph
+```
+
+The first setup needs `uv`, network access for package/model downloads, and
+several gigabytes of disk space. Open the graph with `/poldergraph ui`; basic
+configuration is available through `/poldergraph config`. See
+[docs/omp.md](docs/omp.md) for details.
 
 ## Dashboard
 

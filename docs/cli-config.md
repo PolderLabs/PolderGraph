@@ -99,6 +99,11 @@ Starts MCP server.
 ### `poldergraph setup-agent`
 Installs/updates agent instructions/config guidance.
 
+### `poldergraph setup [PATH]`
+Interactively detects installed coding agents and lets you select the
+integrations to configure. Use `--agent NAME` or `--all` for non-interactive
+setup.
+
 ### `poldergraph doctor`
 Verifies:
 - SQLite integrity
