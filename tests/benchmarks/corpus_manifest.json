@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "description": "Retrieval benchmark corpus. Each case names a question, the entity that should be found, and the question class used to score it.",
+  "corpus": "tests/benchmarks/corpus_repo",
+  "cases": [
+    {
+      "id": "exact_implementation",
+      "question": "AuthService",
+      "class": "exact_implementation",
+      "expect": ["AuthService", "AuthService.validate_session"],
+      "graded": false
+    },
+    {
+      "id": "where_token_checked",
+      "question": "where is the session token validated?",
+      "class": "exact_implementation",
+      "expect": ["AuthService.validate_session"],
+      "graded": false
+    },
+    {
+      "id": "synonym_concept",
+      "question": "how do we check credentials",
+      "class": "synonym_concept",
+      "expect": ["AuthService.validate_session", "UserRepository.find_user"],
+      "graded": false
+    },
+    {
+      "id": "architecture",
+      "question": "what is the module structure",
+      "class": "architecture",
+      "expect": ["auth", "models", "billing"],
+      "graded": false
+    },
+    {
+      "id": "dependency_path",
+      "question": "how does AuthService reach Session",
+      "class": "dependency_path",
+      "expect": ["AuthService.validate_session", "Session"],
+      "graded": false
+    },
+    {
+      "id": "tests_related",
+      "question": "tests for validate_session",
+      "class": "tests_related",
+      "expect": ["test_validate_session"],
+      "graded": false
+    },
+    {
+      "id": "change_impact",
+      "question": "what breaks if Session changes",
+      "class": "change_impact",
+      "expect": ["AuthService.validate_session"],
+      "graded": false
+    },
+    {
+      "id": "cross_document",
+      "question": "authentication documentation",
+      "class": "cross_document",
+      "expect": ["Authentication"],
+      "graded": false
+    }
+  ]
+}

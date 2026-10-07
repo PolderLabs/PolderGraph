@@ -1,0 +1,317 @@
+"""MCP stdio server.
+
+Tools invoke the same query service classes as the CLI and the dashboard; there
+is no agent-only retrieval implementation.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from ..errors import (
+    API_VERSION,
+    PolderGraphError,
+    envelope,
+    error_envelope,
+)
+from ..storage.repository import Repository
+
+#: Bounded output limits so a tool never floods an agent's context.
+DEFAULT_RESULT_LIMIT = 25
+MAX_RESULT_LIMIT = 100
+MAX_BUDGET_TOKENS = 60_000
+
+
+def _server_class() -> Any:
+    """Resolve the MCP server class across SDK versions.
+
+    The 1.x SDK exposes ``FastMCP``; 2.x renamed it to ``MCPServer`` while
+    keeping the same ``@tool()`` decorator and stdio transport.
+    """
+    try:
+        from mcp.server.mcpserver import MCPServer
+
+        return MCPServer
+    except ImportError:
+        pass
+    try:
+        from mcp.server.fastmcp import FastMCP
+
+        return FastMCP
+    except ImportError as exc:
+        raise PolderGraphError(
+            "The MCP SDK is not installed.",
+            code="BACKEND_UNAVAILABLE",
+            remediation="Install it with: uv pip install mcp",
+        ) from exc
+
+
+def build_server(root: Path | None = None) -> Any:
+    """Build the MCP server bound to a workspace."""
+    server_class = _server_class()
+
+    from ..cli_support import build_service
+
+    server = server_class("poldergraph")
+
+    class Session:
+        """Lazily opened workspace, reused across tool calls.
+
+        The embedding backend is attached on demand: `pg_status` must answer
+        without paying model load, which is slow enough to look like a hang.
+        """
+
+        def __init__(self) -> None:
+            self._workspace = None
+            self._repo: Repository | None = None
+            self._service = None
+
+        def service(self, *, need_backend: bool = False) -> Any:
+            if self._service is None:
+                self._workspace, self._repo, self._service = build_service(root, need_backend=False)
+            if need_backend and getattr(self._service, "backend", None) is None:
+                from ..embedding.gemma import create_backend
+
+                config = self._service.config
+                if config.embedding.backend != "none":
+                    try:
+                        self._service.backend = create_backend(
+                            config,
+                            cache_dir=self._workspace.index_dir / "cache" / "model",  # type: ignore[union-attr]
+                        )
+                    except Exception:
+                        # Model load can fail for many reasons (disk, network,
+                        # version). Degrade to lexical-only rather than failing
+                        # the entire tool invocation.
+                        self._service.backend = None
+            return self._service
+
+        def repo(self) -> Repository:
+            self.service()
+            assert self._repo is not None
+            return self._repo
+
+        def close(self) -> None:
+            if self._workspace is not None:
+                self._workspace.close()
+            self._workspace = None
+            self._service = None
+
+    session = Session()
+
+    def _envelope(command: str) -> dict[str, Any]:
+        try:
+            return envelope(command=command, index=session.service().freshness())
+        except PolderGraphError as exc:
+            return error_envelope(command, exc)
+
+    def _clamp(value: int | None, default: int) -> int:
+        if not value:
+            return default
+        return max(1, min(int(value), MAX_RESULT_LIMIT))
+
+    # ------------------------------------------------------------- pg_status
+
+    @server.tool()
+    def pg_status() -> dict[str, Any]:
+        """Report index existence, freshness, model, capabilities and counts."""
+        from ..storage.schema import INDEX_FORMAT_VERSION, SCHEMA_VERSION
+        from ..storage.sqlite import database_size_bytes, get_meta
+
+        service = session.service()
+        repo = session.repo()
+        config = service.config
+        payload = {
+            "root": str(service_root(service)),
+            "fresh": service.freshness()["fresh"],
+            "counts": repo.counts(),
+            "model": config.embedding.model,
+            "dimensions": config.index.dimensions,
+            "backend": config.embedding.backend,
+            "schema_version": SCHEMA_VERSION,
+            "index_format_version": INDEX_FORMAT_VERSION,
+            "languages": sorted(
+                row[0]
+                for row in repo.con.execute(
+                    "SELECT DISTINCT language FROM entities WHERE language IS NOT NULL"
+                ).fetchall()
+            ),
+            "communities": {
+                "structural": len(repo.communities("structural")),
+                "hybrid": len(repo.communities("hybrid")),
+            },
+            "database_bytes": database_size_bytes(service.workspace_index()),
+            "last_scan_at": get_meta(repo.con, "last_scan_at"),
+        }
+        return _envelope("pg_status") | {"data": payload}
+
+    # ------------------------------------------------------------- pg_search
+
+    @server.tool()
+    def pg_search(
+        query: str,
+        limit: int = DEFAULT_RESULT_LIMIT,
+        kinds: list[str] | None = None,
+        languages: list[str] | None = None,
+        roots: list[str] | None = None,
+        paths: list[str] | None = None,
+        include_semantic: bool = True,
+        include_structural_context: bool = False,
+    ) -> dict[str, Any]:
+        """Search the repository with hybrid ranking and score decomposition."""
+        from ..retrieval.service import SearchFilters
+
+        service = session.service()
+        filters = SearchFilters(
+            kinds=kinds or [], languages=languages or [], roots=roots or [], path_prefixes=paths or []
+        )
+        def run() -> dict[str, Any]:
+            response = service.search(
+                query,
+                limit=_clamp(limit, DEFAULT_RESULT_LIMIT),
+                filters=filters,
+                include_semantic=include_semantic,
+                include_structural_context=include_structural_context,
+            )
+            return _envelope("pg_search") | {"data": response.to_dict(explain=True)}
+
+        return _guard("pg_search", run)
+
+    # ------------------------------------------------------------ pg_context
+
+    @server.tool()
+    def pg_context(
+        query: str,
+        token_budget: int = 6000,
+        kinds: list[str] | None = None,
+        languages: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return the canonical repository context pack for a task.
+
+        This is the preferred first tool for broad repository questions.
+        """
+        from ..retrieval.service import SearchFilters
+
+        service = session.service()
+        filters = SearchFilters(kinds=kinds or [], languages=languages or [])
+        budget = max(500, min(int(token_budget), MAX_BUDGET_TOKENS))
+        return _guard("pg_context", lambda: _envelope("pg_context") | {
+            "data": service.context(query, token_budget=budget, filters=filters).to_dict()
+        })
+
+    # ------------------------------------------------------------ pg_entity
+
+    @server.tool()
+    def pg_entity(entity: str) -> dict[str, Any]:
+        """Return entity details and a bounded neighborhood."""
+        return _guard("pg_entity", lambda: _envelope("pg_entity") | {
+            "data": session.service().explain(entity)
+        })
+
+    # -------------------------------------------------------------- pg_path
+
+    @server.tool()
+    def pg_path(
+        source: str,
+        target: str,
+        structural_only: bool = True,
+        include_semantic: bool = False,
+        max_hops: int = 12,
+    ) -> dict[str, Any]:
+        """Find the relationship path between two entities."""
+        service = session.service()
+        return _guard("pg_path", lambda: _envelope("pg_path") | {
+            "data": service.path(
+                source, target, structural_only=structural_only, include_semantic=include_semantic, max_hops=max_hops
+            )
+        })
+
+    # ----------------------------------------------------------- pg_related
+
+    @server.tool()
+    def pg_related(entity: str, limit: int = 10) -> dict[str, Any]:
+        """Return semantic neighbours with structural linkage made explicit."""
+        service = session.service()
+        return _guard("pg_related", lambda: _envelope("pg_related") | {
+            "data": service.related(entity, limit=_clamp(limit, 10))
+        })
+
+    # ------------------------------------------------------------ pg_impact
+
+    @server.tool()
+    def pg_impact(
+        entity: str,
+        max_depth: int = 3,
+        edge_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Show what may be affected if this entity changes."""
+        service = session.service()
+        return _guard("pg_impact", lambda: _envelope("pg_impact") | {
+            "data": service.impact(entity, max_depth=max_depth, edge_types=edge_types)
+        })
+
+    # ---------------------------------------------------------- pg_update
+
+    @server.tool()
+    def pg_update() -> dict[str, Any]:
+        """Incrementally refresh the index. Safe to invoke repeatedly."""
+        from ..indexing.incremental import plan_update
+        from ..indexing.pipeline import Indexer
+
+        service = session.service()
+        workspace = service.workspace
+        indexer = Indexer(workspace, backend=service.backend)
+        discovered = indexer.discover()
+        plan = plan_update(session.repo(), discovered, root_id=workspace.root_id())
+        stats = indexer.run(discovered, changed=plan.to_index, removed_paths=plan.removed)
+        return _envelope("pg_update") | {"data": {"plan": plan.summary(), "index": stats.to_dict()}}
+
+    # ------------------------------------------------------- pg_find_tests
+
+    @server.tool()
+    def pg_find_tests(entity: str | None = None, query: str | None = None, limit: int = 25) -> dict[str, Any]:
+        """Return structurally or lexically linked tests for a symbol or file."""
+        service = session.service()
+        return _guard("pg_find_tests", lambda: _envelope("pg_find_tests") | {
+            "data": service.find_tests(entity, query=query, limit=_clamp(limit, 25))
+        })
+
+    server.poldergraph_session = session  # type: ignore[attr-defined]
+    return server
+
+
+def service_root(service: Any) -> Path:
+    for attribute in ("root", "workspace"):
+        value = getattr(service, attribute, None)
+        if isinstance(value, Path):
+            return value
+    return Path.cwd()
+
+
+def _guard(command: str, call: Any) -> Any:
+    """Run a tool body, converting domain errors into structured envelopes.
+
+    An MCP tool must answer with an actionable error envelope rather than
+    raising: the agent sees the message and the remediation step, not a crash.
+    """
+    try:
+        return call()
+    except PolderGraphError as exc:
+        return error_envelope(command, exc)
+
+
+def run_server(root: Path | None = None) -> None:
+    """Run the stdio MCP server until the client disconnects."""
+    server = build_server(root)
+    session = getattr(server, "poldergraph_session", None)
+    try:
+        server.run()
+    finally:
+        if session is not None:
+            session.close()
+
+
+def main() -> int:  # pragma: no cover - console helper
+    run_server()
+    return 0

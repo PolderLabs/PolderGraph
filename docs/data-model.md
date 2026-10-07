@@ -1,270 +1,155 @@
-# Canonical data model
+# Data model reference
 
-The persistent model must make provenance explicit and allow exact incremental invalidation.
+This document describes the canonical data model as implemented. The design
+intent lives in [data-model.md](data-model.md); this file is the reference for
+what the code actually stores.
 
-## Node/entity types
+## Identity
 
-Core node kinds:
+Every entity ID is derived from semantic identity, never from storage order:
 
-- `workspace`
-- `repository`
-- `directory`
-- `file`
-- `module`
-- `namespace`
-- `package`
-- `class`
-- `interface`
-- `trait`
-- `enum`
-- `type_alias`
-- `function`
-- `method`
-- `constructor`
-- `property`
-- `field`
-- `constant`
-- `variable` where language semantics make it useful
-- `endpoint`
-- `test`
-- `document`
-- `section`
-- `image`
-- `audio_segment`
-- `video_segment`
-- `unknown_symbol` for unresolved but useful references
-
-Each entity has a stable ID derived from root identity + language + qualified semantic identity, not from database row order.
-
-Suggested stable key:
-
-```text
-sha256(root_id + kind + language + normalized_path + qualified_name + semantic_discriminator)
+```
+sha256(root_id | kind | language | normalized_path | qualified_name | discriminator)
 ```
 
-Line numbers are not part of the stable identity.
+rendered as `<kind>:<32 hex chars>`. Line and byte positions are excluded, so
+moving a definition inside its file keeps its ID. Overloads in one file are
+separated by a `discriminator` derived from the declaration's byte offset.
 
-## Entity fields
+`normalize_path` converts backslashes to forward slashes and strips `./` and
+leading/trailing separators, so the same logical path written differently yields
+the same ID.
 
-```text
-id                    TEXT PRIMARY KEY
-root_id               TEXT
-kind                  TEXT
-language              TEXT NULL
-name                  TEXT
-qualified_name        TEXT NULL
-path                  TEXT NULL
-parent_id             TEXT NULL
-start_byte            INTEGER NULL
-end_byte              INTEGER NULL
-start_line            INTEGER NULL
-end_line              INTEGER NULL
-visibility            TEXT NULL
-signature             TEXT NULL
-docstring              TEXT NULL
-content_hash           TEXT
-semantic_hash          TEXT
-is_generated           BOOLEAN
-is_external            BOOLEAN
-metadata_json          TEXT
-created_at             INTEGER
-updated_at             INTEGER
-```
+## Entity
 
-`content_hash` tracks source changes. `semantic_hash` tracks the exact normalized text/media input sent to the embedding model.
+`entities` table columns:
 
-## Relationship model
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT | Primary key, stable |
+| `root_id` | TEXT | Owning workspace root |
+| `kind` | TEXT | See the kind enum below |
+| `language` | TEXT | Parser language key |
+| `name` | TEXT | Simple name |
+| `qualified_name` | TEXT | Dotted qualified name |
+| `path` | TEXT | Root-relative POSIX path |
+| `parent_id` | TEXT | Owning entity, NULL at file level |
+| `start_byte`, `end_byte` | INTEGER | Byte span in the source file |
+| `start_line`, `end_line` | INTEGER | Zero-based inclusive line span |
+| `visibility` | TEXT | `public` / `private` / `protected` where known |
+| `signature` | TEXT | Declaration head, without the body |
+| `docstring` | TEXT | Leading docstring or doc comment |
+| `content_hash` | TEXT | SHA-256 of raw file bytes |
+| `semantic_hash` | TEXT | SHA-256 of the normalized embedding input |
+| `is_generated` | INTEGER | 1 when detected as generated |
+| `is_external` | INTEGER | 1 for external/unresolved symbols |
+| `metadata_json` | TEXT | Adapter-specific extras |
+| `created_at`, `updated_at` | INTEGER | Unix seconds |
 
-Every edge stores:
+`content_hash` drives change detection; `semantic_hash` decides whether a file
+must be re-embedded. A reformat that leaves the semantic representation intact
+keeps the same `semantic_hash` and therefore does not trigger re-embedding.
 
-```text
-id
-source_id
-target_id
-type
-provenance
-confidence
-resolver
-source_location
-metadata_json
-created_at
-updated_at
-```
+### Entity kinds
 
-### Structural edge types
+`workspace`, `repository`, `directory`, `file`, `module`, `namespace`,
+`package`, `class`, `interface`, `trait`, `enum`, `type_alias`, `function`,
+`method`, `constructor`, `property`, `field`, `constant`, `variable`,
+`endpoint`, `test`, `document`, `section`, `image`, `audio_segment`,
+`video_segment`, `unknown_symbol`.
 
-At minimum:
+Language adapters may emit namespaced kinds for adapter-specific detail;
+generic consumers work on the set above.
 
-- `contains`
-- `defines`
-- `imports`
-- `exports`
-- `calls`
-- `constructs`
-- `inherits`
-- `implements`
-- `overrides`
-- `references`
-- `reads`
-- `writes`
-- `returns_type`
-- `accepts_type`
-- `decorates`
-- `routes_to`
-- `tests`
-- `documents`
+## Edge
 
-Language adapters may add namespaced edge types, but generic consumers must work on the common set.
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT | `edge:` + hash(source, type, target, provenance, resolver) |
+| `source_id`, `target_id` | TEXT | Entity IDs |
+| `type` | TEXT | See the taxonomy below |
+| `provenance` | TEXT | `extracted`/`resolved`/`inferred`/`ambiguous`/`semantic`/`manual` |
+| `confidence` | REAL | Meaningful within the provenance class |
+| `resolver` | TEXT | Which resolver produced the mapping |
+| `source_path`, `source_line`, `source_col` | | Where the relationship was seen |
+| `metadata_json` | TEXT | Model/revision/threshold for semantic edges |
 
-### Semantic edge type
+On the wire, edges carry both `source`/`target` (the dashboard and MCP contract)
+and `source_id`/`target_id` (the database column names).
 
-- `semantically_related`
+### Edge types
 
-A semantic edge must never be translated into a structural edge based only on embedding similarity.
+Structural: `contains`, `defines`, `imports`, `exports`, `calls`,
+`constructs`, `inherits`, `implements`, `overrides`, `references`, `reads`,
+`writes`, `returns_type`, `accepts_type`, `decorates`, `routes_to`, `tests`,
+`documents`, `contained_by`, `describes`.
 
-## Provenance
+Semantic: `semantically_related`.
 
-Required enum:
+A semantic edge is never translated into a structural edge. `STRUCTURAL_EDGE_TYPES`
+and `SEMANTIC_EDGE_TYPES` are disjoint frozensets, and callers must opt into
+semantic edges explicitly.
 
-- `extracted` — syntax directly establishes the relationship
-- `resolved` — source contains a reference and resolver maps it confidently to a target
-- `inferred` — derived by a deterministic rule with incomplete direct syntax
-- `ambiguous` — multiple plausible structural targets
-- `semantic` — embedding similarity
-- `manual` — user-defined future extension
+### Provenance
 
-Confidence is meaningful within provenance class; `extracted` generally uses 1.0.
+| Value | Meaning | Default confidence |
+|---|---|---|
+| `extracted` | Syntax directly establishes it | 1.0 |
+| `resolved` | Resolver mapped a reference confidently | 0.9 |
+| `inferred` | Deterministic rule over incomplete syntax | 0.6 |
+| `ambiguous` | Several plausible targets | 0.4 |
+| `semantic` | Embedding similarity | 0.5 |
+| `manual` | User-defined extension | 1.0 |
 
-## Embedding records
+## Embeddings
 
-```text
-embedding_id
-entity_id
-modality
-model_id
-model_revision
-dimensions
-task_type
-input_hash
-vector
-norm
-created_at
-```
+`embeddings` rows record `entity_id`, `modality`, `model_id`,
+`model_revision`, `dimensions`, `task_type`, `input_hash` and `norm`. The
+embedding ID is a hash of `(entity_id, model_id, revision, dimensions, task,
+input_hash)`, so a revision or dimension change creates a new identity instead
+of overwriting an existing vector.
 
-Do not overwrite embeddings from a different model revision/dimension in place. Their metadata is part of identity.
+Vectors are stored in a `vec0` virtual table named
+`vec_<model>_<task>_<dimensions>` (default `document` task), with a readable
+shadow table `<name>_vectors` holding the same float32 blobs. The shadow table
+exists because a `vec0` table cannot be selected from to recover a raw vector,
+and neighbour-of-entity queries need exactly that.
 
-The default index uses normalized vectors. Cosine similarity can therefore use dot product where backend semantics permit.
-
-## Semantic representation construction
-
-For code entities, embed a structured textual representation rather than raw body alone:
-
-```text
-kind: method
-language: typescript
-symbol: AuthService.validateSession
-path: src/auth/AuthService.ts
-
-signature:
-async validateSession(token: string): Promise<Session>
-
-documentation:
-Validate an existing session token.
-
-code:
-<entity body>
-```
-
-For file-level embeddings, include path, module docs and a bounded summary-like representation composed deterministically from exported symbols/signatures. Do not ask an LLM to summarize files.
-
-For documentation sections, include heading ancestry.
-
-## Chunks
-
-Chunks are subordinate to entities:
-
-```text
-chunk_id
-entity_id
-ordinal
-modality
-content
-content_hash
-token_count
-metadata_json
-```
-
-Use chunks only when content exceeds model/input policy or modality naturally requires segmentation. Search results are mapped back to their owning entity.
-
-## File table
-
-Store discovery metadata separately so incremental scans do not require entity reads:
-
-```text
-path
-root_id
-size
-mtime_ns
-content_hash
-language
-parse_status
-last_indexed_at
-```
-
-mtime is only a fast-change hint; content hash is authoritative.
-
-## Search/FTS data
-
-FTS5 should index:
-
-- entity name
-- qualified name
-- path
-- signature
-- docstring
-- normalized semantic text
-
-Exact symbol matching gets a dedicated index outside FTS scoring.
+Vectors are L2-normalized on write, so `cos = 1 - d²/2` converts sqlite-vec's
+L2 distance exactly.
 
 ## Communities
 
-```text
-community_id
-algorithm
-mode              structural | hybrid
-resolution
-label
-metadata_json
-```
+`communities` is keyed by `(community_id, algorithm, mode)` where mode is
+`structural` or `hybrid`. Membership lives in `community_members` with the same
+key plus `entity_id`. Both are replaced wholesale on each graph stage.
 
-Membership:
+Hybrid communities include only semantic edges that pass the configured
+threshold.
 
-```text
-community_id
-entity_id
-weight
-```
+## Other tables
 
-Hybrid community calculation must only include semantic edges that pass the configured high-confidence semantic-edge policy.
+- `files` — discovery metadata keyed by `(root_id, path)` with `size`,
+  `mtime_ns`, `content_hash`, `language`, `parse_status`. Incremental scans read
+  this table, not entities.
+- `metrics` — per-entity `metric`/`value` pairs (`degree`, `in_degree`,
+  `out_degree`, `pagerank`, optional `betweenness`), invalidated by a graph
+  fingerprint.
+- `unresolved_refs` — references with no unique target, storing the candidate
+  list so ambiguity is preserved rather than guessed.
+- `change_events` — bounded log consumed by the dashboard SSE stream.
+- `entity_fts` — FTS5 mirror of name, qualified name, path, signature,
+  docstring and normalized semantic text, with per-column BM25 weights.
+- `meta` — schema version, index format version, representation version, last
+  scan time, indexed HEAD, metric cache key.
 
-## Schema versioning
+## Versions
 
-Store a monotonically increasing schema version and a separate index format version.
+`SCHEMA_VERSION` tracks table layout. `INDEX_FORMAT_VERSION` tracks the meaning
+of stored representations; a bump invalidates derived data. `REPRESENTATION_VERSION`
+tracks the semantic-text construction so targeted re-embedding happens when the
+representation changes.
 
-Migrations must:
-- be transactional where SQLite permits,
-- be idempotent with explicit preconditions,
-- never delete the only copy of source-derived metadata without backup,
-- trigger targeted reindex/re-embedding flags when representation semantics change.
-
-## Deletion semantics
-
-When a file is deleted:
-1. delete or tombstone its owned entities,
-2. remove outgoing edges,
-3. remove incoming edges referencing those entities,
-4. delete embeddings/chunks,
-5. invalidate affected communities and metrics,
-6. update unresolved references because a target may disappear.
-
-A renamed file should preserve entity identity when git/file heuristics can confidently identify it; otherwise deletion + insertion is acceptable but must not leave stale edges.
+`poldergraph doctor` verifies: SQLite integrity, schema and format versions,
+orphan edges, orphan embeddings, acyclic parent chains, in-file line spans, FTS
+namespace consistency, vector dimensions, unit norms, and path safety.
