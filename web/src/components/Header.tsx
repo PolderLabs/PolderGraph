@@ -4,6 +4,8 @@ import type { EventsStatus } from '../api/events';
 import type { Palette, ThemeName } from '../graph/palette';
 
 export interface HeaderProps {
+  workspaceMode: 'graph' | 'memory';
+  onWorkspaceModeChange: (mode: 'graph' | 'memory') => void;
   status: StatusData | null;
   statusError: string | null;
   eventsStatus: EventsStatus;
@@ -40,7 +42,11 @@ export const Header = forwardRef<HTMLInputElement, HeaderProps>(function Header(
         <span className="header__workspaceName">{workspace}</span>
       </div>
 
-      <form
+      <nav className="header__workspaces" aria-label="Workspace">
+        {(['graph', 'memory'] as const).map((mode) => <button key={mode} type="button" aria-current={props.workspaceMode === mode ? 'page' : undefined} className={props.workspaceMode === mode ? 'header__workspaceTab is-active' : 'header__workspaceTab'} onClick={() => props.onWorkspaceModeChange(mode)}>{mode === 'graph' ? 'Graph' : 'Memory'}</button>)}
+      </nav>
+
+      {props.workspaceMode === 'graph' && <form
         className="header__search"
         role="search"
         onSubmit={(event) => {
@@ -60,7 +66,7 @@ export const Header = forwardRef<HTMLInputElement, HeaderProps>(function Header(
           spellCheck={false}
         />
         {props.searching && <span className="header__spinner" aria-label="Searching" />}
-      </form>
+      </form>}
 
       <div className="header__status">
         <StatusPill

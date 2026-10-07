@@ -13,7 +13,8 @@ from typing import Any
 
 from ..config.models import Config
 from ..errors import API_VERSION, PolderGraphError, UsageError, envelope
-from ..retrieval.service import QueryService, neighborhood, safe_read
+from ..memory import MemoryStore, memory_backend
+from ..retrieval.service import QueryService, safe_read
 from ..storage.repository import Repository
 from ..storage.schema import SCHEMA_VERSION
 from ..workspace import Workspace
@@ -30,7 +31,7 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
     try:
         from fastapi import FastAPI, Query, Request
         from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.responses import FileResponse, JSONResponse, Response
+        from fastapi.responses import FileResponse, JSONResponse
         from fastapi.staticfiles import StaticFiles
     except ImportError as exc:
         raise PolderGraphError(
@@ -165,6 +166,9 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
         paths: str = Query(default=""),
         include_semantic: bool = Query(default=True),
         include_structural_context: bool = Query(default=False),
+        include_graph_context: bool = Query(default=False),
+        graph_context_limit: int = Query(default=8, ge=1, le=24),
+        graph_fanout: int = Query(default=10, ge=1, le=40),
     ) -> dict[str, Any]:
         from ..retrieval.service import SearchFilters
 
@@ -180,7 +184,31 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
             include_semantic=include_semantic,
             include_structural_context=include_structural_context,
         )
-        return ok("search", response.to_dict())
+        data = response.to_dict()
+        if include_graph_context:
+            from ..retrieval.structural import expand
+
+            seeds = [
+                result.entity_id
+                for result in response.results[:graph_context_limit]
+                if result.entity is not None
+            ]
+            expansion = expand(
+                repo,
+                seeds,
+                hops=1,
+                fanout_cap=graph_fanout,
+                total_cap=graph_context_limit * graph_fanout,
+            ) if seeds else None
+            graph_ids = [*seeds, *(expansion.entity_ids if expansion else [])]
+            entities = repo.get_entities(graph_ids)
+            data["graph"] = {
+                "nodes": [_node(entity, repo) for entity in entities.values()],
+                "edges": [edge.to_dict() for edge in expansion.edges] if expansion else [],
+                "truncated": bool(expansion and expansion.truncated),
+                "aggregate": "none",
+            }
+        return ok("search", data)
 
     @app.get("/api/path")
     def path_route(
@@ -242,6 +270,81 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
         except OSError:
             pass
         return ok("view.preferences", payload)
+
+    @app.get("/api/memory/status")
+    def memory_status() -> dict[str, Any]:
+        return ok("memory.status", MemoryStore(workspace.root).status())
+
+    @app.get("/api/memory")
+    def memory_list(
+        scope: str = Query(default="all"),
+        limit: int = Query(default=100, ge=1, le=100),
+    ) -> Any:
+        try:
+            store = MemoryStore(workspace.root)
+            return ok("memory.list", {"scope": scope, "results": store.list(scope=scope, limit=limit)})
+        except PolderGraphError as exc:
+            return fail("memory.list", exc)
+
+    @app.get("/api/memory/search")
+    def memory_search(
+        q: str = Query(..., min_length=1),
+        scope: str = Query(default="all"),
+        limit: int = Query(default=30, ge=1, le=100),
+        semantic: bool = Query(default=False),
+    ) -> Any:
+        try:
+            store = MemoryStore(workspace.root)
+            backend_for_memory = memory_backend() if semantic else None
+            return ok(
+                "memory.search",
+                {
+                    "query": q,
+                    "scope": scope,
+                    "results": store.search(q, scope=scope, limit=limit, backend=backend_for_memory),
+                },
+            )
+        except PolderGraphError as exc:
+            return fail("memory.search", exc)
+
+    @app.post("/api/memory")
+    async def memory_add(request: Request) -> Any:
+        try:
+            payload = await request.json()
+            result = MemoryStore(workspace.root).add(
+                str(payload.get("content", "")),
+                scope=payload.get("scope", "project"),
+                kind=payload.get("kind", "fact"),
+                tags=payload.get("tags", []),
+            )
+            return ok("memory.add", result)
+        except PolderGraphError as exc:
+            return fail("memory.add", exc)
+        except (AttributeError, TypeError, ValueError) as exc:
+            return fail("memory.add", UsageError(f"Invalid memory request: {exc}"))
+
+    @app.post("/api/memory/{memory_id}/update")
+    async def memory_update(memory_id: str, request: Request) -> Any:
+        try:
+            payload = await request.json()
+            result = MemoryStore(workspace.root).update(
+                memory_id,
+                content=payload.get("content"),
+                kind=payload.get("kind"),
+                tags=payload.get("tags"),
+            )
+            return ok("memory.update", result)
+        except PolderGraphError as exc:
+            return fail("memory.update", exc)
+        except (AttributeError, TypeError, ValueError) as exc:
+            return fail("memory.update", UsageError(f"Invalid memory request: {exc}"))
+
+    @app.post("/api/memory/{memory_id}/forget")
+    def memory_forget(memory_id: str) -> Any:
+        try:
+            return ok("memory.forget", MemoryStore(workspace.root).forget(memory_id))
+        except PolderGraphError as exc:
+            return fail("memory.forget", exc)
 
     @app.get("/api/source")
     def source(
@@ -383,8 +486,6 @@ def build_global_graph(
 
     entities = repo.iter_entities(root_id=root_id)
     metrics = repo.metrics_map()
-    communities = repo.community_map("structural")
-
     if aggregate in {"directory", "community"} and len(entities) > node_cap:
         nodes, node_index = _aggregate_nodes(entities, aggregate, node_cap)
     else:

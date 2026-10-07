@@ -249,6 +249,35 @@ export interface SearchResult {
 export interface SearchData {
   results: SearchResult[];
   truncated: boolean;
+  graph?: GraphPayload;
+}
+
+export interface MemoryEntry {
+  id: string;
+  scope: 'project' | 'user';
+  project_root: string | null;
+  kind: 'fact' | 'preference' | 'decision' | 'workflow' | 'reference';
+  content: string;
+  tags: string[];
+  created_at: number;
+  updated_at: number;
+  score?: number;
+  matched_terms?: string[];
+  retrieval?: string;
+}
+
+export interface MemoryStatusData {
+  store: string;
+  current_project: string;
+  user_memories: number;
+  project_memories: number;
+  total_memories: number;
+  scope_note: string;
+}
+
+export interface MemoryListData {
+  scope: string;
+  results: MemoryEntry[];
 }
 
 export interface PathNode {
