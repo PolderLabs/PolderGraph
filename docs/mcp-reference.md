@@ -93,3 +93,8 @@ poldergraph setup-agent --print-mcp-config
 ```
 
 Generates a JSON MCP server configuration pointing at the current executable and workspace root.
+
+For Codex, `poldergraph setup-agent --agent codex` writes a project-scoped
+`[mcp_servers.poldergraph]` entry to `.codex/config.toml` and installs the
+PolderGraph skill under `.agents/skills/poldergraph/`. Codex must trust the
+repository before loading project MCP configuration.

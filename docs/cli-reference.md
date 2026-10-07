@@ -120,6 +120,9 @@ Options:
 - `--print-mcp-config` — print MCP server configuration
 - `--hooks` — explicitly allow installing git hooks
 
+For Codex, `poldergraph setup-agent --agent codex` writes a project skill and
+the repository-scoped MCP server config at `.codex/config.toml`.
+
 ### `poldergraph doctor`
 
 Verify index integrity: SQLite integrity, schema/version, orphan edges/embeddings, acyclic parent chains, line spans, FTS namespace, vector dimensions/norms, path safety.

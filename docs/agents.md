@@ -162,11 +162,24 @@ plugin adds task context automatically and exposes focused graph tools; the
 generated OMP skill remains a lightweight fallback when the extension is not
 installed.
 
+For Codex, run `poldergraph setup-agent --agent codex` in the repository. This
+installs a Codex skill in `.agents/skills/poldergraph/SKILL.md` and adds a
+repository-scoped `poldergraph` MCP server to `.codex/config.toml` without
+replacing other Codex settings. Codex project MCP servers require a trusted
+repository; restart/reload Codex after setup. The MCP server runs
+`poldergraph mcp <repository-root>` and queries the same local index as the
+CLI. Initialize the index once with `poldergraph init` if it does not exist.
+
 These adapters contain minimal guidance that points back to the canonical CLI/MCP contract. Avoid duplicating pages of instructions in each integration.
 
 ## MCP configuration generation
 
 `poldergraph setup-agent` should print or write supported local MCP configuration where safe.
+
+Codex setup writes TOML directly to the repository's `.codex/config.toml`,
+using marker comments to keep repeated setup idempotent. Existing
+`mcp_servers.poldergraph` configuration is left untouched; malformed TOML is
+reported without overwriting the file.
 
 The generated server command must point to the current `poldergraph` executable and current workspace root; it must not contain secrets.
 

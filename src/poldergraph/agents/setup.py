@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,28 @@ Run `poldergraph update --quiet` after substantial edits.
 Do not read `.poldergraph/index.sqlite3` directly.
 <!-- poldergraph:end -->"""
 
+CODEX_SKILL_BLOCK = """<!-- poldergraph:start -->
+## Use PolderGraph for repository intelligence
+
+Before broad source exploration, use the `poldergraph` MCP tools when available, starting
+with `pg_status` and `pg_context` for the current task. If MCP is unavailable,
+run `poldergraph context "<task>" --json`. Refresh a stale index with
+`pg_update` or `poldergraph update --quiet` and query again.
+
+Use `pg_path`, `pg_entity`, `pg_impact`, and `pg_find_tests` for focused graph
+questions. Read the cited source files before drawing conclusions; semantic
+similarity is a retrieval hint, not proof of a dependency. After edits, call
+`pg_update` when MCP is enabled; otherwise run `poldergraph update --quiet`.
+<!-- poldergraph:end -->"""
+
+CODEX_SKILL_FRONTMATTER = """---
+name: poldergraph
+description: Use PolderGraph's local structural and semantic code graph to find implementations, trace relationships, locate tests, and estimate change impact in this repository.
+---"""
+
+CODEX_MCP_START = "# poldergraph:start"
+CODEX_MCP_END = "# poldergraph:end"
+
 
 @dataclass
 class AgentAdapter:
@@ -74,7 +97,7 @@ AGENT_ADAPTERS: tuple[AgentAdapter, ...] = (
     AgentAdapter("claude", "CLAUDE.md"),
     AgentAdapter("cursor", ".cursor/rules/poldergraph.mdc"),
     AgentAdapter("copilot", ".github/copilot-instructions.md"),
-    AgentAdapter("codex", "AGENTS.md"),
+    AgentAdapter("codex", ".agents/skills/poldergraph/SKILL.md", CODEX_SKILL_BLOCK),
     AgentAdapter("gemini", "GEMINI.md"),
     AgentAdapter("opencode", "AGENTS.md"),
     AgentAdapter("omp", ".omp/skills/poldergraph/SKILL.md"),
@@ -100,11 +123,68 @@ def write_instructions(path: Path, block: str) -> bool:
     """Write or update an instruction file idempotently."""
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     updated, changed = update_block(existing, block)
-    if changed or not path.exists():
+    should_write = changed or not path.exists()
+    if should_write:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(updated, encoding="utf-8")
+    return should_write
+
+
+def write_codex_skill(path: Path) -> bool:
+    """Write a valid Codex skill while preserving existing user instructions."""
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{CODEX_SKILL_FRONTMATTER}\n\n{CODEX_SKILL_BLOCK}\n", encoding="utf-8")
         return True
-    return False
+
+    existing = path.read_text(encoding="utf-8")
+    if START_MARKER in existing and END_MARKER in existing:
+        updated, changed = update_block(existing, CODEX_SKILL_BLOCK)
+    elif existing.startswith("---\n"):
+        marker = existing.find("\n---", 4)
+        if marker == -1:
+            return False
+        insert_at = marker + len("\n---")
+        updated = f"{existing[:insert_at]}\n\n{CODEX_SKILL_BLOCK}{existing[insert_at:]}"
+        changed = updated != existing
+    else:
+        updated = f"{CODEX_SKILL_FRONTMATTER}\n\n{existing.rstrip()}\n\n{CODEX_SKILL_BLOCK}\n"
+        changed = updated != existing
+    if changed:
+        path.write_text(updated, encoding="utf-8")
+    return changed
+
+
+def write_codex_mcp_config(root: Path) -> tuple[bool, str]:
+    """Add the repository-scoped MCP server without replacing other Codex config."""
+    path = root / ".codex" / "config.toml"
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    try:
+        config = tomllib.loads(existing) if existing.strip() else {}
+    except tomllib.TOMLDecodeError as exc:
+        return False, f"{path.relative_to(root)} is invalid TOML ({exc}); MCP entry was not changed"
+
+    executable = shutil.which("poldergraph") or "poldergraph"
+    block = (
+        f"{CODEX_MCP_START}\n[mcp_servers.poldergraph]\n"
+        f"command = {json.dumps(executable)}\n"
+        f"args = {json.dumps(['mcp', str(root)])}\n{CODEX_MCP_END}"
+    )
+    if CODEX_MCP_START in existing and CODEX_MCP_END in existing:
+        start = existing.index(CODEX_MCP_START)
+        end = existing.index(CODEX_MCP_END, start) + len(CODEX_MCP_END)
+        updated = existing[:start] + block + existing[end:]
+        if updated == existing:
+            return False, f"{path.relative_to(root)} already configures the poldergraph MCP server"
+    else:
+        servers = config.get("mcp_servers", {})
+        if isinstance(servers, dict) and "poldergraph" in servers:
+            return False, f"{path.relative_to(root)} already configures the poldergraph MCP server"
+        separator = "" if not existing or existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
+        updated = f"{existing}{separator}{block}\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(updated, encoding="utf-8")
+    return True, str(path.relative_to(root))
 
 
 def detect_agents(root: Path) -> list[AgentAdapter]:
@@ -164,10 +244,18 @@ def setup_agent_guidance(
         path = adapter.path(root)
         if path == agents_md:
             continue
-        if write_instructions(path, ADAPTER_BLOCK):
+        changed = write_codex_skill(path) if adapter.name == "codex" else write_instructions(path, adapter.block)
+        if changed:
             written.append(adapter.relative_path)
         else:
             skipped.append(f"{adapter.relative_path} (already current)")
+
+    if any(adapter.name == "codex" for adapter in selected):
+        changed, result = write_codex_mcp_config(root)
+        if changed:
+            written.append(result)
+        else:
+            skipped.append(result)
 
     return {
         "root": str(root),

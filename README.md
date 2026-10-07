@@ -151,6 +151,23 @@ tracing dependencies, locating tests, or estimating change impact:
 | `pg_update` | Incremental index refresh |
 | `pg_find_tests` | Structurally or lexically linked tests |
 
+## Codex setup
+
+Install PolderGraph, initialize the repository, then enable Codex integration:
+
+```bash
+uv tool install "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git"
+poldergraph init
+poldergraph setup-agent --agent codex
+```
+
+This adds a repository skill under `.agents/skills/poldergraph/`, PolderGraph
+guidance in `AGENTS.md`, and a project-scoped MCP server in
+`.codex/config.toml`. Trust the repository in Codex and restart or reload the
+Codex session so the skill and MCP tools become available. Initialize or update
+the index with `poldergraph init` when needed. See [docs/agents.md](docs/agents.md)
+for details.
+
 ## Oh My Pi extension
 
 PolderGraph ships with an installable OMP extension. Install it once; it
