@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="760" viewBox="0 0 1440 760" role="img" aria-labelledby="title desc">
+  <title id="title">PolderGraph interactive repository graph dashboard</title>
+  <desc id="desc">A dark code graph interface with filters, a connected graph, search, and a source inspector.</desc>
+  <defs>
+    <linearGradient id="shell" x2="0" y2="1"><stop stop-color="#151e2e"/><stop offset="1" stop-color="#101723"/></linearGradient>
+    <linearGradient id="canvas" x2="1" y2="1"><stop stop-color="#0c131f"/><stop offset="1" stop-color="#111d2b"/></linearGradient>
+    <linearGradient id="selected" x2="1" y2="1"><stop stop-color="#6e91ff"/><stop offset="1" stop-color="#55d2c6"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="13"/></filter>
+  </defs>
+  <rect x="8" y="8" width="1424" height="744" rx="22" fill="url(#shell)" stroke="#344157" stroke-width="2"/>
+  <path d="M9 75h1422" stroke="#303d51"/><path d="M236 76v675M1164 76v675" stroke="#303d51"/>
+  <rect x="9" y="9" width="1422" height="66" rx="21" fill="#172131"/><path d="M9 75h1422" stroke="#303d51"/>
+
+  <g transform="translate(32 25)"><rect width="32" height="32" rx="10" fill="url(#selected)"/><path d="m8 16 6 6 11-13" fill="none" stroke="#101723" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <text x="76" y="49" fill="#e6edf8" font-family="Inter,system-ui,sans-serif" font-weight="700" font-size="20">PolderGraph</text>
+  <text x="259" y="35" fill="#8292a9" font-family="Inter,system-ui,sans-serif" font-size="10" letter-spacing="1.3">WORKSPACE</text>
+  <text x="259" y="53" fill="#d4deed" font-family="Inter,system-ui,sans-serif" font-size="13">payments-service</text>
+  <rect x="474" y="20" width="512" height="40" rx="14" fill="#0f1825" stroke="#33445b"/>
+  <circle cx="496" cy="40" r="6" fill="none" stroke="#7f92ad" stroke-width="1.6"/><path d="m501 45 5 5" stroke="#7f92ad" stroke-width="1.6"/>
+  <text x="515" y="44" fill="#71829a" font-family="Inter,system-ui,sans-serif" font-size="13">Search symbols, paths, or ask a question…</text>
+  <rect x="1261" y="25" width="73" height="28" rx="14" fill="#282b2b" stroke="#63593a"/><circle cx="1276" cy="39" r="4" fill="#e4b759"/><text x="1286" y="43" fill="#d9c58c" font-family="Inter,system-ui,sans-serif" font-size="11">indexed</text>
+  <rect x="1340" y="25" width="70" height="28" rx="14" fill="#18352f"/><circle cx="1355" cy="39" r="4" fill="#55d2a0"/><text x="1365" y="43" fill="#a9dbc6" font-family="Inter,system-ui,sans-serif" font-size="11">live</text>
+
+  <text x="32" y="110" fill="#9aaac0" font-family="Inter,system-ui,sans-serif" font-size="12" font-weight="700" letter-spacing="1.2">EXPLORE</text>
+  <text x="198" y="110" fill="#7e9dff" font-family="Inter,system-ui,sans-serif" font-size="12">reset</text>
+  <text x="32" y="144" fill="#71829a" font-family="Inter,system-ui,sans-serif" font-size="12">Filter by name or path</text>
+  <rect x="28" y="156" width="188" height="36" rx="9" fill="#0e1724" stroke="#314158"/><text x="41" y="179" fill="#64748c" font-family="Inter,system-ui,sans-serif" font-size="12">name, path, kind…</text>
+  <text x="32" y="226" fill="#d6dfec" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="650">⌄  Node kinds</text>
+  <g font-family="Inter,system-ui,sans-serif" font-size="12" fill="#b9c6d8">
+    <rect x="34" y="244" width="13" height="13" rx="3" fill="#25344b" stroke="#5c7191"/><text x="58" y="255">classes</text>
+    <rect x="34" y="269" width="13" height="13" rx="3" fill="#25344b" stroke="#5c7191"/><text x="58" y="280">functions</text>
+    <rect x="34" y="294" width="13" height="13" rx="3" fill="#25344b" stroke="#5c7191"/><text x="58" y="305">files</text>
+    <rect x="34" y="319" width="13" height="13" rx="3" fill="#25344b" stroke="#5c7191"/><text x="58" y="330">tests</text>
+  </g>
+  <path d="M28 353h188" stroke="#2b394d"/><text x="32" y="381" fill="#d6dfec" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="650">›  Languages</text>
+  <path d="M28 400h188" stroke="#2b394d"/><text x="32" y="429" fill="#d6dfec" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="650">›  Communities</text>
+  <path d="M28 448h188" stroke="#2b394d"/><text x="32" y="478" fill="#d6dfec" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="650">⌄  Relationships</text>
+  <circle cx="41" cy="503" r="3" fill="#7897ff"/><text x="53" y="507" fill="#b9c6d8" font-family="Inter,system-ui,sans-serif" font-size="12">Calls &amp; imports</text>
+  <path d="M31 525h184" stroke="#8191a8" stroke-width="2"/><path d="m116 519 11 6-11 6" fill="#8191a8"/>
+  <text x="32" y="552" fill="#c9d4e3" font-family="Inter,system-ui,sans-serif" font-size="11">Semantic similarity</text>
+  <text x="187" y="552" fill="#90a2bc" font-family="ui-monospace,monospace" font-size="11">0.25</text>
+  <rect x="32" y="569" width="183" height="5" rx="3" fill="#36465c"/><rect x="32" y="569" width="72" height="5" rx="3" fill="#7897ff"/><circle cx="104" cy="571.5" r="8" fill="#90a8ff"/>
+  <text x="32" y="606" fill="#71829a" font-family="Inter,system-ui,sans-serif" font-size="10">Similarity never replaces structural facts.</text>
+
+  <rect x="237" y="76" width="926" height="675" fill="url(#canvas)"/>
+  <circle cx="705" cy="405" r="280" fill="#405dcc" opacity=".08" filter="url(#glow)"/>
+  <rect x="258" y="94" width="60" height="34" rx="10" fill="#172335" stroke="#35465f"/><text x="273" y="116" fill="#c5d1e2" font-family="Inter,system-ui,sans-serif" font-size="12">fit</text>
+  <rect x="327" y="94" width="83" height="34" rx="10" fill="#172335" stroke="#35465f"/><text x="342" y="116" fill="#c5d1e2" font-family="Inter,system-ui,sans-serif" font-size="12">pause</text>
+  <rect x="419" y="94" width="124" height="34" rx="10" fill="#172335" stroke="#35465f"/><text x="434" y="116" fill="#c5d1e2" font-family="Inter,system-ui,sans-serif" font-size="12">reset layout</text>
+  <g fill="none" stroke-linecap="round">
+    <g stroke="#7091ff" stroke-width="3" stroke-opacity=".52">
+      <path d="m382 440 114-146 144 61 112-154 151 89 123-98"/>
+      <path d="m496 294-15 211 159-150 93 191 170-256"/>
+      <path d="m640 355 112-154 51 345 89-256 113 170"/>
+      <path d="m481 505 224 57 98-16 130-65 111 105"/>
+    </g>
+    <g stroke="#61d5c8" stroke-width="3" stroke-opacity=".74">
+      <path d="m382 440 258-85 164 191 85-106 125 45"/>
+      <path d="m496 294 256-93 234 191"/>
+    </g>
+  </g>
+  <g fill="#111b29" stroke-width="3">
+    <circle cx="382" cy="440" r="13" stroke="#6e94ff"/><circle cx="496" cy="294" r="12" stroke="#f0a970"/>
+    <circle cx="640" cy="355" r="17" stroke="#60d7ca"/><circle cx="752" cy="201" r="12" stroke="#7c9cff"/>
+    <circle cx="903" cy="290" r="14" stroke="#f0a970"/><circle cx="1026" cy="192" r="12" stroke="#67d8cd"/>
+    <circle cx="481" cy="505" r="11" stroke="#8a9cff"/><circle cx="705" cy="562" r="13" stroke="#f0b961"/>
+    <circle cx="803" cy="546" r="11" stroke="#63d5ca"/><circle cx="933" cy="481" r="17" stroke="#9d8cff"/>
+    <circle cx="1044" cy="586" r="12" stroke="#f0a970"/><circle cx="752" cy="392" r="10" stroke="#f0b961"/>
+  </g>
+  <circle cx="933" cy="481" r="24" fill="none" stroke="#a196ff" stroke-opacity=".22" stroke-width="9"/>
+  <g font-family="Inter,system-ui,sans-serif" font-size="12" fill="#d8e2f1">
+    <text x="346" y="468">api</text><text x="462" y="275">routes</text><text x="620" y="387">authorize_request</text>
+    <text x="721" y="181">tokens.py</text><text x="883" y="269">session</text><text x="1028" y="174">tests</text>
+    <text x="909" y="456">refresh_session</text><text x="1027" y="615">test_refresh</text><text x="670" y="590">storage</text>
+  </g>
+  <rect x="255" y="696" width="890" height="55" fill="#111a27"/><path d="M237 696h927" stroke="#303d51"/>
+  <g font-family="Inter,system-ui,sans-serif" font-size="12"><rect x="269" y="708" width="68" height="30" rx="15" fill="#23365b" stroke="#7996ff"/><text x="286" y="728" fill="#e0e8fa">Global</text><text x="357" y="728" fill="#71829a">Local</text><text x="413" y="728" fill="#71829a">Search</text><text x="485" y="728" fill="#71829a">Path</text></g>
+
+  <text x="1190" y="113" fill="#e0e8f2" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="650">INSPECT</text>
+  <text x="1190" y="147" fill="#7f91aa" font-family="Inter,system-ui,sans-serif" font-size="12">METHOD · PYTHON</text>
+  <text x="1190" y="178" fill="#cbd9ed" font-family="ui-monospace,monospace" font-size="15">refresh_session</text>
+  <text x="1190" y="207" fill="#8fa1bb" font-family="Inter,system-ui,sans-serif" font-size="12">src/auth/session.py:84–107</text>
+  <rect x="1188" y="230" width="218" height="1" fill="#303d51"/>
+  <text x="1190" y="262" fill="#d7e1ef" font-family="Inter,system-ui,sans-serif" font-size="12" font-weight="650">SOURCE</text>
+  <rect x="1188" y="278" width="218" height="146" rx="11" fill="#0d1521" stroke="#293950"/>
+  <g font-family="ui-monospace,monospace" font-size="10.5">
+    <text x="1200" y="301" fill="#62748e">84</text><text x="1225" y="301" fill="#90a7ff">def</text><text x="1247" y="301" fill="#d5dfed">refresh_session</text>
+    <text x="1200" y="322" fill="#62748e">85</text><text x="1225" y="322" fill="#a8b6c9">    token = decode(refresh_token)</text>
+    <text x="1200" y="343" fill="#62748e">86</text><text x="1225" y="343" fill="#a8b6c9">    session = store.get(token.sub)</text>
+    <text x="1200" y="364" fill="#62748e">87</text><text x="1225" y="364" fill="#a8b6c9">    validate(session, token)</text>
+    <text x="1200" y="385" fill="#62748e">88</text><text x="1225" y="385" fill="#8ed9ce">    return issue_access(session)</text>
+    <text x="1200" y="406" fill="#62748e">89</text>
+  </g>
+  <text x="1190" y="459" fill="#d7e1ef" font-family="Inter,system-ui,sans-serif" font-size="12" font-weight="650">RELATIONSHIPS</text>
+  <circle cx="1197" cy="484" r="3" fill="#6e94ff"/><text x="1208" y="488" fill="#b9c8dc" font-family="Inter,system-ui,sans-serif" font-size="11">calls issue_access</text>
+  <circle cx="1197" cy="508" r="3" fill="#6e94ff"/><text x="1208" y="512" fill="#b9c8dc" font-family="Inter,system-ui,sans-serif" font-size="11">uses TokenStore</text>
+  <circle cx="1197" cy="532" r="3" fill="#65d9cf"/><text x="1208" y="536" fill="#b9c8dc" font-family="Inter,system-ui,sans-serif" font-size="11">related: validate_token</text>
+  <rect x="1188" y="561" width="218" height="1" fill="#303d51"/>
+  <text x="1190" y="591" fill="#8495ad" font-family="Inter,system-ui,sans-serif" font-size="11">Structural and semantic evidence</text>
+  <text x="1190" y="609" fill="#8495ad" font-family="Inter,system-ui,sans-serif" font-size="11">are clearly distinguished.</text>
+</svg>
