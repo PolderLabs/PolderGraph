@@ -45,6 +45,7 @@ BASELINE_LANGUAGES: frozenset[str] = frozenset(
         "sql",
         "vue",
         "svelte",
+        "astro",
     }
 )
 
@@ -83,6 +84,7 @@ GRAMMAR_NAMES: dict[str, str] = {
     "sql": "sql",
     "vue": "vue",
     "svelte": "svelte",
+    "astro": "astro",
     "json": "json",
     "yaml": "yaml",
     "toml": "toml",
@@ -141,6 +143,7 @@ EXTENSION_MAP: dict[str, str] = {
     ".sql": "sql",
     ".vue": "vue",
     ".svelte": "svelte",
+    ".astro": "astro",
     ".json": "json",
     ".yaml": "yaml",
     ".yml": "yaml",

@@ -322,6 +322,24 @@ More details here.
 Call the entry point.
 """
 
+ASTRO = b"""---
+interface Props {
+	title: string;
+	description?: string;
+}
+
+const { title, description = 'Fallback' } = Astro.props;
+const slug = Astro.url.pathname;
+
+export async function getStaticPaths() {
+	return [{ params: { slug } }];
+}
+---
+
+<h1>{title}</h1>
+<p>{description}</p>
+"""
+
 SAMPLES: dict[str, tuple[str, bytes]] = {
     "python": ("auth.py", PYTHON),
     "typescript": ("widget.ts", TYPESCRIPT),
@@ -337,4 +355,5 @@ SAMPLES: dict[str, tuple[str, bytes]] = {
     "kotlin": ("AuthService.kt", KOTLIN),
     "swift": ("AuthService.swift", SWIFT),
     "markdown": ("README.md", MARKDOWN),
+    "astro": ("Downloads.astro", ASTRO),
 }

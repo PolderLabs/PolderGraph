@@ -27,6 +27,23 @@ Use the tree-sitter engine helpers:
 - `walk(node)` — depth-first iteration
 - `children_of_type(node, *types)` — filter children by type
 
+### Line numbers must be 1-based
+
+Tree-sitter reports `node.start_point[0]` counted from **zero**, but every
+public surface — stored spans, CLI output, JSON, the HTTP API, MCP payloads —
+is 1-based, matching `grep -n` and every editor.
+
+Adapters therefore copy the raw coordinate into `ParsedSymbol.start_line`, and
+`ParseEngine.parse` converts the whole `ParseResult` to 1-based once, at the
+single boundary every adapter returns through. Do **not** add `+ 1` inside an
+adapter: that would double-convert.
+
+Anything that slices a file by a stored span must subtract 1 to get a list
+index, e.g. `lines[entity.start_line - 1 : entity.end_line]`.
+
+A parser fixture should assert this against real text: the line named by
+`start_line` must contain the symbol's name.
+
 ### 3. Register the adapter
 
 In `src/poldergraph/parsing/languages/__init__.py`, add the import and register call:

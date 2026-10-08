@@ -52,6 +52,13 @@ def load_adapters() -> dict[str, Any]:
     except ImportError:
         pass
 
+    try:
+        from .astro_adapter import AstroAdapter
+
+        register(AstroAdapter, "astro")
+    except ImportError:
+        pass
+
     from .c_like import load_c_like_adapters
 
     for language, adapter in load_c_like_adapters().items():

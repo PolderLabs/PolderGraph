@@ -35,6 +35,7 @@ This is not a phased roadmap. The initial implementation is considered complete 
 - [ ] C# strong adapter
 - [ ] Kotlin strong adapter
 - [ ] Swift strong adapter
+- [ ] Astro strong adapter (frontmatter re-parsed as TypeScript)
 - [ ] baseline indexing for additional supported grammars
 - [ ] cross-file resolver
 - [ ] aliases/re-exports
