@@ -682,8 +682,8 @@ class QueryService:
             if stat_result.st_size != record["size"]:
                 pending += 1
                 continue
-            mtime_ns = int(stat_result.st_mtime * 1_000_000_000)
-            if record["mtime_ns"] and mtime_ns > record["mtime_ns"]:
+            mtime_ns = stat_result.st_mtime_ns
+            if record["mtime_ns"] and mtime_ns != record["mtime_ns"]:
                 pending += 1
         return pending + self._unindexed_files(root, seen)
 
