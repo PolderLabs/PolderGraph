@@ -631,11 +631,20 @@ class QueryService:
         last_scan = float(state) if state else 0.0
         drift = self._pending_changes()
         head = get_meta(self.repo.con, "indexed_head")
+        fresh = drift == 0
         return {
-            "fresh": drift == 0,
+            "fresh": fresh,
+            "generation": self._index_generation(),
+            "revision": head,
+            "structural": "fresh" if fresh else "stale",
+            # The index does not yet track per-file embedding completion as a
+            # committed generation, so callers must not infer semantic freshness.
+            "semantic": "unknown",
             "last_scan_at": int(last_scan) if last_scan else None,
             "pending_changes": drift,
             "indexed_head": head,
+            "stale_since": int(last_scan) if drift and last_scan else None,
+            "source_read_required": not fresh,
         }
 
     def _pending_changes(self) -> int:

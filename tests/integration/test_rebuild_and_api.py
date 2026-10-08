@@ -140,6 +140,31 @@ class TestDashboardApi:
 
         assert service.freshness()["fresh"] is True
 
+    def test_freshness_reports_revision_and_stale_source_read_requirement(self, indexed_workspace):
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+
+        service = QueryService(
+            Repository(indexed_workspace.con),
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        current = service.freshness()
+        assert current["generation"]
+        assert current["revision"] == current["indexed_head"]
+        assert current["structural"] == "fresh"
+        assert current["semantic"] == "unknown"
+        assert current["source_read_required"] is False
+
+        source = indexed_workspace.root / "pkg" / "auth.py"
+        source.write_text(source.read_text() + "\n# freshness probe\n")
+        stale = service.freshness()
+        assert stale["fresh"] is False
+        assert stale["structural"] == "stale"
+        assert stale["pending_changes"] > 0
+        assert stale["source_read_required"] is True
+
     def test_global_graph_payload_shape(self, api_client):
         data = api_client.get("/api/graph/global?limit=50").json()["data"]
         assert data["nodes"] and data["edges"]
