@@ -181,8 +181,36 @@ def test_memory_decisions_bind_one_bounded_candidate_per_request(monkeypatch):
     assert all(len(question.statement) < 500 for question in questions.values())
     assert "candidate ID mem_0" in questions["relevant_0"].statement
     assert "candidate ID mem_19" in questions["relevant_19"].statement
+    assert "excerpt_truncated=true" in questions["relevant_0"].statement
     assert [item["id"] for item in remaining] == [f"mem_{i}" for i in range(1, 20)]
     assert info["evaluated"] == 20
+
+
+def test_memory_candidate_overflow_is_reported_and_retained(monkeypatch):
+    monkeypatch.setattr(
+        decision_runtime,
+        "run_decision",
+        lambda state, questions, config: {
+            "provider": "typesafe",
+            "answers": {
+                name: {"probability": 0.01} for name in questions
+            },
+        },
+    )
+    memories = [
+        {
+            "id": f"mem_{index}",
+            "kind": "fact",
+            "content": f"memory {index}",
+            "lexical_score": 0.4,
+            "semantic_score": None,
+        }
+        for index in range(21)
+    ]
+    remaining, info = decision_runtime.decide_memory_relevance("task", memories, _config())
+    assert [item["id"] for item in remaining] == ["mem_20"]
+    assert info["evaluated"] == 20
+    assert info["abstained"] == 1
 
 
 @pytest.mark.parametrize("count", [2, 8, 20])

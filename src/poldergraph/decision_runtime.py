@@ -37,6 +37,14 @@ def _sanitize_text(value: str) -> str:
     return value
 
 
+def _bounded_excerpt(value: str, limit: int) -> tuple[str, bool]:
+    """Return a sanitized bounded excerpt and disclose whether it was cut."""
+    sanitized = _sanitize_text(value)
+    if len(sanitized) <= limit:
+        return sanitized, False
+    return sanitized[:limit].rstrip() + " [TRUNCATED]", True
+
+
 def _setting(config: Any, key: str, default: Any = None) -> Any:
     section = getattr(config, "decisions", None)
     if section is None:
@@ -290,15 +298,18 @@ def decide_memory_relevance(
     if not candidates:
         return memories, None
     threshold = float(_setting(config, "confidence_threshold", 0.9))
-    task = _sanitize_text(query[:240])
-    candidate_data = [
-        {
-            "memory_id": str(memory["id"]),
-            "kind": str(memory.get("kind", "fact"))[:32],
-            "memory": _sanitize_text(str(memory.get("content", ""))[:320]),
-        }
-        for memory in candidates
-    ]
+    task, task_truncated = _bounded_excerpt(query, 240)
+    candidate_data = []
+    for memory in candidates:
+        excerpt, truncated = _bounded_excerpt(str(memory.get("content", "")), 320)
+        candidate_data.append(
+            {
+                "memory_id": str(memory["id"]),
+                "kind": str(memory.get("kind", "fact"))[:32],
+                "memory": excerpt,
+                "excerpt_truncated": truncated,
+            }
+        )
     if _setting(config, "provider", "disabled") == "laya":
         shared_question = DecisionQuestion(
             name="relevant",
@@ -307,7 +318,10 @@ def decide_memory_relevance(
             instructions="Use only this task and this one memory. Do not infer facts not present in them.",
         )
         aligned_results = run_local_decision_batch(
-            [{"task": task, **candidate} for candidate in candidate_data],
+            [
+                {"task": task, "task_truncated": task_truncated, **candidate}
+                for candidate in candidate_data
+            ],
             {"relevant": shared_question},
             config,
         )
@@ -322,14 +336,20 @@ def decide_memory_relevance(
                 type="predicate",
                 statement=(
                     f"Memory candidate ID {item['memory_id']} ({item['kind']}): "
+                    f"excerpt_truncated={str(item['excerpt_truncated']).lower()}; "
                     f"{item['memory']}\nIs this specific memory directly relevant to the task "
                     "and useful in answering it?"
                 ),
-                instructions="Judge only the memory text in this question against the task in state.",
+                instructions=(
+                    "Judge only this candidate against the task in state. The state marks "
+                    "whether the task or candidate excerpt was truncated."
+                ),
             )
             for index, item in enumerate(candidate_data)
         }
-        result_meta = run_decision({"task": task}, questions, config) or {}
+        result_meta = run_decision(
+            {"task": task, "task_truncated": task_truncated}, questions, config
+        ) or {}
         answers = [
             result_meta.get("answers", {}).get(f"relevant_{index}", {})
             for index in range(len(candidates))
@@ -362,7 +382,7 @@ def rejected_memory_candidates(candidates: list[str], config: Any) -> set[int]:
     if not candidates or not provider_enabled(config):
         return set()
     threshold = float(_setting(config, "confidence_threshold", 0.9))
-    candidate_data = [_sanitize_text(candidate[:320]) for candidate in candidates[:20]]
+    candidate_data = [_bounded_excerpt(candidate, 320) for candidate in candidates[:20]]
     options = {
         "store": "Explicit, durable user preference useful across future tasks.",
         "reject": "One-off, temporary, inferred, unclear, or not useful as durable memory.",
@@ -375,8 +395,12 @@ def rejected_memory_candidates(candidates: list[str], config: Any) -> set[int]:
         )
         aligned_results = run_local_decision_batch(
             [
-                {"candidate_id": index, "candidate": candidate}
-                for index, candidate in enumerate(candidate_data)
+                {
+                    "candidate_id": index,
+                    "candidate": candidate,
+                    "candidate_truncated": truncated,
+                }
+                for index, (candidate, truncated) in enumerate(candidate_data)
             ],
             {"capture": shared_question},
             config,
@@ -388,10 +412,13 @@ def rejected_memory_candidates(candidates: list[str], config: Any) -> set[int]:
         questions = {
             f"capture_{index}": choice(
                 f"capture_{index}",
-                "Evaluate only this specific candidate: " + candidate,
+                "Evaluate only this specific candidate; excerpt_truncated="
+                + str(truncated).lower()
+                + ": "
+                + candidate,
                 options,
             )
-            for index, candidate in enumerate(candidate_data)
+            for index, (candidate, truncated) in enumerate(candidate_data)
         }
         result = run_decision({"task": "Review durable-memory eligibility."}, questions, config) or {}
         answers = [
