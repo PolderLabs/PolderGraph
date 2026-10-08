@@ -24,11 +24,20 @@ LOW_THRESHOLD = 0.65
 #: Multiplier applied to the observed median best-neighbour similarity.
 THRESHOLD_MARGIN = 0.85
 
+#: Global cap on semantic edges per entity. The spec prefers "fewer
+#: high-confidence semantic graph edges over visual hairballs"; 1.63 edges per
+#: entity was measurably a hairball, so the budget is well under one.
+MAX_EDGES_PER_ENTITY = 0.6
+
+#: Ranking bonus so a mutual pair wins a tie against a one-sided link.
+MUTUAL_BONUS = 0.01
+
 
 @dataclass
 class SemanticEdgeStats:
     considered: int = 0
     created: int = 0
+    budget: int = 0
     filtered_by_similarity: int = 0
     filtered_by_degree: int = 0
     mutual: int = 0
@@ -39,6 +48,7 @@ class SemanticEdgeStats:
         return {
             "considered": self.considered,
             "created": self.created,
+            "budget": self.budget,
             "filtered_by_similarity": self.filtered_by_similarity,
             "filtered_by_degree": self.filtered_by_degree,
             "mutual": self.mutual,
@@ -122,50 +132,62 @@ def compute_semantic_edges(
     # Mutual-neighbour preference: a link is stronger when both sides select it.
     inverse = {target: source for source, rows in neighbours.items() for target, _ in rows}
 
-    degree: dict[str, int] = {}
-    created = 0
+    # Global budget keeps the graph legible. Materializing every neighbour pair
+    # produced >1.6 semantic edges per entity, which is exactly the visual
+    # hairball the semantic-edge policy exists to prevent.
+    budget = max(1, int(len(entity_ids) * MAX_EDGES_PER_ENTITY))
+    stats.budget = budget
+
+    # Score candidates across all pairs, then take the strongest first so a
+    # global budget keeps the best evidence rather than whatever was visited
+    # first.
+    candidates: list[tuple[float, str, str, bool]] = []
     for source_id, rows in neighbours.items():
         stats.considered += 1
-        ranked = sorted(rows, key=lambda pair: pair[1], reverse=True)
-        for target_id, similarity in ranked:
+        for target_id, similarity in rows:
             if similarity < threshold:
                 stats.filtered_by_similarity += 1
-                break
-            if degree.get(source_id, 0) >= policy.max_degree:
-                stats.filtered_by_degree += 1
-                break
-            if degree.get(target_id, 0) >= policy.max_degree:
                 continue
-            is_mutual = policy.mutual_preferred and inverse.get(target_id) == source_id
-            if is_mutual:
-                stats.mutual += 1
-            elif policy.mutual_preferred and similarity < min(1.0, threshold + 0.05):
-                # Not mutual and barely above threshold: skip to avoid noise.
-                stats.filtered_by_similarity += 1
-                continue
-            repo.upsert_edges(
-                [
-                    Edge(
-                        source_id=source_id,
-                        target_id=target_id,
-                        type="semantically_related",
-                        provenance=Provenance.SEMANTIC,
-                        confidence=similarity,
-                        resolver="vector_knn",
-                        metadata={
-                            "model_id": info.model_id,
-                            "revision": info.revision,
-                            "dimensions": info.dimensions,
-                            "mutual": is_mutual,
-                        },
-                    )
-                ]
-            )
-            degree[source_id] = degree.get(source_id, 0) + 1
-            degree[target_id] = degree.get(target_id, 0) + 1
-            created += 1
-            if degree[source_id] >= policy.max_degree:
-                break
+            is_mutual = bool(policy.mutual_preferred and inverse.get(target_id) == source_id)
+            # Mutual pairs outrank one-sided links of the same similarity.
+            rank = similarity + (MUTUAL_BONUS if is_mutual else 0.0)
+            candidates.append((rank, source_id, target_id, is_mutual))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+
+    degree: dict[str, int] = {}
+    created = 0
+    for rank, source_id, target_id, is_mutual in candidates:
+        if created >= budget:
+            break
+        if degree.get(source_id, 0) >= policy.max_degree:
+            stats.filtered_by_degree += 1
+            continue
+        if degree.get(target_id, 0) >= policy.max_degree:
+            stats.filtered_by_degree += 1
+            continue
+        if is_mutual:
+            stats.mutual += 1
+        repo.upsert_edges(
+            [
+                Edge(
+                    source_id=source_id,
+                    target_id=target_id,
+                    type="semantically_related",
+                    provenance=Provenance.SEMANTIC,
+                    confidence=rank - (MUTUAL_BONUS if is_mutual else 0.0),
+                    resolver="vector_knn",
+                    metadata={
+                        "model_id": info.model_id,
+                        "revision": info.revision,
+                        "dimensions": info.dimensions,
+                        "mutual": is_mutual,
+                    },
+                )
+            ]
+        )
+        degree[source_id] = degree.get(source_id, 0) + 1
+        degree[target_id] = degree.get(target_id, 0) + 1
+        created += 1
 
     stats.created = created
     return stats
