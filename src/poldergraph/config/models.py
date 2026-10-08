@@ -18,8 +18,8 @@ from pydantic import BaseModel, Field, field_validator
 CONFIG_VERSION = 1
 ENV_PREFIX = "POLDERGRAPH_"
 
-Dimensions = Literal[128, 256, 512, 768]
 SUPPORTED_DIMENSIONS: tuple[int, ...] = (128, 256, 512, 768)
+MAX_API_DIMENSIONS = 3072
 EMBEDDING_MODEL = "google/embeddinggemma-2"
 
 
@@ -34,10 +34,8 @@ class IndexConfig(BaseModel):
     @field_validator("dimensions")
     @classmethod
     def _check_dimensions(cls, value: int) -> int:
-        if value not in SUPPORTED_DIMENSIONS:
-            raise ValueError(
-                f"dimensions must be one of {SUPPORTED_DIMENSIONS}, got {value}"
-            )
+        if not 1 <= value <= MAX_API_DIMENSIONS:
+            raise ValueError(f"dimensions must be between 1 and {MAX_API_DIMENSIONS}, got {value}")
         return value
 
 
