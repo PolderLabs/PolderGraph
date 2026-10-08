@@ -52,6 +52,8 @@ class EmbeddingConfig(BaseModel):
     api_endpoint: str | None = None
     api_model: str | None = None
     api_timeout: float = 30.0
+    api_retries: int = 2
+    api_batch_size: int = 64
     # Runtime-only consent: workspace config must not authorize repository text egress.
     remote_authorized: bool = Field(default=False, exclude=True, repr=False)
     endpoint_authorized: bool = Field(default=False, exclude=True, repr=False)
@@ -62,6 +64,20 @@ class EmbeddingConfig(BaseModel):
     def _check_api_timeout(cls, value: float) -> float:
         if not 0.1 <= value <= 120:
             raise ValueError("api_timeout must be between 0.1 and 120 seconds")
+        return value
+
+    @field_validator("api_retries")
+    @classmethod
+    def _check_api_retries(cls, value: int) -> int:
+        if not 0 <= value <= 5:
+            raise ValueError("api_retries must be between 0 and 5")
+        return value
+
+    @field_validator("api_batch_size")
+    @classmethod
+    def _check_api_batch_size(cls, value: int) -> int:
+        if not 1 <= value <= 128:
+            raise ValueError("api_batch_size must be between 1 and 128")
         return value
 
 

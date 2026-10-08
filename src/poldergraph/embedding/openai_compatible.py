@@ -6,6 +6,8 @@ import hashlib
 import json
 import math
 import os
+import random
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -21,7 +23,8 @@ class OpenAICompatibleBackend(EmbeddingBackend):
     def __init__(self, *, provider: str = "openai", endpoint: str | None = None,
                  model: str | None = None, dimensions: int, normalize: bool = True,
                  timeout: float = 30.0, offline: bool = False, authorized: bool = False,
-                 endpoint_authorized: bool = False) -> None:
+                 endpoint_authorized: bool = False, retries: int = 2,
+                 batch_size: int = 64) -> None:
         if provider not in {"openai", "voyage"}:
             raise ValueError(f"Unsupported API embedding provider: {provider}")
         self.provider = provider
@@ -46,6 +49,8 @@ class OpenAICompatibleBackend(EmbeddingBackend):
         self.dimensions = dimensions
         self.normalize = normalize
         self.timeout = timeout
+        self.retries = max(0, min(5, retries))
+        self.batch_size = max(1, min(128, batch_size))
         self.offline = offline
         self.authorized = authorized
         self.endpoint_authorized = endpoint_authorized
@@ -82,11 +87,32 @@ class OpenAICompatibleBackend(EmbeddingBackend):
             f"{self.endpoint}/embeddings", data=payload,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"}, method="POST",
         )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise BackendUnavailableError(f"Embedding API request failed: {type(exc).__name__}.") from exc
+        body = None
+        for attempt in range(self.retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                    body = json.loads(response.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code not in {429, 500, 502, 503, 504} or attempt >= self.retries:
+                    raise BackendUnavailableError(
+                        f"Embedding API request failed with HTTP {exc.code}."
+                    ) from exc
+                retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                try:
+                    delay = min(15.0, max(0.0, float(retry_after))) if retry_after else 0.0
+                except ValueError:
+                    delay = 0.0
+                delay = max(delay, min(8.0, 0.5 * (2 ** attempt) + random.uniform(0, 0.2)))
+                time.sleep(delay)
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+                if attempt >= self.retries:
+                    raise BackendUnavailableError(
+                        f"Embedding API request failed: {type(exc).__name__}."
+                    ) from exc
+                time.sleep(min(8.0, 0.5 * (2 ** attempt) + random.uniform(0, 0.2)))
+        if body is None:
+            raise BackendUnavailableError("Embedding API request did not produce a response.")
         data = body.get("data")
         if not isinstance(data, list) or len(data) != len(texts):
             raise BackendUnavailableError("Embedding API returned an unexpected number of vectors.")
@@ -115,8 +141,8 @@ class OpenAICompatibleBackend(EmbeddingBackend):
         if target != self.dimensions:
             raise BackendUnavailableError("Requested dimensions differ from the configured API vector width.")
         output: list[list[float]] = []
-        for start in range(0, len(items), 64):
-            output.extend(self._request(items[start:start + 64], task))
+        for start in range(0, len(items), self.batch_size):
+            output.extend(self._request(items[start:start + self.batch_size], task))
             if on_batch:
                 on_batch(len(output), len(items))
         return output

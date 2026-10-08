@@ -35,6 +35,8 @@ api_provider = "openai"
 api_endpoint = ""
 api_model = ""
 api_timeout = 30.0
+api_retries = 2
+api_batch_size = 64
 max_tokens = 2048
 
 [semantic_edges]
@@ -113,6 +115,8 @@ POLDERGRAPH_DECISIONS__PROVIDER=typesafe
 | `api_model` | string | provider default | Remote embedding model |
 | `api_provider` | string | "openai" | API provider: "openai" or "voyage" |
 | `api_timeout` | float | 30.0 | Remote request timeout in seconds |
+| `api_retries` | int | 2 | Bounded retries for transient network, HTTP 429 and server errors (0–5) |
+| `api_batch_size` | int | 64 | Maximum inputs per API request (1–128) |
 | `max_tokens` | int | 2048 | Maximum sequence length |
 
 For OpenAI set `backend = "api"` and provide `OPENAI_API_KEY`. To use Voyage,
@@ -121,6 +125,8 @@ provider-specific `input_type` and `output_dimension` fields. In both cases,
 remote transmission remains disabled until `allow_remote_embedding = true` is
 set in trusted user config or the host environment. Workspace config alone
 cannot authorize egress. Do not put API keys in TOML.
+Transient rate limits and server failures retry with bounded exponential backoff
+and jitter, honoring numeric `Retry-After` values.
 Changing the active provider, model, revision, dimensions, normalization, or task
 policy causes `poldergraph update` and `pg_update` to re-index the corpus for
 that vector space. Previously stored vectors remain isolated and can be reused

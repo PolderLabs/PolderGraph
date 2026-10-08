@@ -1,6 +1,8 @@
 """OpenAI-compatible provider validation and privacy gates."""
 
 import json
+from email.message import Message
+from io import BytesIO
 from unittest.mock import patch
 
 import pytest
@@ -114,3 +116,46 @@ def test_provider_rejects_duplicate_vector_indexes(monkeypatch):
     })()
     with patch("urllib.request.urlopen", return_value=response), pytest.raises(BackendUnavailableError, match="indexes"):
         backend.embed_texts(["a", "b"])
+
+
+def test_provider_retries_rate_limit_with_retry_after(monkeypatch):
+    from urllib.error import HTTPError
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    headers = Message()
+    headers["Retry-After"] = "0"
+    limited = HTTPError("https://example.test/v1/embeddings", 429, "limited", headers, BytesIO())
+    response = type("Response", (), {
+        "__enter__": lambda self: self,
+        "__exit__": lambda self, *args: None,
+        "read": lambda self: b'{"data":[{"index":0,"embedding":[1,0]}]}',
+    })()
+    backend = OpenAICompatibleBackend(
+        endpoint="https://example.test/v1", model="x", dimensions=2,
+        authorized=True, endpoint_authorized=True, retries=1,
+    )
+    with (
+        patch("poldergraph.embedding.openai_compatible.time.sleep") as sleep,
+        patch("urllib.request.urlopen", side_effect=[limited, response]) as request,
+    ):
+        assert backend.embed_texts(["a"]) == [[1.0, 0.0]]
+    assert request.call_count == 2
+    assert sleep.call_count == 1
+
+
+def test_provider_batches_to_configured_limit(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    backend = OpenAICompatibleBackend(
+        endpoint="https://example.test/v1", model="x", dimensions=2,
+        authorized=True, endpoint_authorized=True, batch_size=1,
+    )
+    def response(*args, **kwargs):
+        return type("Response", (), {
+            "__enter__": lambda self: self,
+            "__exit__": lambda self, *items: None,
+            "read": lambda self: b'{"data":[{"index":0,"embedding":[1,0]}]}',
+        })()
+    with patch("urllib.request.urlopen", side_effect=response) as request:
+        vectors = backend.embed_texts(["a", "b"])
+    assert vectors == [[1.0, 0.0], [1.0, 0.0]]
+    assert request.call_count == 2
