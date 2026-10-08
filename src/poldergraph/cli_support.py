@@ -58,6 +58,61 @@ def freshness_payload(service: Any) -> dict[str, Any]:
     return service.freshness()
 
 
+#: Retrieval commands served by the persistent daemon.
+DAEMON_COMMANDS = {"search", "context", "explain", "related", "path", "impact"}
+
+
+def try_daemon(
+    command: str,
+    arguments: dict[str, Any],
+    path: Path | None,
+    *,
+    autostart: bool = True,
+) -> Any:
+    """Serve a retrieval command from the persistent daemon when possible.
+
+    Setting up the embedding backend costs several seconds, which an agent pays
+    on every single query. When a daemon is available the command is executed by
+    a process that already holds the loaded model, and the response is returned
+    directly. Returns ``None`` when the daemon cannot serve the request so the
+    caller falls back to in-process execution.
+    """
+    import os
+
+    if os.environ.get("POLDERGRAPH_NO_DAEMON"):
+        return None
+    try:
+        from .query_daemon import ensure_daemon, resolve_index_dir, send_request
+
+        root = path or Path.cwd()
+        index_dir = resolve_index_dir(root)
+        if index_dir is None:
+            return None
+        if not ensure_daemon(root, autostart=autostart) and not autostart:
+            return None
+        response = send_request(index_dir, command, arguments)
+    except Exception:
+        return None
+    if response is None:
+        return None
+    if isinstance(response, dict) and response.get("ok") is False:
+        error = response.get("error") or {}
+        code = error.get("code")
+        # Usage problems are the caller's fault and must surface; anything else
+        # means the daemon is unhealthy, so fall back to in-process execution.
+        if code in {"USAGE_ERROR", "ENTITY_NOT_FOUND", "UNKNOWN_COMMAND"}:
+            return _DaemonRejection(error)
+        return None
+    return response
+
+
+class _DaemonRejection:
+    """A structured error the daemon returned; the caller should surface it."""
+
+    def __init__(self, error: dict[str, Any]) -> None:
+        self.error = error
+
+
 def model_payload(service: Any) -> dict[str, Any]:
     """Model metadata for the JSON index block."""
     backend = getattr(service, "backend", None)

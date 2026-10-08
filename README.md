@@ -95,9 +95,36 @@ poldergraph status                        # Index health, model, language suppor
 poldergraph doctor                        # Integrity checks
 poldergraph rebuild                       # Atomic safe rebuild
 poldergraph config show --effective       # Merged configuration
+
+# Fast repeat queries (optional)
+poldergraph daemon start                  # Keep the embedding model warm
+poldergraph daemon status
+poldergraph daemon stop
 ```
 
 Every command supports `--json` with a stable, versioned envelope. Exit codes are documented for agent scripting.
+
+## Fast repeat queries
+
+Every command that needs semantic search builds the embedding backend, and on a
+warm model cache that costs about 6 seconds. An agent running a dozen queries
+pays that a dozen times.
+
+`poldergraph daemon start` keeps one process resident with the model, vector
+store and SQLite connection already loaded, so repeat queries answer in well
+under a second. The daemon starts automatically on first use, keeps one socket
+per workspace, and the client falls back to in-process execution whenever the
+daemon is unavailable — results are identical either way.
+
+```bash
+poldergraph daemon start           # ~10s once
+poldergraph search "..."           # sub-second from then on
+poldergraph daemon stop
+```
+
+The daemon re-reads the index on every request, so `poldergraph update` is
+visible immediately; cached community data invalidates when the graph changes.
+Set `POLDERGRAPH_NO_DAEMON=1` to bypass it.
 
 ## Architecture
 

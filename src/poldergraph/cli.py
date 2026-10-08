@@ -16,6 +16,7 @@ import typer
 
 from . import __version__
 from .cli_support import (
+    _DaemonRejection,
     build_service,
     emit_error,
     emit_json,
@@ -24,6 +25,7 @@ from .cli_support import (
     model_payload,
     table,
     truncate,
+    try_daemon,
 )
 from .config.models import Config
 from .errors import (
@@ -507,6 +509,49 @@ def _human_bytes(size: int) -> str:
     return f"{value:.1f} GB"
 
 
+def _print_path(data: dict[str, Any]) -> None:
+    """Render a path result. Shared by daemon and in-process paths."""
+    if not data.get("found"):
+        typer.echo(f"No path found: {data.get('reason')}")
+        return
+    typer.echo(f"{data.get('hops', 0)} hops")
+    for index, node in enumerate(data.get("nodes", [])):
+        prefix = "  " * index
+        typer.echo(f"{prefix}{node.get('qualified_name') or node.get('name')}  [{node.get('kind')}]")
+        edges = data.get("edges") or []
+        if index < len(edges):
+            edge = edges[index]
+            typer.echo(f"{prefix}  -{edge.get('type')}-> [{edge.get('provenance')}]")
+
+
+def _print_search_results(payload: dict[str, Any], *, explain_score: bool = False) -> None:
+    """Render a search envelope as a table. Shared by daemon and local paths."""
+    results = (payload.get("data") or {}).get("results") or []
+    if not results:
+        typer.echo("No matches.")
+        return
+    rows = [
+        [
+            f"{item.get('score', 0):.3f}",
+            item.get("name") or item.get("label") or item.get("id", "")[:16],
+            item.get("kind") or "",
+            item.get("path") or "",
+            item.get("evidence") or "",
+        ]
+        for item in results
+    ]
+    typer.echo(table(rows, ["score", "name", "kind", "path", "evidence"]))
+    if explain_score:
+        typer.echo("")
+        for item in results[:3]:
+            typer.echo(f"  {item.get('name') or item.get('label')}")
+            explain = item.get("explain") or {}
+            for name, value in (explain.get("contributions") or {}).items():
+                typer.echo(f"    {name:<20} {value:+.4f}")
+    for warning in payload.get("warnings") or []:
+        typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW)
+
+
 # ------------------------------------------------------------------ search
 
 
@@ -531,6 +576,41 @@ def search(
     try:
         from .retrieval.service import SearchFilters
 
+        # Serve from the persistent daemon when one is available: building the
+        # embedding backend costs seconds, which an agent would otherwise pay
+        # on every query.
+        if semantic:
+            daemon_filters = {"kinds": list(kind), "languages": list(language),
+                              "path_prefixes": [str(path)] if path else []}
+            remote = try_daemon(
+                "search",
+                {
+                    "query": query,
+                    "limit": limit,
+                    "filters": daemon_filters,
+                    "include_semantic": True,
+                    "include_structural_context": structural_context,
+                },
+                root,
+            )
+            if isinstance(remote, _DaemonRejection):
+                emit_json(
+                    envelope(command=command, error=UsageError(
+                        remote.error.get("message", "invalid request"),
+                        code=remote.error.get("code", "USAGE_ERROR"),
+                        remediation=remote.error.get("remediation"),
+                    ))
+                )
+                raise typer.Exit(int(ExitCode.USAGE))
+            if isinstance(remote, dict):
+                payload = envelope(command=command, data=remote,
+                                   warnings=remote.get("degraded", []))
+                if json_output:
+                    emit_json(payload)
+                else:
+                    _print_search_results(payload)
+                return
+
         workspace, repo, service = build_service(root, need_backend=semantic)
         filters = SearchFilters(kinds=list(kind), languages=list(language))
         if path:
@@ -551,32 +631,7 @@ def search(
         if json_output:
             emit_json(payload)
         else:
-            if not response.results:
-                typer.echo("No matches.")
-            rows = []
-            for item in (
-                response.data_dict_rows()
-                if hasattr(response, "data_dict_rows")
-                else payload["data"]["results"]
-            ):
-                rows.append(
-                    [
-                        f"{item['score']:.3f}",
-                        item.get("name") or item["id"][:16],
-                        item.get("kind") or "",
-                        item.get("path") or "",
-                        item.get("evidence") or "",
-                    ]
-                )
-            typer.echo(table(rows, ["score", "name", "kind", "path", "evidence"]))
-            if explain_score:
-                typer.echo("")
-                for item in payload["data"]["results"][:3]:
-                    typer.echo(f"  {item.get('name')}")
-                    for name, value in item["explain"]["contributions"].items():
-                        typer.echo(f"    {name:<20} {value:+.4f}")
-            for warning in response.degraded:
-                typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW)
+            _print_search_results(payload, explain_score=explain_score)
     except PolderGraphError as exc:
         if json_output:
             emit_error(command, exc)
@@ -601,6 +656,19 @@ def explain(
     command = "explain"
     workspace = None
     try:
+        remote = try_daemon("explain", {"entity": entity}, root)
+        if isinstance(remote, _DaemonRejection):
+            emit_json(envelope(command=command, error=UsageError(
+                remote.error.get("message", "invalid request"),
+                code=remote.error.get("code", "USAGE_ERROR"),
+                remediation=remote.error.get("remediation"))))
+            raise typer.Exit(int(ExitCode.USAGE))
+        if isinstance(remote, dict):
+            if json_output:
+                emit_json(envelope(command=command, data=remote))
+            else:
+                _print_explain(remote)
+            return
         workspace, repo, service = build_service(root, need_backend=True)
         data = service.explain(entity)
         payload = envelope(command=command, index=freshness_payload(service), data=data)
@@ -677,6 +745,24 @@ def related(
     command = "related"
     workspace = None
     try:
+        remote = try_daemon("related", {"entity": entity, "limit": limit}, root)
+        if isinstance(remote, _DaemonRejection):
+            emit_json(envelope(command=command, error=UsageError(
+                remote.error.get("message", "invalid request"),
+                code=remote.error.get("code", "USAGE_ERROR"),
+                remediation=remote.error.get("remediation"))))
+            raise typer.Exit(int(ExitCode.USAGE))
+        if isinstance(remote, dict):
+            if json_output:
+                emit_json(envelope(command=command, data=remote))
+            else:
+                for item in remote["related"]:
+                    marker = "linked" if item["structurally_connected"] else "unlinked"
+                    typer.echo(
+                        f"{item['similarity']:.3f}  "
+                        f"{item['entity']['qualified_name'] or item['entity']['name']}  ({marker})"
+                    )
+            return
         workspace, repo, service = build_service(root, need_backend=True)
         data = service.related(entity, limit=limit)
         payload = envelope(command=command, index=freshness_payload(service), data=data)
@@ -717,6 +803,23 @@ def path(
     command = "path"
     workspace = None
     try:
+        remote = try_daemon("path", {
+            "source": source, "target": target,
+            "structural_only": structural_only,
+            "include_semantic": not structural_only, "max_hops": max_hops}, root)
+        if isinstance(remote, _DaemonRejection):
+            emit_json(envelope(command=command, error=UsageError(
+                remote.error.get("message", "invalid request"),
+                code=remote.error.get("code", "USAGE_ERROR"),
+                remediation=remote.error.get("remediation"))))
+            raise typer.Exit(int(ExitCode.USAGE))
+        if isinstance(remote, dict):
+            payload = envelope(command=command, data=remote)
+            if json_output:
+                emit_json(payload)
+            else:
+                _print_path(remote)
+            return
         workspace, repo, service = build_service(root, need_backend=False)
         data = service.path(
             source,
@@ -729,16 +832,7 @@ def path(
         if json_output:
             emit_json(payload)
         else:
-            if not data["found"]:
-                typer.echo(f"No path found: {data.get('reason')}")
-                raise typer.Exit(0)
-            typer.echo(f"{data['hops']} hops")
-            for index, node in enumerate(data["nodes"]):
-                prefix = "  " * index
-                typer.echo(f"{prefix}{node['qualified_name'] or node['name']}  [{node['kind']}]")
-                if index < len(data["edges"]):
-                    edge = data["edges"][index]
-                    typer.echo(f"{prefix}  -{edge['type']}-> [{edge['provenance']}]")
+            _print_path(data)
     except PolderGraphError as exc:
         if json_output:
             emit_error(command, exc)
@@ -807,6 +901,28 @@ def context(
     command = "context"
     workspace = None
     try:
+        remote = try_daemon("context", {"query": query, "token_budget": budget}, root)
+        if isinstance(remote, _DaemonRejection):
+            emit_json(envelope(command=command, error=UsageError(
+                remote.error.get("message", "invalid request"),
+                code=remote.error.get("code", "USAGE_ERROR"),
+                remediation=remote.error.get("remediation"))))
+            raise typer.Exit(int(ExitCode.USAGE))
+        if isinstance(remote, dict):
+            payload = envelope(command=command, data=remote,
+                               warnings=remote.get("warnings", []))
+            if json_output:
+                emit_json(payload)
+            else:
+                typer.echo(
+                    f"{len(remote.get('entities', []))} entities, "
+                    f"{len(remote.get('snippets', []))} snippets, "
+                    f"{len(remote.get('memories', []))} memories, "
+                    f"~{remote.get('token_estimate', 0)} tokens"
+                )
+                for entity in remote.get("entities", []):
+                    typer.echo(entity_line(_Simple(entity)))
+            return
         workspace, repo, service = build_service(root, need_backend=True)
         result = service.context(query, token_budget=budget)
         data = result.to_dict()
@@ -1515,6 +1631,72 @@ def upgrade(
         else:
             typer.secho(f"error: {exc.message}", fg=typer.colors.RED, err=True)
         raise typer.Exit(int(exc.exit_code))
+
+
+# ------------------------------------------------------------------- config
+
+
+# ------------------------------------------------------------------ daemon
+
+
+daemon_app = typer.Typer(
+    help="Manage the persistent query daemon that keeps the embedding model warm."
+)
+app.add_typer(daemon_app, name="daemon")
+
+
+@daemon_app.command("start")
+def daemon_start(
+    target: Optional[Path] = typer.Argument(None, help="Repository root."),
+) -> None:
+    """Start the query daemon so later queries skip model setup."""
+    from .query_daemon import ensure_daemon, is_running, resolve_index_dir
+
+    root = target or Path.cwd()
+    index_dir = resolve_index_dir(root)
+    if index_dir is None:
+        typer.secho(
+            "error: no index found; run 'poldergraph init' first.", fg=typer.colors.RED, err=True
+        )
+        raise typer.Exit(int(ExitCode.INDEX_MISSING))
+    if is_running(index_dir):
+        typer.echo("Query daemon is already running.")
+        return
+    typer.echo("Starting query daemon and loading the embedding model...")
+    started = time.monotonic()
+    if ensure_daemon(root, autostart=True):
+        typer.echo(f"Query daemon ready in {time.monotonic() - started:.1f}s.")
+    else:
+        typer.secho("error: the daemon failed to start.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(int(ExitCode.BACKEND_UNAVAILABLE))
+
+
+@daemon_app.command("stop")
+def daemon_stop(
+    target: Optional[Path] = typer.Argument(None, help="Repository root."),
+) -> None:
+    """Stop the query daemon."""
+    from .query_daemon import stop_daemon
+
+    root = target or Path.cwd()
+    typer.echo("Query daemon stopped." if stop_daemon(root) else "No query daemon was running.")
+
+
+@daemon_app.command("status")
+def daemon_status(
+    target: Optional[Path] = typer.Argument(None, help="Repository root."),
+) -> None:
+    """Show whether the query daemon is running for this workspace."""
+    from .query_daemon import is_running, resolve_index_dir, socket_path
+
+    root = target or Path.cwd()
+    index_dir = resolve_index_dir(root)
+    if index_dir is None:
+        typer.echo("no index found")
+        raise typer.Exit(int(ExitCode.INDEX_MISSING))
+    running = is_running(index_dir)
+    typer.echo(f"daemon: {'running' if running else 'stopped'}")
+    typer.echo(f"socket: {socket_path(index_dir)}")
 
 
 # ------------------------------------------------------------------- config

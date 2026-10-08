@@ -112,6 +112,7 @@ class QueryService:
         self.workspace = workspace
         self.root = workspace.root if workspace is not None else None
         self._communities: dict[str, str] | None = None
+        self._communities_token: tuple[Any, ...] | None = None
 
     def workspace_index(self) -> Any:
         """Index directory, used for size reporting."""
@@ -518,9 +519,21 @@ class QueryService:
         return "\n".join(lines[start:end])[:max_chars]
 
     def _community_map(self) -> dict[str, str]:
-        if self._communities is None:
+        if self._communities is None or self._communities_token != self._graph_token():
             self._communities = self.repo.community_map("structural")
+            self._communities_token = self._graph_token()
         return self._communities
+
+    def _graph_token(self) -> tuple[Any, ...]:
+        """Cheap fingerprint that changes whenever the graph is recomputed.
+
+        A resident query daemon serves many requests, so any cache derived from
+        the graph must be invalidated when `poldergraph update` rewrites it —
+        otherwise agents keep scoring against stale communities.
+        """
+        from ..storage.sqlite import get_meta
+
+        return (get_meta(self.repo.con, "graph_computed_at"),)
 
     def importance(self) -> dict[str, float]:
         return importance_map(self.repo)
