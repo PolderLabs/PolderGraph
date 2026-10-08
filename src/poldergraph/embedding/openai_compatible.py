@@ -9,6 +9,7 @@ import os
 import urllib.error
 import urllib.request
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..errors import BackendUnavailableError
 from .protocol import DOCUMENT_TASK, EmbeddingBackend, MediaRequest, ModelInfo
@@ -17,11 +18,31 @@ from .protocol import DOCUMENT_TASK, EmbeddingBackend, MediaRequest, ModelInfo
 class OpenAICompatibleBackend(EmbeddingBackend):
     """Small OpenAI embeddings API client; compatible endpoints can be configured."""
 
-    def __init__(self, *, endpoint: str, model: str, dimensions: int, normalize: bool = True,
+    def __init__(self, *, provider: str = "openai", endpoint: str | None = None,
+                 model: str | None = None, dimensions: int, normalize: bool = True,
                  timeout: float = 30.0, offline: bool = False, authorized: bool = False,
                  endpoint_authorized: bool = False) -> None:
-        self.endpoint = endpoint.rstrip("/")
-        self.model = model
+        if provider not in {"openai", "voyage"}:
+            raise ValueError(f"Unsupported API embedding provider: {provider}")
+        self.provider = provider
+        self.endpoint = (endpoint or {
+            "openai": "https://api.openai.com/v1",
+            "voyage": "https://api.voyageai.com/v1",
+        }[provider]).rstrip("/")
+        parsed_endpoint = urlsplit(self.endpoint)
+        local_http = parsed_endpoint.hostname in {"localhost", "127.0.0.1", "::1"}
+        if (
+            not parsed_endpoint.hostname
+            or parsed_endpoint.username
+            or parsed_endpoint.password
+            or parsed_endpoint.query
+            or parsed_endpoint.fragment
+            or (parsed_endpoint.scheme != "https" and not (local_http and parsed_endpoint.scheme == "http"))
+        ):
+            raise BackendUnavailableError(
+                "Embedding API endpoint must use HTTPS (HTTP is allowed only for loopback endpoints)."
+            )
+        self.model = model or {"openai": "text-embedding-3-small", "voyage": "voyage-3.5"}[provider]
         self.dimensions = dimensions
         self.normalize = normalize
         self.timeout = timeout
@@ -35,21 +56,28 @@ class OpenAICompatibleBackend(EmbeddingBackend):
 
     def model_info(self) -> ModelInfo:
         return ModelInfo(
-            model_id=f"api:{self.model}:{self._endpoint_id}", revision="api-v1",
+            model_id=f"api:{self.provider}:{self.model}:{self._endpoint_id}", revision="api-v1",
             dimensions=self.dimensions, native_dimensions=self.dimensions,
             normalize=self.normalize, backend="api",
         )
 
-    def _request(self, texts: list[str]) -> list[list[float]]:
+    def _request(self, texts: list[str], task: str) -> list[list[float]]:
         if self.offline or not self.authorized or not self.endpoint_authorized:
             raise BackendUnavailableError(
                 "Remote embedding is disabled by the privacy policy.",
                 remediation="Enable privacy.allow_remote_embedding in trusted user config or environment.",
             )
-        key = os.environ.get("OPENAI_API_KEY")
+        key_name = {"openai": "OPENAI_API_KEY", "voyage": "VOYAGE_API_KEY"}[self.provider]
+        key = os.environ.get(key_name)
         if not key:
-            raise BackendUnavailableError("OPENAI_API_KEY is required for API embeddings.")
-        payload = json.dumps({"model": self.model, "input": texts, "dimensions": self.dimensions}).encode()
+            raise BackendUnavailableError(f"{key_name} is required for API embeddings.")
+        payload_data: dict[str, Any] = {"model": self.model, "input": texts}
+        if self.provider == "openai":
+            payload_data["dimensions"] = self.dimensions
+        else:
+            payload_data["input_type"] = "query" if task == "query" else "document"
+            payload_data["output_dimension"] = self.dimensions
+        payload = json.dumps(payload_data).encode()
         req = urllib.request.Request(
             f"{self.endpoint}/embeddings", data=payload,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"}, method="POST",
@@ -63,6 +91,9 @@ class OpenAICompatibleBackend(EmbeddingBackend):
         if not isinstance(data, list) or len(data) != len(texts):
             raise BackendUnavailableError("Embedding API returned an unexpected number of vectors.")
         try:
+            indexes = [int(item["index"]) for item in data]
+            if sorted(indexes) != list(range(len(texts))):
+                raise BackendUnavailableError("Embedding API returned invalid vector indexes.")
             data = sorted(data, key=lambda item: int(item["index"]))
             vectors = [[float(v) for v in item["embedding"]] for item in data]
         except (KeyError, TypeError, ValueError) as exc:
@@ -85,7 +116,7 @@ class OpenAICompatibleBackend(EmbeddingBackend):
             raise BackendUnavailableError("Requested dimensions differ from the configured API vector width.")
         output: list[list[float]] = []
         for start in range(0, len(items), 64):
-            output.extend(self._request(items[start:start + 64]))
+            output.extend(self._request(items[start:start + 64], task))
             if on_batch:
                 on_batch(len(output), len(items))
         return output
