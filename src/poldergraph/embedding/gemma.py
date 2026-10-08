@@ -118,6 +118,23 @@ class NativeGemmaBackend(EmbeddingBackend):
         self._model = model
         self._revision = self._resolve_revision(model)
         self._prompts = dict(getattr(model, "prompts", {}) or {})
+
+        # Warm-up: run one tiny forward pass to trigger CPU JIT compilation.
+        # Without this, the first real embedding call pays a ~14-second penalty
+        # for one-time graph compilation, which looks like a hang.
+        try:
+            prompt = self._prompts.get(QUERY_TASK, "")
+            model.encode(
+                [f"{prompt}warmup"],
+                batch_size=1,
+                prompt_name=QUERY_TASK if QUERY_TASK in self._prompts else None,
+                convert_to_numpy=True,
+                normalize_embeddings=False,
+                show_progress_bar=False,
+            )
+        except Exception:
+            pass  # warm-up failure is never fatal
+
         return model
 
     def _resolve_revision(self, model: Any) -> str:

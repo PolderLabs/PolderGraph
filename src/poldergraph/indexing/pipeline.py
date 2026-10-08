@@ -293,11 +293,20 @@ class Indexer:
     # ------------------------------------------------------------ embeddings
 
     def _representations(self, batches: list[tuple[FileEntities, str]]) -> list[tuple[str, str]]:
-        """Build (entity_id, normalized representation) for embedding."""
+        """Build (entity_id, normalized representation) for embedding.
+
+        Only entities that add retrieval value are embedded: code symbols,
+        tests, documents, and media. Containers (directories, workspace,
+        repository) and file entities with no exported symbols or meaningful
+        docstring are skipped — they add no retrieval signal and dominate the
+        entity count on large repos.
+        """
         out: list[tuple[str, str]] = []
         for result, entity_id in batches:
             entity = next((e for e in result.entities if e.id == entity_id), None)
             if entity is None:
+                continue
+            if not self._needs_embedding(entity, result):
                 continue
             body = self._body_for(result, entity)
             text = representation_for(
@@ -309,6 +318,26 @@ class Indexer:
             )
             out.append((entity.id, normalize_representation(text)))
         return out
+
+    def _needs_embedding(self, entity: Entity, result: FileEntities) -> bool:
+        """Decide whether an entity contributes retrieval value as a vector.
+
+        Containers and metadata-only file entities are skipped — they would
+        add latency without improving search quality.
+        """
+        kind = entity.kind
+        # Never embed workspace/directory/repository nodes.
+        if kind in {"workspace", "repository", "directory"}:
+            return False
+        # Media and section entities always need embeddings.
+        if kind in {"image", "audio_segment", "video_segment", "section", "document"}:
+            return True
+        # File entities: only embed when they have a real docstring or are
+        # documents. A pure file container with no text body adds no signal.
+        if kind in {"file", "module", "namespace", "package"}:
+            return bool(entity.docstring and len(entity.docstring) > 20)
+        # Code symbols, tests: always embed.
+        return True
 
     def _body_for(self, result: FileEntities, entity: Entity) -> str | None:
         """Extract the source text belonging to an entity."""

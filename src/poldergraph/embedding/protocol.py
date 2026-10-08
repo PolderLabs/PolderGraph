@@ -156,12 +156,17 @@ def batched(items: list[Any], size: int) -> list[list[Any]]:
 
 
 def auto_batch_size(device: str, *, requested: int = 0) -> int:
-    """Pick a batch size appropriate for the selected device."""
+    """Pick a batch size appropriate for the selected device.
+
+    Larger batches on CPU reduce per-batch overhead from the model's JIT
+    compilation. The trade-off is peak RAM: 200 texts × ~256 dimensions × 4
+    bytes ≈ 200 KB, negligible compared to the model's ~2 GB.
+    """
     if requested and requested > 0:
         return requested
     if device.startswith("cuda") or device.startswith("mps"):
         return 32
-    return 8
+    return 64
 
 
 def select_device(preference: str = "auto") -> str:
