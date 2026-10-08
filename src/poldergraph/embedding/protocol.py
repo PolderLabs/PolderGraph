@@ -172,10 +172,9 @@ def auto_batch_size(device: str, *, requested: int = 0) -> int:
 def select_device(preference: str = "auto") -> str:
     """Resolve the compute device, reporting what was selected.
 
-    CUDA is never required: CPU is always a valid fallback. When auto-detecting,
-    CUDA is only selected if the GPU has enough total memory for the model (~2 GB)
-    *plus* headroom for inference (~2 GB) and PyTorch overhead (~1 GB), so
-    anything under 6 GB total is not viable for EmbeddingGemma 2 on GPU.
+    CUDA is never required: CPU is always a valid fallback. Under auto-detection
+    a GPU is used when it can hold the model weights; batch sizing then adapts
+    to the actual content length at encode time.
     """
     if preference and preference != "auto":
         return preference
@@ -185,22 +184,20 @@ def select_device(preference: str = "auto") -> str:
         return "cpu"
     try:
         if torch.cuda.is_available():
-            props = torch.cuda.get_device_properties(0)
-            total_gpu_bytes = props.total_memory
             free_gpu_bytes = (
                 torch.cuda.mem_get_info(0)[0]
                 if hasattr(torch.cuda, "mem_get_info")
-                else total_gpu_bytes
+                else torch.cuda.get_device_properties(0).total_memory
             )
-            # The model weights need ~1.6 GB GPU. During batched inference the
-            # PyTorch CUDA allocator fragments memory, and the real peak usage
-            # is ~4.5 GB. Require 6 GB total and 3 GB free so the GPU is only
-            # used when it can comfortably hold the model plus batches.
-            MIN_TOTAL_GPU = 6 * 1024 * 1024 * 1024
-            MIN_FREE_GPU = 3 * 1024 * 1024 * 1024
-            if total_gpu_bytes >= MIN_TOTAL_GPU and free_gpu_bytes >= MIN_FREE_GPU:
+            # Only the model weights need to fit here. Batch sizing is handled
+            # adaptively at encode time (see NativeGemmaBackend._length_bucket),
+            # so requiring headroom for a whole batch would needlessly deny the
+            # GPU to perfectly capable cards. We only refuse a GPU that cannot
+            # hold the model itself.
+            MODEL_BYTES = 3 * 1024 * 1024 * 1024
+            if free_gpu_bytes >= MODEL_BYTES:
                 return "cuda"
-            # GPU exists but not enough memory — fall through to CPU.
+            # Not enough free memory for the model itself — fall through to CPU.
     except Exception:
         pass
     try:
