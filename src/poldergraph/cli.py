@@ -108,10 +108,10 @@ def init(
     Re-running init on an existing index performs an incremental update, as the
     specification requires, unless --force requests a full rebuild.
     """
-    from .progress import ProgressDisplay, QuietProgress
+    from .progress import make_progress
 
     command = "init"
-    p = QuietProgress() if (json_output or not sys.stderr.isatty()) else ProgressDisplay()
+    p = make_progress(json_mode=json_output, quiet=quiet)
     try:
         overrides = _overrides(dimensions=dimensions, backend=embedding_backend, media=media)
         root = (path or Path.cwd()).resolve()
@@ -179,11 +179,42 @@ def init(
         p.finish_stage(detail=f"{len(discovered)} files found")
 
         p.start_stage("Parsing and indexing")
+        # Bridge the pipeline's stage events into the shared display so long
+        # embedding runs show live counts instead of appearing frozen.
+        def on_pipeline(stage: str, done: int, total: int, detail: str = "") -> None:
+            # Parsing, resolving and persisting are phases of one indexing
+            # stage, so they update it rather than opening nested stages whose
+            # clocks would overlap and overstate the total.
+            if stage in {"parsing", "resolving", "persisting"}:
+                if stage == "parsing":
+                    p.update(done, total=total, detail=detail)
+                elif stage == "resolving":
+                    p.update(0, detail=detail)
+                else:
+                    p.update(total, total=total, detail=detail)
+            elif stage == "embedding":
+                p.start_stage("Embedding vectors", detail=detail)
+                p.update(done, total=total, detail=detail)
+
+        indexer.progress = on_pipeline
         stats = indexer.run(discovered)
         p.finish_stage(
-            detail=f"{stats.entities_written} entities, {stats.edges_written} edges, "
-            f"{stats.embeddings_written} embeddings"
+            name="Parsing and indexing",
+            detail=f"{stats.files_indexed} files, {stats.entities_written} entities, "
+            f"{stats.edges_written} edges",
         )
+        if p._find("Embedding vectors") >= 0:
+            if stats.semantic:
+                p.finish_stage(
+                    name="Embedding vectors",
+                    detail=f"{stats.embeddings_written} new, {stats.embeddings_reused} reused",
+                )
+            else:
+                p.finish_stage(
+                    name="Embedding vectors",
+                    status="skipped",
+                    detail=stats.degraded[0] if stats.degraded else "",
+                )
 
         p.start_stage("Building graph")
         graph = run_graph_stage(workspace, workspace.config, repo, backend)
@@ -299,10 +330,10 @@ def update(
     offline: bool = typer.Option(False, "--offline", help="Forbid network access."),
 ) -> None:
     """Incrementally update the index."""
-    from .progress import ProgressDisplay, QuietProgress
+    from .progress import make_progress
 
     command = "update"
-    p = QuietProgress() if (json_output or quiet or not sys.stderr.isatty()) else ProgressDisplay()
+    p = make_progress(json_mode=json_output, quiet=quiet)
     workspace = None
     try:
         from .embedding.gemma import create_backend
@@ -352,12 +383,39 @@ def update(
 
         if changed > 0:
             p.start_stage("Parsing and indexing")
+
+            def on_pipeline(stage: str, done: int, total: int, detail: str = "") -> None:
+                # Parsing, resolving and persisting are phases of one stage.
+                if stage in {"parsing", "resolving", "persisting"}:
+                    if stage == "parsing":
+                        p.update(done, total=total, detail=detail)
+                    elif stage == "resolving":
+                        p.update(0, detail=detail)
+                    else:
+                        p.update(total, total=total, detail=detail)
+                elif stage == "embedding":
+                    p.start_stage("Embedding vectors", detail=detail)
+                    p.update(done, total=total, detail=detail)
+
+            indexer.progress = on_pipeline
             stats = indexer.run(discovered, changed=plan.to_index, removed_paths=plan.removed)
             stats.files_skipped = unchanged
             p.finish_stage(
-                detail=f"{stats.entities_written} entities, {stats.edges_written} edges, "
-                f"{stats.embeddings_written} embeddings"
+                name="Parsing and indexing",
+                detail=f"{stats.entities_written} entities, {stats.edges_written} edges",
             )
+            if p._find("Embedding vectors") >= 0:
+                if stats.semantic:
+                    p.finish_stage(
+                        name="Embedding vectors",
+                        detail=f"{stats.embeddings_written} new, {stats.embeddings_reused} reused",
+                    )
+                else:
+                    p.finish_stage(
+                        name="Embedding vectors",
+                        status="skipped",
+                        detail=stats.degraded[0] if stats.degraded else "",
+                    )
         else:
             stats = indexer.run(discovered, changed=[], removed_paths=plan.removed)
             stats.files_skipped = unchanged

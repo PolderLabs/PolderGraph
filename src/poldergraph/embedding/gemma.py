@@ -192,7 +192,14 @@ class NativeGemmaBackend(EmbeddingBackend):
             return text
         return f"{prompt}{text}"
 
-    def embed_texts(self, items: list[str], *, task: str = DOCUMENT_TASK, dimensions: int | None = None) -> list[list[float]]:
+    def embed_texts(
+        self,
+        items: list[str],
+        *,
+        task: str = DOCUMENT_TASK,
+        dimensions: int | None = None,
+        on_batch: Any = None,
+    ) -> list[list[float]]:
         if not items:
             return []
         model = self._ensure_loaded()
@@ -218,7 +225,7 @@ class NativeGemmaBackend(EmbeddingBackend):
         # (batch x sequence length)^2, so mixing a 4000-token body with 400
         # short ones wastes most of the device.
         vectors = self._encode_by_length(
-            model, prepared, prompt_name=prompt_name, target=target
+            model, prepared, prompt_name=prompt_name, target=target, on_batch=on_batch
         )
 
         return vectors
@@ -230,6 +237,7 @@ class NativeGemmaBackend(EmbeddingBackend):
         *,
         prompt_name: str | None,
         target: int,
+        on_batch: Any = None,
     ) -> list[list[float]]:
         """Encode in length-sorted buckets whose size adapts to content length.
 
@@ -243,6 +251,7 @@ class NativeGemmaBackend(EmbeddingBackend):
         order = sorted(range(len(prepared)), key=lambda i: len(prepared[i]))
         out: list[list[float]] = [[] for _ in prepared]
         max_batch = self._bucket_size()
+        encoded = 0
 
         i = 0
         while i < len(order):
@@ -284,6 +293,9 @@ class NativeGemmaBackend(EmbeddingBackend):
                     out[slot] = truncate_and_normalize(
                         [float(x) for x in vector], target, normalize=self.normalize
                     )
+                if on_batch is not None:
+                    encoded += len(chunk)
+                    on_batch(encoded, len(prepared))
             i = j
         return out
 

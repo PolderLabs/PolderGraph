@@ -147,8 +147,17 @@ class Indexer:
             built.append(result)
             if result.error_count:
                 stats.parse_errors += 1
-            if self.progress and index % 50 == 0:
-                self.progress("parsing", index, len(target))
+            # Report often enough that a long parse never looks frozen.
+            if self.progress and (index % 5 == 0 or index == len(target) - 1):
+                self.progress(
+                    "parsing", index + 1, len(target),
+                    detail=f"{discovered.path} ({len(result.entities)} entities)",
+                )
+
+        if self.progress:
+            # Resolve is part of parsing work; report it so a long resolution
+            # shows movement, but it shares the parsing stage's clock.
+            self.progress("resolving", 0, len(built), detail="cross-file resolution")
 
         # Register every file before resolving so cross-file references can be
         # matched regardless of discovery order.
@@ -162,12 +171,25 @@ class Indexer:
         if removed_paths:
             stats.entities_removed += self._remove_paths(removed_paths)
 
+        if self.progress:
+            self.progress("persisting", 0, len(built), detail="entities, edges, full-text index")
+
         entity_batches: list[tuple[FileEntities, str]] = []
-        for result in built:
+        for position, result in enumerate(built):
             entity_batches.extend(self._persist(result, stats))
+            if self.progress and (position % 5 == 0 or position == len(built) - 1):
+                self.progress(
+                    "persisting", position + 1, len(built),
+                    detail=f"{stats.entities_written} entities, {stats.edges_written} edges",
+                )
 
         if self.backend is not None and stats.semantic:
-            self._embed(entity_batches, stats)
+            self._embed(entity_batches, stats, progress=self.progress)
+        elif self.progress:
+            self.progress(
+                "embedding", 0, 0,
+                detail="skipped; run 'poldergraph update' to add vectors",
+            )
 
         with writer_transaction(self.workspace.con):
             set_meta(self.workspace.con, "last_scan_at", int(time.time()))
@@ -346,7 +368,7 @@ class Indexer:
             return None
         return source[entity.start_byte : entity.end_byte].decode("utf-8", errors="replace")
 
-    def _embed(self, batches: list[tuple[FileEntities, str]], stats: IndexStats) -> None:
+    def _embed(self, batches: list[tuple[FileEntities, str]], stats: IndexStats, *, progress: Any = None) -> None:
         """Embed changed/new representations and persist vectors."""
         if self.backend is None:
             return
@@ -357,19 +379,46 @@ class Indexer:
         by_id = {eid: text for eid, text in representations}
         # Reuse vectors whose semantic input did not change.
         to_embed: list[str] = []
-        for entity_id, text in representations:
+        for position, (entity_id, text) in enumerate(representations):
             existing = self.repo.embedding_info(entity_id)
             digest = semantic_hash(text)
             if any(record["input_hash"] == digest for record in existing):
                 stats.embeddings_reused += 1
                 continue
             to_embed.append(entity_id)
+            if progress and (position % 100 == 0 or position == len(representations) - 1):
+                progress(
+                    "embedding", position + 1, len(representations),
+                    detail=f"checking {stats.embeddings_reused} reusable vectors",
+                )
         if not to_embed:
+            if progress:
+                progress(
+                    "embedding", len(representations), len(representations),
+                    detail=f"all {stats.embeddings_reused} vectors reused; nothing to embed",
+                )
             return
 
         info = self.backend.model_info()
         texts = [by_id[entity_id] for entity_id in to_embed]
+        if progress:
+            progress("embedding", 0, len(texts), detail=f"encoding on {_device_of(self.backend)}")
+
+        def on_batch(done: int, total: int) -> None:
+            if progress:
+                rate = f"{done / max(0.001, time.monotonic() - embed_started):.0f}/s"
+                progress(
+                    "embedding", done, total,
+                    detail=f"{done}/{total} vectors  {rate}",
+                )
+
+        embed_started = time.monotonic()
         try:
+            vectors = self.backend.embed_texts(
+                texts, task=DOCUMENT_TASK, dimensions=info.dimensions, on_batch=on_batch
+            )
+        except TypeError:
+            # Backends that predate the progress callback.
             vectors = self.backend.embed_texts(texts, task=DOCUMENT_TASK, dimensions=info.dimensions)
         except Exception as exc:
             # Semantic failure degrades the index but never destroys it.
@@ -421,6 +470,11 @@ class Indexer:
 
     def representation_version(self) -> int:
         return REPRESENTATION_VERSION
+
+
+def _device_of(backend: Any) -> str:
+    """Short label for the device an embedding backend is using."""
+    return str(getattr(backend, "device", "unknown"))
 
 
 def git_state(root: Path) -> tuple[str | None, str | None]:
