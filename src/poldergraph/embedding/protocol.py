@@ -168,7 +168,9 @@ def select_device(preference: str = "auto") -> str:
     """Resolve the compute device, reporting what was selected.
 
     CUDA is never required: CPU is always a valid fallback. When auto-detecting,
-    CUDA is only selected if the GPU has enough free memory for the model (~2 GB).
+    CUDA is only selected if the GPU has enough total memory for the model (~2 GB)
+    *plus* headroom for inference (~2 GB) and PyTorch overhead (~1 GB), so
+    anything under 6 GB total is not viable for EmbeddingGemma 2 on GPU.
     """
     if preference and preference != "auto":
         return preference
@@ -179,12 +181,20 @@ def select_device(preference: str = "auto") -> str:
     try:
         if torch.cuda.is_available():
             props = torch.cuda.get_device_properties(0)
-            free_mem = torch.cuda.mem_get_info(0)[0] if hasattr(torch.cuda, "mem_get_info") else props.total_memory
-            # The embedding model needs ~2 GB; require at least 3 GB free to
-            # leave headroom for PyTorch overhead and non-model allocations.
-            if free_mem >= 3 * 1024 * 1024 * 1024:
+            total_gpu_bytes = props.total_memory
+            free_gpu_bytes = (
+                torch.cuda.mem_get_info(0)[0]
+                if hasattr(torch.cuda, "mem_get_info")
+                else total_gpu_bytes
+            )
+            # The model weights alone need ~2 GB GPU. Embedding inference
+            # allocates ~2 GB more during forward pass. PyTorch CUDA allocator
+            # overhead adds ~1 GB. Require 6 GB total and 4 GB free.
+            MIN_TOTAL_GPU = 6 * 1024 * 1024 * 1024
+            MIN_FREE_GPU = 4 * 1024 * 1024 * 1024
+            if total_gpu_bytes >= MIN_TOTAL_GPU and free_gpu_bytes >= MIN_FREE_GPU:
                 return "cuda"
-            # GPU exists but too little memory — fall through to CPU.
+            # GPU exists but not enough memory — fall through to CPU.
     except Exception:
         pass
     try:
