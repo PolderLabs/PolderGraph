@@ -7,17 +7,17 @@ interrupted run leaves the graph consistent rather than half-written.
 from __future__ import annotations
 
 import time
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ..config.models import Config
 from ..discovery.scanner import DiscoveredFile, Discovery
 from ..embedding.protocol import DOCUMENT_TASK, EmbeddingBackend
 from ..embedding.representation import (
     REPRESENTATION_VERSION,
-    build_code_representation,
-    build_file_representation,
     normalize_representation,
     representation_for,
 )
@@ -194,6 +194,7 @@ class Indexer:
 
         with writer_transaction(self.workspace.con):
             set_meta(self.workspace.con, "last_scan_at", int(time.time()))
+            set_meta(self.workspace.con, "index_generation", uuid.uuid4().hex)
             # Stamp the format this index actually holds, never optimistically.
             # A no-op run (nothing to re-index) would otherwise assert "this
             # index is current" while every stored span is still in the old
@@ -203,7 +204,7 @@ class Indexer:
                 set_meta(
                     self.workspace.con, "index_format_version", INDEX_FORMAT_VERSION
                 )
-            branch, head = git_state(self.workspace.root)
+            _branch, head = git_state(self.workspace.root)
             if head:
                 set_meta(self.workspace.con, "indexed_head", head)
             set_meta(self.workspace.con, "representation_version", str(REPRESENTATION_VERSION))

@@ -105,7 +105,7 @@ def try_daemon(
         code = error.get("code")
         # Usage problems are the caller's fault and must surface; anything else
         # means the daemon is unhealthy, so fall back to in-process execution.
-        if code in {"USAGE_ERROR", "ENTITY_NOT_FOUND", "UNKNOWN_COMMAND"}:
+        if code in {"USAGE_ERROR", "ENTITY_NOT_FOUND", "UNKNOWN_COMMAND", "INDEX_STALE"}:
             return _DaemonRejection(error)
         return None
     return response

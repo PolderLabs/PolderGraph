@@ -157,6 +157,7 @@ def build_server(root: Path | None = None) -> Any:
         paths: list[str] | None = None,
         include_semantic: bool = True,
         include_structural_context: bool = False,
+        consistency: str = "bounded",
     ) -> dict[str, Any]:
         """Search the repository with hybrid ranking and score decomposition."""
         from ..retrieval.service import SearchFilters
@@ -176,6 +177,7 @@ def build_server(root: Path | None = None) -> Any:
                 filters=filters,
                 include_semantic=include_semantic,
                 include_structural_context=include_structural_context,
+                consistency=consistency,
             )
             return _envelope("pg_search") | {"data": response.to_dict(explain=True)}
 
@@ -189,6 +191,7 @@ def build_server(root: Path | None = None) -> Any:
         token_budget: int = 6000,
         kinds: list[str] | None = None,
         languages: list[str] | None = None,
+        consistency: str = "bounded",
     ) -> dict[str, Any]:
         """Return the canonical repository context pack for a task.
 
@@ -202,13 +205,17 @@ def build_server(root: Path | None = None) -> Any:
             plan = plan_context(query, budget)
             if plan.skipped:
                 service = session.service(need_backend=False)
-                result = service.context(query, token_budget=budget).to_dict()
+                result = service.context(
+                    query, token_budget=budget, consistency=consistency
+                ).to_dict()
                 result["memories"] = []
                 result["memories_learned"] = 0
                 return _envelope("pg_context") | {"data": result}
             service = session.service(need_backend=True)
             filters = SearchFilters(kinds=kinds or [], languages=languages or [])
-            result = service.context(query, token_budget=budget, filters=filters).to_dict()
+            result = service.context(
+                query, token_budget=budget, filters=filters, consistency=consistency
+            ).to_dict()
             from ..memory import (
                 MemoryStore,
                 add_memories_to_context,

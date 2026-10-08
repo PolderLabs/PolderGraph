@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ..decision_runtime import decide_query_route, provider_enabled
 from ..embedding.protocol import EmbeddingBackend
-from ..errors import UsageError
+from ..errors import IndexStaleError, UsageError
 from ..graph.metrics import importance_map
 from ..models.edge import Edge
 from ..models.entity import Entity
@@ -24,6 +24,8 @@ from .lexical import Candidate, exact_matches, lexical_candidates
 from .rerank import RankedResult, dedupe_results, detect_intent, fuse
 from .semantic import neighbors_of, semantic_candidates
 from .structural import PathResult, expand, find_path, find_tests, impact
+
+STRICT_FRESHNESS_HASH_BYTE_LIMIT = 64 * 1024 * 1024
 
 
 @dataclass
@@ -50,6 +52,7 @@ class SearchResponse:
     degraded: list[str] = field(default_factory=list)
     truncated: bool = False
     routing: dict[str, Any] = field(default_factory=dict)
+    consistency: str = "bounded"
 
     def to_dict(self, *, explain: bool = False) -> dict[str, Any]:
         return {
@@ -89,6 +92,7 @@ class SearchResponse:
             "degraded": self.degraded,
             "truncated": self.truncated,
             "routing": self.routing,
+            "consistency": self.consistency,
         }
 
 
@@ -149,8 +153,13 @@ class QueryService:
         filters: SearchFilters | None = None,
         include_semantic: bool = True,
         include_structural_context: bool = False,
+        consistency: Literal["strict", "bounded", "best_effort"] = "bounded",
     ) -> SearchResponse:
         """Run hybrid retrieval across the independent evidence channels."""
+        if consistency not in {"strict", "bounded", "best_effort"}:
+            raise UsageError("Consistency must be strict, bounded, or best_effort.")
+        if consistency == "strict":
+            self._require_fresh()
         filters = filters or SearchFilters()
         baseline_intent = detect_intent(query)
         degraded: list[str] = []
@@ -325,17 +334,24 @@ class QueryService:
         if len(ranked) > limit * 3:
             truncated = True
         filtered = self._apply_filters(ranked, filters)
-        return SearchResponse(
+        response = SearchResponse(
             query=query,
             intent=str(intent_value),
             results=filtered[:limit],
             degraded=degraded,
             truncated=truncated,
             routing=routing,
+            consistency=consistency,
         )
+        if consistency == "strict":
+            self._require_fresh()
+        return response
 
     def _index_generation(self) -> str:
         """Return a stable identifier for the currently indexed scan generation."""
+        generation = get_meta(self.repo.con, "index_generation")
+        if generation:
+            return generation
         format_version = get_meta(self.repo.con, "index_format_version") or "unknown"
         last_scan = get_meta(self.repo.con, "last_scan_at") or "unknown"
         return f"{format_version}:{last_scan}"
@@ -558,13 +574,20 @@ class QueryService:
         *,
         token_budget: int | None = None,
         filters: SearchFilters | None = None,
+        consistency: Literal["strict", "bounded", "best_effort"] = "bounded",
     ) -> ContextResult:
         """Build the canonical agent context pack."""
+        if consistency not in {"strict", "bounded", "best_effort"}:
+            raise UsageError("Consistency must be strict, bounded, or best_effort.")
         budget = token_budget or self.config.retrieval.default_context_tokens
         plan = plan_context(query, budget)
         if plan.skipped:
+            if consistency == "strict":
+                self._require_fresh()
             roots = self.repo.list_roots()
-            freshness = self.freshness()
+            freshness = self.freshness(verify_content=consistency == "strict")
+            if consistency == "strict" and not freshness["fresh"]:
+                self._raise_stale(freshness)
             return ContextResult(
                 query=query,
                 index={
@@ -573,6 +596,7 @@ class QueryService:
                     "context_skipped": True,
                 },
                 plan=plan,
+                consistency=consistency,
             )
         budget = plan.budget
         response = self.search(
@@ -581,18 +605,23 @@ class QueryService:
             filters=filters,
             include_semantic="semantic" in plan.lanes,
             include_structural_context="structural" in plan.lanes,
+            consistency=consistency,
         )
         roots = self.repo.list_roots()
+        freshness = self.freshness(verify_content=consistency == "strict")
+        if consistency == "strict" and not freshness["fresh"]:
+            self._raise_stale(freshness)
         result = pack_context(
             self,
             query,
             response,
             token_budget=budget,
             root=roots[0]["path"] if roots else ".",
-            freshness=self.freshness(),
+            freshness=freshness,
             degraded=response.degraded,
         )
         result.plan = plan
+        result.consistency = consistency
         return result
 
     # ------------------------------------------------------------- utilities
@@ -648,13 +677,15 @@ class QueryService:
     def importance(self) -> dict[str, float]:
         return importance_map(self.repo)
 
-    def freshness(self) -> dict[str, Any]:
+    def freshness(self, *, verify_content: bool = False) -> dict[str, Any]:
         """Report whether the index reflects the current source tree."""
         state = get_meta(self.repo.con, "last_scan_at")
         last_scan = float(state) if state else 0.0
-        drift = self._pending_changes()
+        drift, stale_files, truncated, check_error = self._pending_change_details(
+            verify_content=verify_content
+        )
         head = get_meta(self.repo.con, "indexed_head")
-        fresh = drift == 0
+        fresh = drift == 0 and check_error is None
         return {
             "fresh": fresh,
             "generation": self._index_generation(),
@@ -665,62 +696,101 @@ class QueryService:
             "semantic": "unknown",
             "last_scan_at": int(last_scan) if last_scan else None,
             "pending_changes": drift,
+            "stale_files": stale_files,
+            "stale_files_truncated": truncated,
+            "freshness_error": check_error,
             "indexed_head": head,
             "stale_since": int(last_scan) if drift and last_scan else None,
             "source_read_required": not fresh,
         }
 
-    def _pending_changes(self) -> int:
-        """Count source files whose state drifted from the indexed snapshot.
+    def _require_fresh(self) -> None:
+        freshness = self.freshness(verify_content=True)
+        if not freshness["fresh"]:
+            self._raise_stale(freshness)
 
-        Uses size and mtime as a cheap first filter; only a file whose metadata
-        moved is re-hashed, so the freshness check stays interactive.
+    @staticmethod
+    def _raise_stale(freshness: dict[str, Any]) -> None:
+        raise IndexStaleError(
+            "The index is stale or could not be verified; strict consistency cannot return repository evidence.",
+            details={"freshness": freshness},
+        )
 
-        Walking only the indexed rows made every brand-new file invisible, so
-        `status` reported `fresh: true` for a tree containing an untracked file
-        that `poldergraph update` would immediately pick up. Freshness has to
-        see both directions: indexed files that moved, and files on disk that
-        the index has never seen.
+    def _pending_change_details(
+        self, *, verify_content: bool = False
+    ) -> tuple[int, list[str], bool, str | None]:
+        """Return pending count and a bounded sample of stale workspace paths.
+
+        Reconcile indexed and newly discovered paths so stale results name
+        their source files when possible.
         """
-        from pathlib import Path
 
         # Source paths in the index are relative to the indexed workspace, not
         # the process working directory. This matters for callers that open a
         # workspace by an explicit path (for example MCP clients).
         root = self.root or Path.cwd()
-        pending = 0
         try:
             records = self.repo.all_files(self.root_id)
-        except Exception:
-            return 0
+        except Exception as exc:
+            return 0, [], False, f"Could not read indexed file revisions ({type(exc).__name__})."
         seen: set[str] = set()
+        stale_paths: list[str] = []
+        pending = 0
+        hashed_bytes = 0
+
+        def mark_stale(path: str) -> None:
+            nonlocal pending
+            pending += 1
+            if len(stale_paths) < 100:
+                stale_paths.append(path)
+
         for record in records:
             path = root / record["path"]
             seen.add(record["path"])
             try:
                 stat_result = path.stat()
             except OSError:
-                pending += 1
+                mark_stale(record["path"])
                 continue
             if stat_result.st_size != record["size"]:
-                pending += 1
+                mark_stale(record["path"])
                 continue
             mtime_ns = stat_result.st_mtime_ns
-            if record["mtime_ns"] and mtime_ns != record["mtime_ns"]:
-                pending += 1
-        return pending + self._unindexed_files(root, seen)
+            metadata_changed = stat_result.st_size != record["size"] or (
+                bool(record["mtime_ns"]) and mtime_ns != record["mtime_ns"]
+            )
+            if metadata_changed:
+                mark_stale(record["path"])
+                continue
+            if verify_content:
+                from ..discovery.scanner import safe_join
+                from ..models.entity import content_hash
 
-    def _unindexed_files(self, root: Path, seen: set[str]) -> int:
-        """Count indexable files on disk that the index has never seen.
-
-        An untracked file is exactly the case a human most needs warned about,
-        because retrieval will answer as if it were not there.
-        """
+                hashed_bytes += stat_result.st_size
+                if hashed_bytes > STRICT_FRESHNESS_HASH_BYTE_LIMIT:
+                    return (
+                        pending,
+                        stale_paths,
+                        pending > len(stale_paths),
+                        "Strict freshness verification exceeded its 64 MiB read budget.",
+                    )
+                safe_path = safe_join(root, record["path"])
+                try:
+                    digest = content_hash(safe_path.read_bytes()) if safe_path else ""
+                except OSError:
+                    digest = ""
+                if not digest or digest != record["content_hash"]:
+                    mark_stale(record["path"])
         try:
             files = self._discovery(root).scan().files
-        except OSError:
-            return 0
-        return sum(1 for f in files if f.path not in seen)
+        except OSError as exc:
+            return pending, stale_paths, pending > len(stale_paths), (
+                f"Could not reconcile workspace files ({type(exc).__name__})."
+            )
+        for item in files:
+            if item.path not in seen:
+                mark_stale(item.path)
+        return pending, stale_paths, pending > len(stale_paths), None
 
     def _discovery(self, root: Path) -> Any:
         """Build a discovery pass using the workspace's configured ignore rules."""

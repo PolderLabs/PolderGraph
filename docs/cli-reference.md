@@ -52,6 +52,7 @@ Options:
 - `--path PREFIX` — restrict to path prefix
 - `--semantic/--no-semantic` — use semantic retrieval
 - `--structural-context` — expand around strong candidates
+- `--consistency MODE` — `bounded` (default), `best_effort`, or `strict`; strict hashes indexed source before and after retrieval and fails with stale paths
 - `--explain-score` — show score breakdown per result
 - `--json` — machine-readable output
 
@@ -95,6 +96,7 @@ Relevant user-wide and current-project memories are included in the same budget.
 
 Options:
 - `--budget N` — token budget (default 6000)
+- `--consistency MODE` — `bounded` (default), `best_effort`, or `strict`; strict hashes indexed source before and after retrieval and fails with stale paths
 - `--json/--no-json` — machine-readable output (default json)
 
 ### `poldergraph memory`

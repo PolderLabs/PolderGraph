@@ -153,6 +153,16 @@ class TestToolResponses:
         assert payload["error"] is None
         assert isinstance(payload["warnings"], list)
 
+    def test_search_strict_consistency_returns_freshness(self, server):
+        payload = _call(
+            server,
+            "pg_search",
+            {"query": "AuthService", "include_semantic": False, "consistency": "strict"},
+        )
+        assert payload["ok"] is True
+        assert payload["index"]["fresh"] is True
+        assert payload["data"]["consistency"] == "strict"
+
     def test_pg_status(self, server):
         payload = _call(server, "pg_status", {})
         self._assert_envelope(payload, "pg_status")

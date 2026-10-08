@@ -50,6 +50,7 @@ class ContextResult:
     retrieval: dict[str, bool] = field(default_factory=dict)
     routing: dict[str, Any] = field(default_factory=dict)
     plan: ContextPlan | None = None
+    consistency: str = "bounded"
     token_estimate: int = 0
     truncated: bool = False
 
@@ -67,6 +68,7 @@ class ContextResult:
             "retrieval": self.retrieval,
             "routing": self.routing,
             "plan": self.plan.to_dict() if self.plan else None,
+            "consistency": self.consistency,
             "token_estimate": self.token_estimate,
             "truncated": self.truncated,
         }

@@ -19,6 +19,7 @@ import socket
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -141,10 +142,8 @@ def ensure_daemon(root: Path, *, autostart: bool = True) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         # A stale socket from a crashed daemon would block bind().
-        try:
+        with suppress(OSError):
             path.unlink()
-        except OSError:
-            pass
     # Detach so the daemon outlives the client that started it.
     subprocess.Popen(
         [sys.executable, "-m", "poldergraph.query_daemon_main", str(root)],
@@ -195,14 +194,12 @@ class Daemon:
             return self._service
         from .cli_support import build_service
 
-        workspace, repo, service = build_service(self.root, need_backend=True)
+        workspace, _repo, service = build_service(self.root, need_backend=True)
         # Load the embedding model now so the first client request is fast.
         backend = service.backend
         if backend is not None:
-            try:
+            with suppress(Exception):
                 backend.model_info()
-            except Exception:
-                pass
         self._workspace = workspace
         self._service = service
         return service
@@ -210,8 +207,7 @@ class Daemon:
     def handle(self, command: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Execute one retrieval command against the resident service."""
         service = self._ensure_loaded()
-        from .cli_support import emit_error
-        from .errors import UsageError
+        from .errors import PolderGraphError
 
         try:
             if command == "search":
@@ -228,7 +224,9 @@ class Daemon:
                     path_prefixes=list(raw.get("path_prefixes") or []),
                     provenances=list(raw.get("provenances") or []),
                 )
-                return service.search(**args).to_dict()
+                data = service.search(**args).to_dict()
+                data["index"] = service.freshness()
+                return data
             if command == "context":
                 from .retrieval.service import SearchFilters
 
@@ -291,9 +289,8 @@ class Daemon:
                 }
         except (TypeError, ValueError) as exc:
             return {"ok": False, "error": {"code": "USAGE_ERROR", "message": str(exc)}}
-        except UsageError as exc:
-            return {"ok": False, "error": {"code": exc.code, "message": exc.message,
-                                          "remediation": exc.remediation}}
+        except PolderGraphError as exc:
+            return {"ok": False, "error": exc.to_dict()}
         return {"ok": False, "error": {"code": "UNKNOWN_COMMAND", "message": f"Unknown command: {command}"}}
 
     def serve(self) -> None:
