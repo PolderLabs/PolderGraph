@@ -81,6 +81,11 @@ def try_daemon(
 
     if os.environ.get("POLDERGRAPH_NO_DAEMON"):
         return None
+    # An explicitly relocated memory database is per-invocation state; serving
+    # it from a long-lived daemon would read a different store than the caller
+    # configured.
+    if command.startswith("memory_") and os.environ.get("POLDERGRAPH_MEMORY_DB"):
+        return None
     try:
         from .query_daemon import ensure_daemon, resolve_index_dir, send_request
 

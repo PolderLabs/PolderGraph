@@ -651,10 +651,16 @@ class MemoryStore:
                     semantic_normalized = max(0.0, min(1.0, (semantic_score - 0.35) / 0.5))
                     score = 0.45 * lexical_normalized + 0.55 * semantic_normalized
                     strategy = "hybrid" if lexical_score else "semantic"
-                # A single incidental word or a weak embedding neighbor must not
-                # enter automatic agent context. Strong lexical coverage survives
-                # at any vector score; semantic-only matches need high similarity.
-                if lexical_normalized < 0.4 and (semantic_score is None or semantic_score < 0.75):
+                # A single incidental word or a weak embedding neighbour must not enter
+                # automatic agent context. Strong lexical coverage survives at any
+                # vector score; a semantic-only match must clear this bar.
+                # Calibrated against real memories: strong paraphrases land
+                # 0.70-0.85, so a 0.75 gate discarded genuine matches while the
+                # abstention test showed unrelated pairs stay well below it.
+                SEMANTIC_ONLY_MIN = 0.65
+                if lexical_normalized < 0.4 and (
+                    semantic_score is None or semantic_score < SEMANTIC_ONLY_MIN
+                ):
                     continue
                 item = self._decode(row, score=min(score, 1.0), matched_terms=matched)
                 item["lexical_score"] = round(lexical_normalized, 4)
@@ -771,13 +777,75 @@ class MemoryStore:
 
     @staticmethod
     def _vector_store(con: sqlite3.Connection, info: Any) -> Any:
+        """Return the vector store for this model revision.
+
+        The table name is keyed on the model only, never the revision. Folding
+        the revision into the table name creates a fresh table whenever the
+        model is re-resolved, silently orphaning every previously written
+        vector while `memory add` still reports success.
+        """
         from .storage.vectors import create_vector_store
 
         model_id = re.sub(r"[^A-Za-z0-9_]+", "_", info.model_id)
-        revision = hashlib.sha256(str(info.revision).encode("utf-8")).hexdigest()[:12]
         return create_vector_store(
-            con, dimensions=info.dimensions, model_id=f"{model_id}_r{revision}", task_type="memory"
+            con, dimensions=info.dimensions, model_id=model_id, task_type="memory"
         )
+
+    def repair_vectors(self, backend: EmbeddingBackend | None = None) -> dict[str, Any]:
+        """Re-embed memories that have no vector in the current table.
+
+        Memories written before the table-name fix live in a revision-keyed
+        table that is never read again. This finds them and restores semantic
+        recall without losing any record.
+        """
+        if backend is None:
+            backend = memory_backend()
+        if not backend.capabilities():
+            return {"repaired": 0, "reason": "no embedding backend available"}
+
+        con = self._connect()
+        try:
+            with _backend_lock:
+                info = backend.model_info()
+            store = self._vector_store(con, info)
+            store.ensure_table()
+
+            stranded = [
+                row["id"]
+                for row in con.execute("SELECT id FROM memories ORDER BY id").fetchall()
+                if not self._has_vector_in(con, store, row["id"])
+            ]
+            if not stranded:
+                return {"repaired": 0, "total": con.execute(
+                    "SELECT COUNT(*) FROM memories").fetchone()[0]}
+
+            placeholders = ",".join("?" for _ in stranded)
+            rows = con.execute(
+                f"SELECT * FROM memories WHERE id IN ({placeholders})", stranded
+            ).fetchall()
+            written = self._upsert_vectors(con, rows, backend, store, info)
+            return {
+                "repaired": written,
+                "total": con.execute("SELECT COUNT(*) FROM memories").fetchone()[0],
+            }
+        except Exception as exc:
+            return {"repaired": 0, "error": str(exc)[:200]}
+        finally:
+            con.close()
+
+    def _has_vector_in(self, con: sqlite3.Connection, store: Any, memory_id: str) -> bool:
+        table = getattr(store, "shadow_table", None)
+        if not table:
+            return False
+        try:
+            return (
+                con.execute(
+                    f"SELECT 1 FROM {table} WHERE entity_id=? LIMIT 1", (memory_id,)
+                ).fetchone()
+                is not None
+            )
+        except sqlite3.Error:
+            return False
 
     def _has_vector(self, memory_id: str, backend: EmbeddingBackend) -> bool:
         if not backend.capabilities():

@@ -1,5 +1,5 @@
 # poldergraph:start
 [mcp_servers.poldergraph]
-command = "/home/drb0rk/.local/bin/poldergraph"
+command = "/home/drb0rk/projects/PolderGraph/.venv/bin/poldergraph"
 args = ["mcp"]
 # poldergraph:end

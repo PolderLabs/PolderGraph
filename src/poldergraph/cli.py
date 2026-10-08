@@ -961,6 +961,18 @@ def context(
 # --------------------------------------------------------------- agent memory
 
 
+def _memory_daemon(action: str, arguments: dict[str, Any], root: Path | None) -> Any:
+    """Serve a memory operation from the resident daemon when available."""
+    remote = try_daemon(f"memory_{action}", arguments, root)
+    if isinstance(remote, _DaemonRejection):
+        raise PolderGraphError(
+            remote.error.get("message", "invalid request"),
+            code=remote.error.get("code", "USAGE_ERROR"),
+            remediation=remote.error.get("remediation"),
+        )
+    return remote
+
+
 def _memory_backend_or_none():
     from .memory import memory_backend
 
@@ -989,6 +1001,23 @@ def _memory_guard(command: str, json_output: bool, call: Any) -> None:
         raise typer.Exit(int(exc.exit_code)) from exc
 
 
+@memory_app.command("repair")
+def memory_repair(
+    root: Path | None = typer.Option(None, "--root", help="Current project root."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Re-embed stored memories that are missing a vector."""
+    from .memory import MemoryStore
+
+    store = MemoryStore(root)
+
+    def run():
+        data = store.repair_vectors(_memory_backend_or_none())
+        return data, f"Re-embedded {data.get('repaired', 0)} of {data.get('total', 0)} memories."
+
+    _memory_guard("repair", json_output, run)
+
+
 @memory_app.command("status")
 def memory_status(
     root: Path | None = typer.Option(None, "--root", help="Current project root."),
@@ -1000,7 +1029,8 @@ def memory_status(
     store = MemoryStore(root)
 
     def run():
-        data = store.status()
+        remote = _memory_daemon("status", {}, root)
+        data = remote if isinstance(remote, dict) else store.status()
         return data, (
             f"Memory store: {data['store']}\n"
             f"User memories: {data['user_memories']}  Project memories: {data['project_memories']}\n"
@@ -1029,9 +1059,17 @@ def memory_add(
     store = MemoryStore(root)
 
     def run():
-        data = store.add(
-            content, scope=scope, kind=kind, tags=tag, backend=_memory_backend_or_none()
+        remote = _memory_daemon(
+            "add",
+            {"content": content, "scope": scope, "kind": kind, "tags": list(tag or [])},
+            root,
         )
+        if isinstance(remote, dict) and remote.get("memory"):
+            data = remote["memory"]
+        else:
+            data = store.add(
+                content, scope=scope, kind=kind, tags=tag, backend=_memory_backend_or_none()
+            )
         return data, f"Saved {data['scope']} memory {data['id']} ({data['kind']})."
 
     _memory_guard("add", json_output, run)
@@ -1057,7 +1095,10 @@ def memory_search(
         from .config.loader import load_config
         from .workspace import find_index_dir
 
-        results = store.search(
+        remote = _memory_daemon(
+            "search", {"query": query, "scope": scope, "limit": limit}, root
+        )
+        results = remote["results"] if isinstance(remote, dict) else store.search(
             query,
             scope=scope,
             limit=limit,
@@ -1095,7 +1136,10 @@ def memory_list(
     store = MemoryStore(root)
 
     def run():
-        results = store.list(scope=scope, limit=limit)
+        remote = _memory_daemon("list", {"scope": scope, "limit": limit}, root)
+        results = remote["results"] if isinstance(remote, dict) else store.list(
+            scope=scope, limit=limit
+        )
         data = {"scope": scope, "results": results, "store": str(store.database)}
         lines = [
             f"{item['id']}  [{item['scope']} · {item['kind']}]\n  {item['content']}"

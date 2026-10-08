@@ -287,6 +287,8 @@ class Daemon:
                     _named(arguments, "entity_ref", "entity"),
                     **_without(arguments, "entity", "entity_ref"),
                 )
+            if command.startswith("memory_"):
+                return self._handle_memory(command[7:], arguments, service)
             if command == "status":
                 return {
                     "counts": service.repo.counts(),
@@ -333,6 +335,62 @@ class Daemon:
             server.close()
             if path.exists():
                 path.unlink()
+
+    def _handle_memory(
+        self, action: str, arguments: dict[str, Any], service: Any
+    ) -> dict[str, Any]:
+        """Serve a memory operation using the resident embedding backend.
+
+        Memory search needs the same model the graph does, so serving it here
+        removes the per-command model setup an agent would otherwise pay on
+        every recall.
+        """
+        from .memory import MemoryStore
+
+        store = MemoryStore(service.root)
+        if action == "status":
+            return store.status()
+        if action == "search":
+            results = store.search(
+                arguments.get("query", ""),
+                scope=arguments.get("scope", "all"),
+                limit=int(arguments.get("limit", 10)),
+                backend=service.backend,
+            )
+            return {"query": arguments.get("query", ""),
+                    "scope": arguments.get("scope", "all"), "results": results}
+        if action == "list":
+            memories = store.list(
+                scope=arguments.get("scope", "all"),
+                limit=int(arguments.get("limit", 50)),
+            )
+            return {"scope": arguments.get("scope", "all"), "results": memories}
+        if action == "add":
+            created = store.add(
+                arguments["content"],
+                scope=arguments.get("scope", "user"),
+                kind=arguments.get("kind", "fact"),
+                tags=arguments.get("tags") or [],
+                backend=service.backend,
+            )
+            return {"memory": created, "created": True}
+        if action == "update":
+            return {
+                "memory": store.update(
+                    arguments["id"],
+                    content=arguments.get("content"),
+                    kind=arguments.get("kind"),
+                    tags=arguments.get("tags"),
+                    backend=service.backend,
+                ),
+                "updated": True,
+            }
+        if action == "forget":
+            return {"memory": store.forget(arguments["id"]), "deleted": True}
+        if action == "repair":
+            return store.repair_vectors(service.backend)
+        return {"ok": False, "error": {"code": "UNKNOWN_COMMAND",
+                                       "message": f"Unknown memory action: {action}"}}
 
     def _serve_one(self, conn: socket.socket) -> None:
         conn.settimeout(REQUEST_TIMEOUT)

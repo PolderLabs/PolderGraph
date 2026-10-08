@@ -122,6 +122,9 @@ poldergraph search "..."           # sub-second from then on
 poldergraph daemon stop
 ```
 
+Memory commands are served by the same resident process, so
+`poldergraph memory search` does not rebuild the embedding model per recall.
+
 The daemon re-reads the index on every request, so `poldergraph update` is
 visible immediately; cached community data invalidates when the graph changes.
 Set `POLDERGRAPH_NO_DAEMON=1` to bypass it.
