@@ -13,6 +13,18 @@ from poldergraph.workspace import create_index, open_workspace
 
 
 class TestRebuild:
+    def test_each_completed_scan_advances_generation(self, indexed_workspace):
+        from poldergraph.indexing.pipeline import Indexer
+        from poldergraph.storage.sqlite import get_meta
+
+        before = get_meta(indexed_workspace.con, "index_generation")
+        indexer = Indexer(indexed_workspace, backend=None)
+        indexer.run(indexer.discover())
+        after = get_meta(indexed_workspace.con, "index_generation")
+        assert before
+        assert after
+        assert after != before
+
     def test_rebuild_replaces_the_live_index(self, sample_repo: Path):
         """A successful rebuild must actually install the new index."""
         from poldergraph.indexing.pipeline import Indexer
@@ -190,7 +202,62 @@ class TestDashboardApi:
         )
         source_mtime = old_mtime - 2_000_000_000
         os.utime(source, ns=(source_mtime, source_mtime))
-        assert service.freshness()["fresh"] is False
+        freshness = service.freshness()
+        assert freshness["fresh"] is False
+        assert "pkg/auth.py" in freshness["stale_files"]
+
+    def test_strict_search_detects_same_size_edit_with_preserved_mtime(self, indexed_workspace):
+        import os
+
+        from poldergraph.errors import IndexStaleError
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+
+        repo = Repository(indexed_workspace.con)
+        service = QueryService(
+            repo,
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        source = indexed_workspace.root / "pkg" / "auth.py"
+        original_stat = source.stat()
+        source.write_text(source.read_text().replace("Validate", "Verifies", 1))
+        os.utime(source, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+        with pytest.raises(IndexStaleError) as exc_info:
+            service.search("AuthService", include_semantic=False, consistency="strict")
+        freshness = exc_info.value.details["freshness"]
+        assert "pkg/auth.py" in freshness["stale_files"]
+
+    def test_strict_search_rechecks_freshness_after_retrieval(
+        self, indexed_workspace, monkeypatch
+    ):
+        import poldergraph.retrieval.service as service_module
+        from poldergraph.errors import IndexStaleError
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+
+        service = QueryService(
+            Repository(indexed_workspace.con),
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        source = indexed_workspace.root / "pkg" / "auth.py"
+        original_exact = service_module.exact_matches
+        changed = False
+
+        def edit_during_search(*args, **kwargs):
+            nonlocal changed
+            if not changed:
+                source.write_text(source.read_text() + "\n# changed during retrieval\n")
+                changed = True
+            return original_exact(*args, **kwargs)
+
+        monkeypatch.setattr(service_module, "exact_matches", edit_during_search)
+        with pytest.raises(IndexStaleError):
+            service.search("AuthService", include_semantic=False, consistency="strict")
 
     def test_global_graph_payload_shape(self, api_client):
         data = api_client.get("/api/graph/global?limit=50").json()["data"]
@@ -223,6 +290,24 @@ class TestDashboardApi:
         result = data["results"][0]
         assert result["evidence"] in {"exact", "lexical", "semantic", "graph-expanded"}
         assert isinstance(result["score_features"], dict)
+
+    def test_search_strict_consistency_returns_freshness_contract(self, api_client):
+        payload = api_client.get("/api/search?q=AuthService&include_semantic=false&consistency=strict").json()
+        assert payload["ok"] is True
+        assert payload["index"]["fresh"] is True
+        assert payload["index"]["generation"]
+        assert payload["data"]["consistency"] == "strict"
+
+    def test_search_strict_consistency_reports_stale_files(self, api_client, sample_repo):
+        source = sample_repo / "pkg" / "auth.py"
+        source.write_text(source.read_text() + "\n# stale evidence\n")
+        response = api_client.get(
+            "/api/search?q=AuthService&include_semantic=false&consistency=strict"
+        )
+        payload = response.json()
+        assert response.status_code == 400
+        assert payload["error"]["code"] == "INDEX_STALE"
+        assert "pkg/auth.py" in payload["error"]["details"]["freshness"]["stale_files"]
 
     def test_search_graph_context_is_bounded_and_valid(self, api_client):
         data = api_client.get(

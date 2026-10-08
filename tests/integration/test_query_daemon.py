@@ -7,8 +7,6 @@ execution, correct invalidation after an index update, and safe fallback.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from poldergraph.query_daemon import (
@@ -110,6 +108,16 @@ class TestDaemonResults:
             {"query": "Session", "limit": 5, "filters": {"kinds": ["class"]}},
         )
         assert all(item["kind"] == "class" for item in result["results"])
+
+    def test_strict_freshness_error_survives_the_process_boundary(self, daemon):
+        source = daemon.root / "auth.py"
+        source.write_text(source.read_text() + "\n# stale after indexing\n")
+        result = daemon.handle(
+            "search", {"query": "AuthService", "include_semantic": False, "consistency": "strict"}
+        )
+        assert result["ok"] is False
+        assert result["error"]["code"] == "INDEX_STALE"
+        assert "auth.py" in result["error"]["details"]["freshness"]["stale_files"]
 
 
 class TestSocketPaths:

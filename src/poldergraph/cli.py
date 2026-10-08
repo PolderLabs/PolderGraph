@@ -31,6 +31,7 @@ from .config.models import Config
 from .errors import (
     API_VERSION,
     ExitCode,
+    IndexStaleError,
     PolderGraphError,
     UsageError,
     envelope,
@@ -656,6 +657,9 @@ def search(
     structural_context: bool = typer.Option(
         False, "--structural-context", help="Expand around strong candidates."
     ),
+    consistency: str = typer.Option(
+        "bounded", "--consistency", help="strict, bounded (default), or best_effort."
+    ),
     explain_score: bool = typer.Option(False, "--explain-score", help="Show score breakdown."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
     root: Optional[Path] = typer.Argument(None, help="Repository root."),
@@ -680,10 +684,16 @@ def search(
                     "filters": daemon_filters,
                     "include_semantic": True,
                     "include_structural_context": structural_context,
+                    "consistency": consistency,
                 },
                 root,
             )
             if isinstance(remote, _DaemonRejection):
+                if remote.error.get("code") == "INDEX_STALE":
+                    raise IndexStaleError(
+                        remote.error.get("message", "The index is stale."),
+                        details=remote.error.get("details"),
+                    )
                 emit_json(
                     envelope(command=command, error=UsageError(
                         remote.error.get("message", "invalid request"),
@@ -693,7 +703,9 @@ def search(
                 )
                 raise typer.Exit(int(ExitCode.USAGE))
             if isinstance(remote, dict):
-                payload = envelope(command=command, data=remote,
+                index = remote.get("index")
+                data = {key: value for key, value in remote.items() if key != "index"}
+                payload = envelope(command=command, index=index, data=data,
                                    warnings=remote.get("degraded", []))
                 if json_output:
                     emit_json(payload)
@@ -711,6 +723,7 @@ def search(
             filters=filters,
             include_semantic=semantic,
             include_structural_context=structural_context,
+            consistency=consistency,
         )
         payload = envelope(
             command=command,
@@ -748,6 +761,11 @@ def explain(
     try:
         remote = try_daemon("explain", {"entity": entity}, root)
         if isinstance(remote, _DaemonRejection):
+            if remote.error.get("code") == "INDEX_STALE":
+                raise IndexStaleError(
+                    remote.error.get("message", "The index is stale."),
+                    details=remote.error.get("details"),
+                )
             emit_json(envelope(command=command, error=UsageError(
                 remote.error.get("message", "invalid request"),
                 code=remote.error.get("code", "USAGE_ERROR"),
@@ -984,6 +1002,9 @@ def impact(
 def context(
     query: str = typer.Argument(..., help="Question or task description."),
     budget: int = typer.Option(6000, "--budget", help="Token budget for the context pack."),
+    consistency: str = typer.Option(
+        "bounded", "--consistency", help="strict, bounded (default), or best_effort."
+    ),
     root: Path | None = typer.Option(None, "--root", help="Repository root."),
     json_output: bool = typer.Option(True, "--json/--no-json", help="Machine-readable output."),
 ) -> None:
@@ -996,14 +1017,18 @@ def context(
         plan = plan_context(query, budget)
         if plan.skipped:
             workspace, _repo, service = build_service(root, need_backend=False)
-            result = service.context(query, token_budget=budget).to_dict()
+            result = service.context(
+                query, token_budget=budget, consistency=consistency
+            ).to_dict()
             payload = envelope(command=command, index=freshness_payload(service), data=result)
             if json_output:
                 emit_json(payload)
             else:
                 typer.echo("No repository context needed for this message.")
             return
-        remote = try_daemon("context", {"query": query, "token_budget": budget}, root)
+        remote = try_daemon(
+            "context", {"query": query, "token_budget": budget, "consistency": consistency}, root
+        )
         if isinstance(remote, _DaemonRejection):
             emit_json(envelope(command=command, error=UsageError(
                 remote.error.get("message", "invalid request"),
@@ -1012,6 +1037,7 @@ def context(
             raise typer.Exit(int(ExitCode.USAGE))
         if isinstance(remote, dict):
             payload = envelope(command=command, data=remote,
+                               index=remote.get("index"),
                                warnings=remote.get("warnings", []))
             if json_output:
                 emit_json(payload)
@@ -1026,7 +1052,7 @@ def context(
                     typer.echo(entity_line(_Simple(entity)))
             return
         workspace, _repo, service = build_service(root, need_backend=True)
-        result = service.context(query, token_budget=budget)
+        result = service.context(query, token_budget=budget, consistency=consistency)
         data = result.to_dict()
         from .memory import MemoryStore, add_memories_to_context
 

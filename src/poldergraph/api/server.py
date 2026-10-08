@@ -51,7 +51,9 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
     config = workspace.config
     repo = Repository(workspace.con)
     backend = None if skip_backend else _build_backend(workspace)
-    service = QueryService(repo, config, backend, root_id=workspace.root_id())
+    service = QueryService(
+        repo, config, backend, root_id=workspace.root_id(), workspace=workspace
+    )
 
     app = FastAPI(title="PolderGraph", version=API_VERSION, docs_url="/api/docs")
     app.add_middleware(
@@ -166,6 +168,7 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
         paths: str = Query(default=""),
         include_semantic: bool = Query(default=True),
         include_structural_context: bool = Query(default=False),
+        consistency: str = Query(default="bounded"),
         include_graph_context: bool = Query(default=False),
         graph_context_limit: int = Query(default=8, ge=1, le=24),
         graph_fanout: int = Query(default=10, ge=1, le=40),
@@ -177,13 +180,17 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
             languages=[item for item in languages.split(",") if item],
             path_prefixes=[p for p in paths.split(",") if p],
         )
-        response = service.search(
-            q,
-            limit=limit,
-            filters=filters,
-            include_semantic=include_semantic,
-            include_structural_context=include_structural_context,
-        )
+        try:
+            response = service.search(
+                q,
+                limit=limit,
+                filters=filters,
+                include_semantic=include_semantic,
+                include_structural_context=include_structural_context,
+                consistency=consistency,
+            )
+        except PolderGraphError as exc:
+            return fail("search", exc)
         data = response.to_dict()
         if include_graph_context:
             from ..retrieval.structural import expand

@@ -22,6 +22,7 @@ Arguments:
 - `kinds`, `languages`, `roots`, `paths` — filters
 - `include_semantic` (default true)
 - `include_structural_context` (default false)
+- `consistency` (`bounded` by default; `best_effort` or `strict`)
 
 Returns ranked entities with score decomposition and evidence badges (`exact`, `lexical`, `semantic`, `graph-expanded`).
 
@@ -31,8 +32,15 @@ Arguments:
 - `query` (required)
 - `token_budget` (default 6000)
 - `kinds`, `languages` — optional filters
+- `consistency` (`bounded` by default; `best_effort` or `strict`)
 
 Returns the canonical context pack: entities, relationships, snippets, paths, communities, unresolved references, freshness metadata and token estimate. This is the preferred first tool for broad repository tasks.
+
+`bounded` returns promptly with freshness and stale-file metadata. `best_effort`
+uses the same retrieval behavior without a freshness barrier. `strict` checks
+source content before and after retrieval and returns `INDEX_STALE` with stale
+paths instead of results when any indexed source changed. Strict mode can read
+the indexed source files to verify their content hashes.
 
 ### `pg_entity`
 
