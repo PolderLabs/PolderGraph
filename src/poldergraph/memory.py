@@ -323,13 +323,19 @@ def capture_explicit_user_preferences(
     *,
     backend: EmbeddingBackend | None = None,
     decision_config: Any = None,
+    trusted_user_message: bool = False,
 ) -> list[dict[str, Any]]:
-    """Save only explicit, first-person durable preferences from a task prompt.
+    """Save explicit preferences only when called from a trusted user-input hook.
 
     Deterministic parsing admits only explicit durable statements. An explicitly
     configured typed-decision provider may reject an ambiguous candidate; it
     cannot expand capture beyond these local rules.
+
+    Repository context queries, agent-authored tool arguments, and CLI prompts
+    are not proof of user authorship and must leave this flag unset.
     """
+    if not trusted_user_message:
+        return []
     prompt = re.sub(r"```.*?```|~~~.*?~~~", "", prompt, flags=re.DOTALL)
     candidates: dict[str, str] = {}
     for pattern in _USER_PREFERENCE_PATTERNS:

@@ -61,6 +61,11 @@ def _coerce_scalar(raw: str) -> Any:
         return lowered == "true"
     if lowered in {"null", "none"}:
         return None
+    if raw.lstrip().startswith(("[", "{")):
+        try:
+            return tomllib.loads(f"value = {raw}")["value"]
+        except tomllib.TOMLDecodeError:
+            pass
     try:
         return int(raw)
     except ValueError:
@@ -155,6 +160,26 @@ def load_config(
             f"Invalid configuration: {exc}",
             remediation="Run: poldergraph config show --effective",
         ) from exc
+
+    # A project can select a provider, but cannot grant permission to transmit
+    # repository-derived text. Only user-level config and host environment/CLI
+    # settings are trusted sources for remote decision consent. Custom
+    # endpoints have the same trust boundary so a checkout cannot redirect
+    # credentials or decision payloads.
+    trusted_origins = {"user", "env", "cli"}
+    config.decisions.remote_authorized = (
+        config.privacy.allow_remote_decisions
+        and origins.get("privacy.allow_remote_decisions") in trusted_origins
+    )
+    config.decisions.authorized_remote_providers = (
+        list(config.decisions.remote_providers)
+        if origins.get("decisions.remote_providers") in trusted_origins
+        else []
+    )
+    endpoint_origin = origins.get("decisions.endpoint")
+    config.decisions.endpoint_authorized = (
+        endpoint_origin is None or endpoint_origin in trusted_origins
+    )
 
     return LoadedConfig(
         config=config,

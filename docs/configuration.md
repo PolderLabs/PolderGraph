@@ -60,10 +60,12 @@ open_browser = true
 [privacy]
 allow_model_downloads = true
 allow_remote_embedding = false
+allow_remote_decisions = false
 telemetry = false
 
 [decisions]
 provider = "disabled"
+remote_providers = []
 model = ""
 endpoint = ""
 timeout = 3.0
@@ -148,15 +150,17 @@ POLDERGRAPH_DECISIONS__PROVIDER=typesafe
 |-----|------|---------|-------------|
 | `allow_model_downloads` | bool | true | Allow downloading the embedding model |
 | `allow_remote_embedding` | bool | false | Allow remote embedding endpoints |
+| `allow_remote_decisions` | bool | false | Trusted user-level consent for hosted decision providers; workspace config cannot grant consent |
 | `telemetry` | bool | false | Send telemetry (always false by default) |
 
 ### `[decisions]`
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `provider` | string | `disabled` | `disabled`, `typesafe`, `openai`, or `laya`; setting a provider opts into automatic typed decisions |
+| `provider` | string | `disabled` | `disabled`, `typesafe`, `openai`, or `laya`; workspace may select a provider but cannot authorize hosted calls |
+| `remote_providers` | string[] | `[]` | Trusted user-level allowlist of hosted providers (`typesafe`, `openai`) that may receive decision data |
 | `model` | string | empty | Optional model override |
-| `endpoint` | string | empty | Optional compatible API endpoint override |
+| `endpoint` | string | empty | Optional compatible API endpoint override; custom hosted endpoints must come from trusted user config or the environment |
 | `timeout` | float | 3.0 | Hosted request timeout in seconds |
 | `confidence_threshold` | float | 0.9 | Minimum probability for model decisions; uncertain answers keep the deterministic result |
 

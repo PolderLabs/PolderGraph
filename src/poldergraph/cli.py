@@ -1016,17 +1016,14 @@ def context(
         workspace, repo, service = build_service(root, need_backend=True)
         result = service.context(query, token_budget=budget)
         data = result.to_dict()
-        from .memory import MemoryStore, add_memories_to_context, capture_explicit_user_preferences
+        from .memory import MemoryStore, add_memories_to_context
 
         memory_store = MemoryStore(service.root)
-        captured = capture_explicit_user_preferences(
-            memory_store, query, backend=service.backend, decision_config=service.config.decisions
-        )
         add_memories_to_context(
             data, memory_store, query, budget, backend=service.backend,
             decision_config=service.config.decisions,
         )
-        data["memories_learned"] = len(captured)
+        data["memories_learned"] = 0
         payload = envelope(command=command, index=freshness_payload(service), data=data)
         if json_output:
             emit_json(payload)

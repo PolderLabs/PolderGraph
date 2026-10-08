@@ -352,4 +352,46 @@ def decide(
     return _normalize_openai(response)
 
 
-__all__ = ["DecisionError", "DecisionQuestion", "choice", "decide", "predicate", "score"]
+def decide_batch(
+    states: Sequence[str | Mapping[str, Any] | Sequence[Any]],
+    questions: Mapping[str, DecisionQuestion | Mapping[str, Any]],
+    *,
+    model: str | None = None,
+    batch_size: int = 8,
+) -> list[dict[str, Any]]:
+    """Evaluate one shared typed question against multiple local Laya states.
+
+    The returned list preserves input order, so callers can bind each response
+    to the corresponding candidate without packing candidates into one state.
+    """
+    if not states:
+        return []
+    normalized_questions = _coerce_questions(questions)
+    if batch_size < 1:
+        raise DecisionError("batch_size must be greater than zero.")
+    try:
+        laya = importlib.import_module("laya")
+    except ImportError as exc:
+        raise DecisionError(
+            "Local Laya is not installed. Install it with: pip install 'poldergraph[decision-laya]'"
+        ) from exc
+    checkpoint = model or "convaiinnovations/laya"
+    with _laya_lock:
+        agent = _laya_models.get(checkpoint)
+        if agent is None:
+            agent = laya.load(checkpoint)
+            _laya_models[checkpoint] = agent
+    payloads = agent.predict_batch(
+        list(states),
+        {name: _question_payload(question, "laya") for name, question in normalized_questions.items()},
+        batch_size=batch_size,
+    )
+    if not isinstance(payloads, list) or len(payloads) != len(states):
+        raise DecisionError("Laya returned a mismatched number of batch answers.")
+    return [
+        _normalize_systemone("laya", checkpoint, payload, normalized_questions)
+        for payload in payloads
+    ]
+
+
+__all__ = ["DecisionError", "DecisionQuestion", "choice", "decide", "decide_batch", "predicate", "score"]

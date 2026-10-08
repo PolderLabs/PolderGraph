@@ -58,19 +58,17 @@ weak embedding neighbors crowding out precise evidence.
 
 OMP and Codex receive matching user/project memories automatically in
 `poldergraph context` / `pg_context` before repository work. Context packing
-counts memory text against the same token budget and marks truncation. An
-explicit first-person statement such as “I prefer concise answers” is captured
-as a user preference during context construction. This local deterministic
-extractor does not send prompts elsewhere and ignores task-specific statements
-such as “for this task.” Agents also receive memory tools for direct search and
-maintenance. Generated instructions tell agents to save stable user preferences
-and non-obvious project decisions when they become clear, without interrupting
-the user. Agents must not write speculative facts or one-time task data.
+counts memory text against the same token budget and marks truncation. Context
+retrieval is read-only: it never writes shared memory from query text. This
+prevents quoted repository text or agent-authored tool arguments from being
+treated as user-authored preferences. Users can save preferences and project
+decisions through explicit memory tools. Trusted host user-input capture is
+disabled until an integration can provide verifiable user-message provenance.
+Agents must not write speculative facts or one-time task data.
 
 Project decisions are not inferred from arbitrary task prose; the coding agent
 must save them when it establishes durable, evidence-backed knowledge.
-Automatic recall and explicit first-person preference capture do not depend on
-the agent remembering to search or write first.
+Automatic recall does not depend on the agent remembering to search first.
 
 ## CLI
 

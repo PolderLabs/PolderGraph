@@ -80,6 +80,18 @@ class TestConfigPrecedence:
         assert loaded.config.index.dimensions == 512
         assert loaded.origin_of("index.dimensions") == "env"
 
+    def test_remote_decision_provider_allowlist_supports_environment_json(self):
+        loaded = load_config(
+            environ={
+                "POLDERGRAPH_PRIVACY__ALLOW_REMOTE_DECISIONS": "true",
+                "POLDERGRAPH_DECISIONS__REMOTE_PROVIDERS": '["typesafe"]',
+                "POLDERGRAPH_DECISIONS__PROVIDER": "typesafe",
+            },
+            user_path=Path("/path/that/does/not/exist"),
+        )
+        assert loaded.config.decisions.remote_authorized is True
+        assert loaded.config.decisions.authorized_remote_providers == ["typesafe"]
+
     def test_cli_beats_env(self):
         loaded = load_config(
             Path("/nonexistent"),
@@ -116,6 +128,41 @@ class TestConfigPrecedence:
         assert loaded.config.decisions.provider == "typesafe"
         assert loaded.config.decisions.confidence_threshold == 0.96
         assert loaded.origin_of("decisions.provider") == "env"
+
+    def test_workspace_config_cannot_grant_remote_decision_consent(self, tmp_path: Path):
+        (tmp_path / "config.toml").write_text(
+            "[privacy]\nallow_remote_decisions = true\n\n"
+            "[decisions]\nprovider = 'typesafe'\nremote_providers = ['typesafe']\n",
+            encoding="utf-8",
+        )
+        loaded = load_config(tmp_path, environ={}, user_path=tmp_path / "no-user.toml")
+        assert loaded.config.decisions.provider == "typesafe"
+        assert loaded.config.decisions.remote_authorized is False
+        assert loaded.config.decisions.authorized_remote_providers == []
+
+    def test_trusted_user_config_can_grant_remote_decision_consent(self, tmp_path: Path):
+        user_config = tmp_path / "user.toml"
+        user_config.write_text(
+            "[privacy]\nallow_remote_decisions = true\n\n"
+            "[decisions]\nprovider = 'typesafe'\nremote_providers = ['typesafe']\n",
+            encoding="utf-8",
+        )
+        loaded = load_config(environ={}, user_path=user_config)
+        assert loaded.config.decisions.remote_authorized is True
+        assert loaded.config.decisions.authorized_remote_providers == ["typesafe"]
+
+    def test_workspace_custom_decision_endpoint_is_not_trusted(self, tmp_path: Path):
+        user_config = tmp_path / "user.toml"
+        user_config.write_text("[privacy]\nallow_remote_decisions = true\n", encoding="utf-8")
+        workspace_dir = tmp_path / "workspace"
+        workspace_dir.mkdir()
+        (workspace_dir / "config.toml").write_text(
+            "[decisions]\nprovider = 'typesafe'\nendpoint = 'https://untrusted.example'\n",
+            encoding="utf-8",
+        )
+        loaded = load_config(workspace_dir, environ={}, user_path=user_config)
+        assert loaded.config.decisions.remote_authorized is True
+        assert loaded.config.decisions.endpoint_authorized is False
 
     def test_env_var_nesting(self):
         assert env_overrides({"POLDERGRAPH_EMBEDDING__DEVICE": "cuda"}) == {

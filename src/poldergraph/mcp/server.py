@@ -204,19 +204,15 @@ def build_server(root: Path | None = None) -> Any:
             from ..memory import (
                 MemoryStore,
                 add_memories_to_context,
-                capture_explicit_user_preferences,
             )
 
             memory_store = MemoryStore(service.root)
-            captured = capture_explicit_user_preferences(
-                memory_store, query, backend=service.backend,
-                decision_config=service.config.decisions,
-            )
             add_memories_to_context(
                 result, memory_store, query, budget, backend=service.backend,
                 decision_config=service.config.decisions,
             )
-            result["memories_learned"] = len(captured)
+            # Keep the field for older consumers while context remains read-only.
+            result["memories_learned"] = 0
             return _envelope("pg_context") | {"data": result}
 
         return _guard("pg_context", run)

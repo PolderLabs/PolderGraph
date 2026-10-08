@@ -250,22 +250,16 @@ class Daemon:
                     from .memory import (
                         MemoryStore,
                         add_memories_to_context,
-                        capture_explicit_user_preferences,
                     )
 
                     store = MemoryStore(service.root)
-                    captured = capture_explicit_user_preferences(
-                        store, args.get("query", ""),
-                        backend=service.backend,
-                        decision_config=service.config.decisions,
-                    )
                     add_memories_to_context(
                         data, store, args.get("query", ""),
                         args.get("token_budget") or service.config.retrieval.default_context_tokens,
                         backend=service.backend,
                         decision_config=service.config.decisions,
                     )
-                    data["memories_learned"] = len(captured)
+                    data["memories_learned"] = 0
                 except Exception as exc:
                     data.setdefault("warnings", []).append(f"memory step skipped: {exc}")
                 return data
