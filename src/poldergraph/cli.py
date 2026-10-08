@@ -1344,6 +1344,115 @@ def rebuild(
         raise typer.Exit(int(exc.exit_code))
 
 
+# ----------------------------------------------------------------- upgrade
+
+
+@app.command()
+def upgrade(
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+    check_only: bool = typer.Option(False, "--check", help="Only check for updates, do not install."),
+    pre: bool = typer.Option(False, "--pre", help="Include pre-release versions."),
+) -> None:
+    """Check for and install the latest PolderGraph release."""
+    import subprocess
+
+    command = "upgrade"
+    try:
+        from urllib.request import Request, urlopen
+
+        api = "https://api.github.com/repos/PolderLabs/PolderGraph/releases/latest"
+        req = Request(api, headers={"Accept": "application/vnd.github+json"})
+        try:
+            with urlopen(req, timeout=15) as resp:
+                release = json.loads(resp.read().decode())
+        except Exception as exc:
+            raise PolderGraphError(
+                f"Cannot check for updates: {exc}",
+                code="BACKEND_UNAVAILABLE",
+                remediation="Check your internet connection and try again.",
+            ) from exc
+
+        latest = release.get("tag_name", "").lstrip("v")
+        current = __version__
+
+        def _parse(v: str) -> tuple[int, ...]:
+            return tuple(int(x) for x in v.split(".") if x.isdigit())
+
+        update_available = _parse(latest) > _parse(current) if latest else False
+        prerelease = release.get("prerelease", False)
+
+        payload: dict[str, Any] = {
+            "current": current,
+            "latest": latest,
+            "update_available": update_available,
+            "prerelease": prerelease,
+            "release_url": release.get("html_url", ""),
+            "published_at": release.get("published_at", ""),
+        }
+
+        if json_output:
+            emit_json(envelope(command=command, data=payload))
+        else:
+            typer.echo(f"Current version: {current}")
+            typer.echo(f"Latest version:  {latest}" + (" (pre-release)" if prerelease else ""))
+            if update_available:
+                typer.secho(f"  Update available: v{current} → v{latest}", fg=typer.colors.GREEN)
+            else:
+                typer.secho("  Already up to date.", fg=typer.colors.GREEN)
+
+        if not update_available or check_only:
+            if json_output:
+                pass
+            return
+
+        if json_output:
+            pass
+        else:
+            typer.echo(f"\nInstalling PolderGraph {latest}...")
+
+        # Determine the install source. For release installs, prefer the
+        # PyPI-style sdist/wheel from GitHub releases. For git installs,
+        # fall back to the git+https source.
+        source = f"poldergraph @ git+https://github.com/PolderLabs/PolderGraph.git@v{latest}"
+        asset_urls = [
+            a.get("browser_download_url", "")
+            for a in release.get("assets", [])
+            if a.get("name", "").endswith((".whl", ".tar.gz"))
+        ]
+        if asset_urls:
+            # Prefer wheel over sdist
+            wheel = next((u for u in asset_urls if u.endswith(".whl")), asset_urls[0])
+            source = wheel
+
+        uv_cmd = ["uv", "tool", "install", "--force", "--upgrade", source]
+        result = subprocess.run(uv_cmd, capture_output=True, text=True, timeout=300)
+
+        if result.returncode == 0:
+            if json_output:
+                payload["installed"] = True
+                payload["source"] = source
+                emit_json(envelope(command=command, data=payload))
+            else:
+                typer.secho(f"  ✓ Installed v{latest}", fg=typer.colors.GREEN)
+                typer.echo("  Restart your shell if the poldergraph command is not on PATH.")
+        else:
+            error_msg = result.stderr.strip() or result.stdout.strip() or "uv install failed"
+            if json_output:
+                payload["installed"] = False
+                payload["error"] = error_msg
+                emit_json(envelope(command=command, data=payload))
+            else:
+                typer.secho(f"  ✗ Install failed: {error_msg}", fg=typer.colors.RED)
+            raise typer.Exit(1)
+
+    except PolderGraphError as exc:
+        if json_output:
+            emit_error(command, exc)
+        else:
+            typer.secho(f"error: {exc.message}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(int(exc.exit_code))
+
+
 # ------------------------------------------------------------------- config
 
 
