@@ -50,7 +50,23 @@ class ExpansionResult:
 
     entity_ids: list[str] = field(default_factory=list)
     edges: list[Edge] = field(default_factory=list)
+    parents: dict[str, str] = field(default_factory=dict)
+    discovery_edges: dict[str, Edge] = field(default_factory=dict)
+    distances: dict[str, int] = field(default_factory=dict)
+    seed_ids: dict[str, str] = field(default_factory=dict)
     truncated: bool = False
+
+    def path_to(self, entity_id: str) -> list[tuple[str, str, Edge]]:
+        """Return the seed-to-entity discovery path in traversal order."""
+        path: list[tuple[str, str, Edge]] = []
+        current = entity_id
+        while current in self.parents:
+            parent = self.parents[current]
+            edge = self.discovery_edges[current]
+            path.append((parent, current, edge))
+            current = parent
+        path.reverse()
+        return path
 
 
 def expand(
@@ -72,6 +88,9 @@ def expand(
     result = ExpansionResult()
     seen = set(seeds)
     frontier = list(seeds)
+    for seed in seeds:
+        result.distances[seed] = 0
+        result.seed_ids[seed] = seed
 
     for _ in range(max(0, hops)):
         if not frontier or len(result.entity_ids) >= total_cap:
@@ -96,6 +115,10 @@ def expand(
                 seen.add(other)
                 result.entity_ids.append(other)
                 result.edges.append(edge)
+                result.parents[other] = node
+                result.discovery_edges[other] = edge
+                result.distances[other] = result.distances[node] + 1
+                result.seed_ids[other] = result.seed_ids[node]
                 next_frontier.append(other)
                 per_node += 1
                 if len(result.entity_ids) >= total_cap:

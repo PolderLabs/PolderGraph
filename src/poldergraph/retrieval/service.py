@@ -7,6 +7,7 @@ implementation of search for any surface.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from ..decision_runtime import decide_query_route, provider_enabled
@@ -35,7 +36,7 @@ class SearchFilters:
     provenances: list[str] = field(default_factory=list)
 
     def is_empty(self) -> bool:
-        return not any((self.kinds, self.languages, self.roots, self.path_prefixes))
+        return not any((self.kinds, self.languages, self.roots, self.path_prefixes, self.provenances))
 
 
 @dataclass
@@ -66,6 +67,17 @@ class SearchResponse:
                     "end_line": result.entity.end_line if result.entity else None,
                     "score": round(result.score, 6),
                     "evidence": _primary_evidence(result),
+                    "why_included": (
+                        result.graph_provenance.get("why_included")
+                        if result.graph_provenance
+                        else None
+                    ),
+                    "graph_provenance": result.graph_provenance,
+                    "index_generation": (
+                        result.graph_provenance.get("index_generation")
+                        if result.graph_provenance
+                        else None
+                    ),
                     "score_features": {
                         key: round(value, 6) for key, value in result.features.items()
                     },
@@ -90,6 +102,8 @@ def _primary_evidence(result: RankedResult) -> str:
                 "semantic": "semantic",
                 "graph_expanded": "graph-expanded",
             }[channel]
+    if result.features.get("graph_expansion"):
+        return "graph-expanded"
     return "lexical"
 
 
@@ -151,6 +165,8 @@ class QueryService:
                 for key, value in candidate.features.items():
                     existing.features[key] = max(existing.features.get(key, 0.0), value)
                 existing.channels |= candidate.channels
+                if candidate.graph_provenance:
+                    existing.graph_provenance = candidate.graph_provenance
 
         # Exact channel has the highest priority and is never scored away.
         exact = exact_matches(self.repo, query, root_id=self.root_id)
@@ -226,6 +242,7 @@ class QueryService:
         candidate_list = list(candidates.values())
 
         expansion_ids: set[str] = set()
+        expansion_truncated = False
         if effective_structural and candidate_list:
             seeds = [c.entity_id for c in candidate_list[:10]]
             expansion = expand(
@@ -234,11 +251,66 @@ class QueryService:
                 hops=self.config.retrieval.graph_hops,
                 total_cap=self.config.retrieval.max_graph_candidates,
                 fanout_cap=self.config.retrieval.max_expansion_fanout,
+                provenances=set(filters.provenances) if filters.provenances else None,
             )
             expansion_ids = set(expansion.entity_ids)
+            expansion_truncated = expansion.truncated
+            generation = self._index_generation()
+            provenance_factor = {
+                "extracted": 1.0,
+                "resolved": 0.85,
+                "manual": 0.8,
+                "inferred": 0.55,
+                "ambiguous": 0.3,
+                "semantic": 0.0,
+            }
+            for entity_id in expansion.entity_ids:
+                entity = self.repo.get_entity(entity_id)
+                if entity is None or (self.root_id and entity.root_id != self.root_id):
+                    continue
+                path = expansion.path_to(entity_id)
+                edge_path = [
+                    {
+                        "from": source_id,
+                        "to": target_id,
+                        **edge.to_dict(),
+                    }
+                    for source_id, target_id, edge in path
+                ]
+                confidence = 1.0
+                for _source_id, _target_id, edge in path:
+                    confidence *= max(
+                        0.0,
+                        min(
+                            1.0,
+                            float(edge.confidence)
+                            * provenance_factor.get(str(edge.provenance), 0.5),
+                        ),
+                    )
+                distance = max(1, expansion.distances.get(entity_id, 1))
+                existing = candidates.get(entity_id)
+                if existing is None:
+                    existing = Candidate(entity_id=entity_id, entity=entity)
+                    candidates[entity_id] = existing
+                existing.features["graph_expansion"] = max(
+                    existing.features.get("graph_expansion", 0.0), confidence / distance
+                )
+                existing.channels.add("graph")
+                existing.entity = entity
+                existing.graph_provenance = {
+                    "seed_id": expansion.seed_ids.get(entity_id),
+                    "distance": distance,
+                    "edge_types": [step["type"] for step in edge_path],
+                    "provenances": [step["provenance"] for step in edge_path],
+                    "confidence": round(confidence, 6),
+                    "path": edge_path,
+                    "truncated": expansion.truncated,
+                    "index_generation": generation,
+                    "why_included": "reachable through bounded structural graph expansion",
+                }
 
         ranked = fuse(
-            candidate_list,
+            list(candidates.values()),
             self.repo,
             self.config,
             query=query,
@@ -248,7 +320,7 @@ class QueryService:
         )
         ranked = dedupe_results(ranked)
 
-        truncated = False
+        truncated = expansion_truncated
         if len(ranked) > limit * 3:
             truncated = True
         filtered = self._apply_filters(ranked, filters)
@@ -260,6 +332,12 @@ class QueryService:
             truncated=truncated,
             routing=routing,
         )
+
+    def _index_generation(self) -> str:
+        """Return a stable identifier for the currently indexed scan generation."""
+        format_version = get_meta(self.repo.con, "index_format_version") or "unknown"
+        last_scan = get_meta(self.repo.con, "last_scan_at") or "unknown"
+        return f"{format_version}:{last_scan}"
 
     def _apply_filters(self, results: list[RankedResult], filters: SearchFilters) -> list[RankedResult]:
         out: list[RankedResult] = []
@@ -276,6 +354,10 @@ class QueryService:
             if filters.path_prefixes and not any(
                 entity.path and entity.path.startswith(prefix) for prefix in filters.path_prefixes
             ):
+                continue
+            if filters.provenances and result.graph_provenance and not set(
+                result.graph_provenance.get("provenances", [])
+            ).intersection(filters.provenances):
                 continue
             out.append(result)
         return out

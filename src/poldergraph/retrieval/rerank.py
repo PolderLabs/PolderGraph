@@ -65,6 +65,7 @@ class RankedResult:
     contributions: dict[str, float] = field(default_factory=dict)
     channels: list[str] = field(default_factory=list)
     entity: Any = None
+    graph_provenance: dict[str, Any] | None = None
 
     def explain(self) -> dict[str, Any]:
         """Return why this result ranked where it did."""
@@ -156,6 +157,7 @@ def fuse(
                 contributions=contributions,
                 channels=sorted(candidate.channels),
                 entity=entity,
+                graph_provenance=candidate.graph_provenance,
             )
         )
 

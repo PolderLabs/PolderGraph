@@ -21,6 +21,7 @@ class Candidate:
     features: dict[str, float] = field(default_factory=dict)
     entity: Entity | None = None
     channels: set[str] = field(default_factory=set)
+    graph_provenance: dict[str, Any] | None = None
 
     @property
     def score(self) -> float:

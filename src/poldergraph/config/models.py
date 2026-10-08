@@ -95,6 +95,7 @@ class RetrievalConfig(BaseModel):
             "exact_name": 1.6,
             "exact_path": 1.4,
             "graph_proximity": 0.35,
+            "graph_expansion": 0.6,
             "centrality": 0.2,
             "kind_prior": 0.15,
             "community_affinity": 0.1,
