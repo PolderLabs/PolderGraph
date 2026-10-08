@@ -2,7 +2,7 @@
 
 from .decisions import DecisionError, DecisionQuestion, choice, decide, predicate, score
 
-__version__ = "0.2.6"
+__version__ = "0.2.7"
 
 __all__ = [
     "DecisionError",

@@ -91,6 +91,7 @@ def init(
     path: Optional[Path] = typer.Argument(None, help="Repository or workspace root."),
     force: bool = typer.Option(False, "--force", help="Discard an existing index and rebuild."),
     no_agent: bool = typer.Option(False, "--no-agent", help="Skip agent instruction generation."),
+    no_embed: bool = typer.Option(False, "--no-embed", help="Skip embedding; structural index only. Run 'poldergraph update' later to add vectors."),
     dimensions: int = typer.Option(256, "--dimensions", help="Embedding dimensions."),
     embedding_backend: str = typer.Option(
         "native", "--embedding-backend", help="native or ollama."
@@ -131,7 +132,10 @@ def init(
         backend = None
         degraded: list[str] = []
 
-        if workspace.config.embedding.backend != "none":
+        if no_embed:
+            p.add_stage("Embedding model")
+            p.finish_stage(status="skipped", detail="--no-embed: run 'poldergraph update' later to add vectors")
+        elif workspace.config.embedding.backend != "none":
             p.start_stage("Loading embedding model")
             try:
                 backend = create_backend(workspace.config, cache_dir=None)
