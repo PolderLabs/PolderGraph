@@ -103,6 +103,33 @@ def test_laya_is_explicit_and_runs_locally(monkeypatch):
     decisions._laya_models.pop("test-local", None)
 
 
+def test_laya_batch_preserves_candidate_alignment(monkeypatch):
+    calls = {}
+
+    class FakeLayaAgent:
+        def predict_batch(self, states, questions, batch_size=None):
+            calls.update(states=states, questions=questions, batch_size=batch_size)
+            return [
+                {"answers": {"decision": {"probability": state["id"] / 20}}}
+                for state in states
+            ]
+
+    fake_module = SimpleNamespace(load=lambda model: FakeLayaAgent())
+    monkeypatch.setitem(sys.modules, "laya", fake_module)
+    decisions._laya_models.pop("test-batch", None)
+    states = [{"id": index} for index in range(20)]
+    results = decisions.decide_batch(
+        states,
+        {"decision": predicate("decision", "Is this candidate relevant?")},
+        model="test-batch",
+    )
+    assert calls["states"] == states
+    assert calls["batch_size"] == 8
+    assert [item["answers"]["decision"]["probability"] for item in results] == [
+        index / 20 for index in range(20)
+    ]
+    decisions._laya_models.pop("test-batch", None)
+
 def test_provider_and_question_validation_is_explicit():
     with pytest.raises(DecisionError, match="Choose provider"):
         decide("state", _questions(), provider="automatic")

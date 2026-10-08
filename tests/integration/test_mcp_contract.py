@@ -213,9 +213,9 @@ class TestToolResponses:
                 "token_budget": 2000,
             },
         )
-        assert learned["data"]["memories_learned"] == 1
-        assert any(
-            item["scope"] == "user" and "I prefer concise answers" in item["content"]
+        assert learned["data"]["memories_learned"] == 0
+        assert all(
+            "I prefer concise answers" not in item["content"]
             for item in learned["data"]["memories"]
         )
 

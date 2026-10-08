@@ -131,6 +131,7 @@ class UIConfig(BaseModel):
 class PrivacyConfig(BaseModel):
     allow_model_downloads: bool = True
     allow_remote_embedding: bool = False
+    allow_remote_decisions: bool = False
     telemetry: bool = False
 
 
@@ -142,6 +143,11 @@ class DecisionsConfig(BaseModel):
     endpoint: str | None = None
     timeout: float = 3.0
     confidence_threshold: float = 0.9
+    remote_providers: list[Literal["typesafe", "openai"]] = Field(default_factory=list)
+    # Runtime-only authorization metadata populated by the config loader.
+    remote_authorized: bool = Field(default=False, exclude=True, repr=False)
+    endpoint_authorized: bool = Field(default=False, exclude=True, repr=False)
+    authorized_remote_providers: list[str] = Field(default_factory=list, exclude=True, repr=False)
 
     @field_validator("timeout")
     @classmethod

@@ -298,6 +298,8 @@ class TestDashboardApi:
 
         workspace = indexed_workspace
         workspace.config.decisions.provider = "typesafe"
+        workspace.config.decisions.remote_authorized = True
+        workspace.config.decisions.authorized_remote_providers = ["typesafe"]
         repo = Repository(workspace.con)
         service = QueryService(repo, workspace.config, root_id=workspace.root_id(), workspace=workspace)
         monkeypatch.setattr(retrieval_service, "exact_matches", lambda *args, **kwargs: [])

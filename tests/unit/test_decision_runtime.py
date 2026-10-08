@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from poldergraph import decision_runtime
 from poldergraph.decisions import DecisionQuestion
 
@@ -14,6 +16,9 @@ def _config(provider: str = "typesafe", threshold: float = 0.9):
             endpoint=None,
             timeout=0.1,
             confidence_threshold=threshold,
+            remote_authorized=True,
+            endpoint_authorized=True,
+            authorized_remote_providers=["typesafe", "openai"],
         )
     )
 
@@ -30,6 +35,24 @@ def test_disabled_provider_never_calls_decisions(monkeypatch):
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must stay local")),
     )
     assert decision_runtime.run_decision("query", {}, _config("disabled")) is None
+
+
+def test_hosted_provider_requires_trusted_remote_consent(monkeypatch):
+    config = _config()
+    config.decisions.remote_authorized = False
+    monkeypatch.setattr(
+        decision_runtime,
+        "decide",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must fail closed")),
+    )
+    assert not decision_runtime.provider_enabled(config)
+    assert decision_runtime.run_decision("private task", {}, config) is None
+
+
+def test_runtime_accepts_config_and_decisions_config_shapes():
+    config = _config()
+    assert decision_runtime.provider_enabled(config)
+    assert decision_runtime.provider_enabled(config.decisions)
 
 
 def test_decision_cache_keeps_only_digest_and_reuses_result(monkeypatch):
@@ -119,8 +142,93 @@ def test_relevance_filter_only_drops_confidently_irrelevant_weak_matches(monkeyp
         "model": "test",
         "filtered": 1,
         "evaluated": 1,
+        "abstained": 0,
         "confidence_threshold": 0.9,
     }
+
+
+def test_memory_decisions_bind_one_bounded_candidate_per_request(monkeypatch):
+    seen = []
+
+    def fake_run(state, questions, config):
+        seen.append((state, questions))
+        answers = {
+            name: {"probability": 0.01 if "candidate ID mem_0 " in question.statement else 0.99}
+            for name, question in questions.items()
+        }
+        return {
+            "provider": "laya",
+            "model": "fixture",
+            "answers": answers,
+        }
+
+    monkeypatch.setattr(decision_runtime, "run_decision", fake_run)
+    memories = [
+        {
+            "id": f"mem_{index}",
+            "kind": "fact",
+            "content": f"candidate {index} " + ("long text " * 500),
+            "lexical_score": 0.4,
+            "semantic_score": None,
+        }
+        for index in range(20)
+    ]
+    remaining, info = decision_runtime.decide_memory_relevance("task " * 1000, memories, _config())
+    assert len(seen) == 1
+    state, questions = seen[0]
+    assert len(str(state["task"])) < 500
+    assert len(questions) == 20
+    assert all(len(question.statement) < 500 for question in questions.values())
+    assert "candidate ID mem_0" in questions["relevant_0"].statement
+    assert "candidate ID mem_19" in questions["relevant_19"].statement
+    assert [item["id"] for item in remaining] == [f"mem_{i}" for i in range(1, 20)]
+    assert info["evaluated"] == 20
+
+
+@pytest.mark.parametrize("count", [2, 8, 20])
+def test_hosted_candidate_answers_keep_first_middle_last_bindings(monkeypatch, count):
+    rejected_indexes = {0, count // 2, count - 1}
+
+    def fake_run(state, questions, config):
+        answers = {}
+        for name, question in questions.items():
+            rejected = any(f"candidate ID mem_{index} " in question.statement for index in rejected_indexes)
+            answers[name] = {"probability": 0.01 if rejected else 0.99}
+        return {"provider": "typesafe", "model": "fixture", "answers": answers}
+
+    monkeypatch.setattr(decision_runtime, "run_decision", fake_run)
+    memories = [
+        {"id": f"mem_{index}", "kind": "fact", "content": f"memory {index}",
+         "lexical_score": 0.4, "semantic_score": None}
+        for index in range(count)
+    ]
+    remaining, info = decision_runtime.decide_memory_relevance("task", memories, _config())
+    assert {item["id"] for item in memories} - {item["id"] for item in remaining} == {
+        f"mem_{index}" for index in rejected_indexes
+    }
+    assert info["evaluated"] == count
+
+
+def test_local_batch_keeps_aligned_results_and_uses_cache(monkeypatch):
+    calls = []
+
+    def fake_batch(states, questions, **kwargs):
+        calls.append((states, questions, kwargs))
+        return [
+            {"provider": "laya", "model": "fixture", "answers": {"ok": {"probability": i / 20}}}
+            for i, _state in enumerate(states)
+        ]
+
+    monkeypatch.setattr(decision_runtime, "decide_batch", fake_batch)
+    question = DecisionQuestion("ok", "predicate", "Is this item useful?")
+    states = [{"id": index} for index in range(20)]
+    first = decision_runtime.run_local_decision_batch(states, {"ok": question}, _config("laya"))
+    second = decision_runtime.run_local_decision_batch(states, {"ok": question}, _config("laya"))
+    assert len(calls) == 1
+    assert calls[0][0] == states
+    assert [item["answers"]["ok"]["probability"] for item in first] == [
+        item["answers"]["ok"]["probability"] for item in second
+    ]
 
 
 def test_provider_failure_preserves_deterministic_behavior(monkeypatch):

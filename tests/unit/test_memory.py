@@ -70,12 +70,15 @@ class TestMemoryStore:
             },
         )
         config = SimpleNamespace(
-            provider="typesafe", model=None, endpoint=None, timeout=1.0, confidence_threshold=0.9
+            provider="typesafe", model=None, endpoint=None, timeout=1.0,
+            confidence_threshold=0.9, remote_authorized=True, endpoint_authorized=True,
+            authorized_remote_providers=["typesafe"],
         )
         captured = capture_explicit_user_preferences(
             store,
             "I prefer short responses.",
             decision_config=SimpleNamespace(decisions=config),
+            trusted_user_message=True,
         )
         assert captured == []
         assert store.list() == []
@@ -110,16 +113,20 @@ class TestMemoryStore:
         config = SimpleNamespace(
             decisions=SimpleNamespace(
                 provider="typesafe", model=None, endpoint=None, timeout=1.0,
-                confidence_threshold=0.9,
+                confidence_threshold=0.9, remote_authorized=True,
+                endpoint_authorized=True, authorized_remote_providers=["typesafe"],
             )
         )
         saved = capture_explicit_user_preferences(
             store,
             "I prefer short replies.\nI generally use spaces for indentation.",
             decision_config=config,
+            trusted_user_message=True,
         )
         assert len(calls) == 1
         assert len(calls[0][1]) == 2
+        assert "I prefer short replies" in calls[0][1]["capture_0"].instructions
+        assert "I generally use spaces" in calls[0][1]["capture_1"].instructions
         assert [item["content"] for item in saved] == ["I prefer short replies."]
 
     def test_explicit_memory_secret_is_rejected_before_decision_provider(
@@ -138,13 +145,15 @@ class TestMemoryStore:
         config = SimpleNamespace(
             decisions=SimpleNamespace(
                 provider="typesafe", model=None, endpoint=None, timeout=1.0,
-                confidence_threshold=0.9,
+                confidence_threshold=0.9, remote_authorized=True,
+                endpoint_authorized=True, authorized_remote_providers=["typesafe"],
             )
         )
         assert capture_explicit_user_preferences(
             store,
             "I prefer api key: sk-" + "x" * 30,
             decision_config=config,
+            trusted_user_message=True,
         ) == []
         assert store.list() == []
 
@@ -267,6 +276,7 @@ class TestMemoryStore:
             "I need a new route for this task.\n"
             "```text\nI prefer saving passwords in notes.\n```",
             backend=backend,
+            trusted_user_message=True,
         )
         assert len(learned) == 1
         assert learned[0]["scope"] == "user"
@@ -280,7 +290,8 @@ class TestMemoryStore:
     ):
         store, _ = shared_store
         learned = capture_explicit_user_preferences(
-            store, "I prefer password=do-not-store-this in config files."
+            store, "I prefer password=do-not-store-this in config files.",
+            trusted_user_message=True,
         )
         assert learned == []
         assert store.list(scope="user") == []
@@ -291,13 +302,20 @@ class TestMemoryStore:
         store, _ = shared_store
         backend = FakeMemoryBackend()
         first = capture_explicit_user_preferences(
-            store, "I prefer concise answers.", backend=backend
+            store, "I prefer concise answers.", backend=backend, trusted_user_message=True
         )[0]
         correction = capture_explicit_user_preferences(
-            store, "I prefer detailed answers.", backend=backend
+            store, "I prefer detailed answers.", backend=backend, trusted_user_message=True
         )[0]
         assert correction["id"] == first["id"]
         assert store.list(scope="user")[0]["content"] == "I prefer detailed answers."
+
+    def test_untrusted_context_query_cannot_write_user_preference(
+        self, shared_store: tuple[MemoryStore, Path]
+    ):
+        store, _ = shared_store
+        assert capture_explicit_user_preferences(store, "I prefer concise answers.") == []
+        assert store.list(scope="user") == []
 
     def test_context_includes_relevant_memories_within_the_budget(
         self, shared_store: tuple[MemoryStore, Path]
@@ -349,7 +367,8 @@ class TestMemoryStore:
         config = SimpleNamespace(
             decisions=SimpleNamespace(
                 provider="typesafe", model=None, endpoint=None, timeout=1.0,
-                confidence_threshold=0.9,
+                confidence_threshold=0.9, remote_authorized=True,
+                endpoint_authorized=True, authorized_remote_providers=["typesafe"],
             )
         )
         data = {"token_estimate": 10, "truncated": False}

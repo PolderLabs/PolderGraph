@@ -73,8 +73,8 @@ relevant shared user preferences and memories scoped to this project. If MCP is
 unavailable, run `poldergraph context "<task>" --json`. Refresh a stale index with
 `pg_update` or `poldergraph update --quiet` and query again.
 
-`pg_context` retrieves matching memories and automatically captures explicit first-person
-preferences such as “I prefer concise answers.” Do not redundantly save those. When a task
+`pg_context` retrieves matching memories and is read-only. Do not use it to infer or save
+user preferences; only use an explicit memory action when the user directly asks. When a task
 establishes a durable project decision, save it with `pg_memory_add(scope="project")`;
 search prior notes with `pg_memory_search` before making decisions. When a user corrects a
 previous preference, update or forget the older note instead of keeping conflicting versions.

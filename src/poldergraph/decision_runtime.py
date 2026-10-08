@@ -10,7 +10,7 @@ import threading
 import time
 from typing import Any
 
-from .decisions import DecisionQuestion, choice, decide
+from .decisions import DecisionQuestion, choice, decide, decide_batch
 
 logger = logging.getLogger(__name__)
 _CACHE_TTL_SECONDS = 300.0
@@ -40,33 +40,17 @@ def _sanitize_text(value: str) -> str:
 def _setting(config: Any, key: str, default: Any = None) -> Any:
     section = getattr(config, "decisions", None)
     if section is None:
-        return default
+        # Accept either Config or the nested DecisionsConfig. Some memory call
+        # sites pass the latter while graph routing passes the former.
+        section = config
     if isinstance(section, dict):
         return section.get(key, default)
     return getattr(section, key, default)
 
 
-def provider_enabled(config: Any) -> bool:
-    """Only an explicit configured provider enables model calls or data egress."""
-    return _setting(config, "provider", "disabled") != "disabled"
-
-
-def run_decision(
-    state: str | dict[str, Any] | list[Any],
-    questions: dict[str, DecisionQuestion],
-    config: Any,
-) -> dict[str, Any] | None:
-    """Run a configured decision once, caching by content hash for five minutes.
-
-    Raw state is never retained in the cache. Failures return ``None`` so callers
-    preserve their deterministic behavior and never block retrieval or memory.
-    """
-    provider = _setting(config, "provider", "disabled")
-    if provider == "disabled":
-        return None
-    model = _setting(config, "model")
-    endpoint = _setting(config, "endpoint")
-    timeout = float(_setting(config, "timeout", 3.0))
+def _cache_key(
+    state: Any, questions: dict[str, DecisionQuestion], provider: str, model: str | None, endpoint: str | None
+) -> str:
     canonical = json.dumps(
         {
             "state": state,
@@ -88,7 +72,41 @@ def run_decision(
         ensure_ascii=False,
         default=str,
     )
-    key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def provider_enabled(config: Any) -> bool:
+    """Enable local decisions by selection and hosted decisions only by consent."""
+    provider = _setting(config, "provider", "disabled")
+    if provider == "disabled":
+        return False
+    if provider in {"typesafe", "openai"}:
+        trusted_providers = _setting(config, "authorized_remote_providers", [])
+        return (
+            bool(_setting(config, "remote_authorized", False))
+            and provider in trusted_providers
+            and bool(_setting(config, "endpoint_authorized", False))
+        )
+    return provider == "laya"
+
+
+def run_decision(
+    state: str | dict[str, Any] | list[Any],
+    questions: dict[str, DecisionQuestion],
+    config: Any,
+) -> dict[str, Any] | None:
+    """Run a configured decision once, caching by content hash for five minutes.
+
+    Raw state is never retained in the cache. Failures return ``None`` so callers
+    preserve their deterministic behavior and never block retrieval or memory.
+    """
+    provider = _setting(config, "provider", "disabled")
+    if not provider_enabled(config):
+        return None
+    model = _setting(config, "model")
+    endpoint = _setting(config, "endpoint")
+    timeout = float(_setting(config, "timeout", 3.0))
+    key = _cache_key(state, questions, provider, model, endpoint)
     now = time.monotonic()
     with _CACHE_LOCK:
         cached = _CACHE.get(key)
@@ -126,6 +144,59 @@ def run_decision(
             _CACHE.pop(oldest, None)
         _CACHE[key] = (now + _CACHE_TTL_SECONDS, result)
     return json.loads(json.dumps(result))
+
+
+def run_local_decision_batch(
+    states: list[dict[str, Any]],
+    questions: dict[str, DecisionQuestion],
+    config: Any,
+) -> list[dict[str, Any] | None]:
+    """Run/cache aligned local Laya decisions for separate candidate states."""
+    if _setting(config, "provider", "disabled") != "laya" or not provider_enabled(config):
+        return [None for _ in states]
+    provider = "laya"
+    model = _setting(config, "model")
+    endpoint = _setting(config, "endpoint")
+    now = time.monotonic()
+    results: list[dict[str, Any] | None] = [None] * len(states)
+    pending: list[tuple[int, str]] = []
+    for index, state in enumerate(states):
+        key = _cache_key(state, questions, provider, model, endpoint)
+        with _CACHE_LOCK:
+            cached = _CACHE.get(key)
+            if cached and cached[0] > now:
+                results[index] = json.loads(json.dumps(cached[1]))
+                continue
+            if cached:
+                _CACHE.pop(key, None)
+            if _FAILURES.get(key, 0.0) > now:
+                continue
+            _FAILURES.pop(key, None)
+        pending.append((index, key))
+    if pending:
+        try:
+            batch_results = decide_batch(
+                [states[index] for index, _key in pending],
+                questions,
+                **({"model": model} if model else {}),
+            )
+        except Exception as exc:
+            logger.debug(
+                "Typed decision batch unavailable (%s); using deterministic behavior",
+                type(exc).__name__,
+            )
+            with _CACHE_LOCK:
+                for _index, key in pending:
+                    _FAILURES[key] = now + _FAILURE_TTL_SECONDS
+            return results
+        with _CACHE_LOCK:
+            for (index, key), result in zip(pending, batch_results, strict=True):
+                if len(_CACHE) >= _CACHE_MAX_ITEMS:
+                    oldest = min(_CACHE, key=lambda item: _CACHE[item][0])
+                    _CACHE.pop(oldest, None)
+                _CACHE[key] = (now + _CACHE_TTL_SECONDS, result)
+                results[index] = json.loads(json.dumps(result))
+    return results
 
 
 def answer_confidence(answer: dict[str, Any], label: str | None = None) -> float | None:
@@ -209,59 +280,79 @@ def decide_memory_relevance(
     """Remove only weak memory matches the decision model confidently rejects."""
     if not memories or not provider_enabled(config):
         return memories, None
-    candidates = [
+    candidate_pool = [
         memory
         for memory in memories
         if float(memory.get("lexical_score", 0.0)) < 0.8
         and (memory.get("semantic_score") is None or float(memory["semantic_score"]) < 0.85)
-    ][:8]
+    ]
+    candidates = candidate_pool[:20]
     if not candidates:
         return memories, None
-    questions = {
-        f"relevant_{index}": DecisionQuestion(
-            name=f"relevant_{index}",
-            type="predicate",
-            statement=(
-                f"Memory {index} is directly relevant to the query and would improve "
-                "an agent's answer without introducing unrelated or stale context."
-            ),
-            instructions="Judge relevance to the query using only the supplied memory text.",
-        )
-        for index, _memory in enumerate(candidates)
-    }
-    state = {
-        "query": _sanitize_text(query[:2000]),
-        "memories": [
-            {
-                "kind": memory["kind"],
-                "content": _sanitize_text(str(memory["content"])[:1200]),
-                "matched_terms": memory.get("matched_terms", []),
-            }
-            for memory in candidates
-        ],
-    }
-    result = run_decision(state, questions, config)
-    if not result:
-        return memories, {"status": "fallback"}
     threshold = float(_setting(config, "confidence_threshold", 0.9))
+    task = _sanitize_text(query[:240])
+    candidate_data = [
+        {
+            "memory_id": str(memory["id"]),
+            "kind": str(memory.get("kind", "fact"))[:32],
+            "memory": _sanitize_text(str(memory.get("content", ""))[:320]),
+        }
+        for memory in candidates
+    ]
+    if _setting(config, "provider", "disabled") == "laya":
+        shared_question = DecisionQuestion(
+            name="relevant",
+            type="predicate",
+            statement="The supplied memory is directly relevant to the task and useful in answering it.",
+            instructions="Use only this task and this one memory. Do not infer facts not present in them.",
+        )
+        aligned_results = run_local_decision_batch(
+            [{"task": task, **candidate} for candidate in candidate_data],
+            {"relevant": shared_question},
+            config,
+        )
+        answers = [
+            (item or {}).get("answers", {}).get("relevant", {}) for item in aligned_results
+        ]
+        result_meta = next((item for item in aligned_results if item), {})
+    else:
+        questions = {
+            f"relevant_{index}": DecisionQuestion(
+                name=f"relevant_{index}",
+                type="predicate",
+                statement=(
+                    f"Memory candidate ID {item['memory_id']} ({item['kind']}): "
+                    f"{item['memory']}\nIs this specific memory directly relevant to the task "
+                    "and useful in answering it?"
+                ),
+                instructions="Judge only the memory text in this question against the task in state.",
+            )
+            for index, item in enumerate(candidate_data)
+        }
+        result_meta = run_decision({"task": task}, questions, config) or {}
+        answers = [
+            result_meta.get("answers", {}).get(f"relevant_{index}", {})
+            for index in range(len(candidates))
+        ]
     rejected: set[str] = set()
     confidences: dict[str, float] = {}
-    for index, memory in enumerate(candidates):
-        answer = result.get("answers", {}).get(f"relevant_{index}", {})
+    for memory, answer in zip(candidates, answers, strict=True):
+        memory_id = str(memory["id"])
         probability = answer.get("probability")
         if isinstance(probability, (int, float)):
-            confidences[memory["id"]] = float(probability)
+            confidences[memory_id] = float(probability)
             if probability <= 1.0 - threshold:
-                rejected.add(memory["id"])
+                rejected.add(memory_id)
     if not confidences:
         return memories, {"status": "fallback"}
     filtered = [memory for memory in memories if memory["id"] not in rejected]
     return filtered, {
         "status": "applied",
-        "provider": result.get("provider"),
-        "model": result.get("model"),
+        "provider": result_meta.get("provider"),
+        "model": result_meta.get("model"),
         "filtered": len(rejected),
         "evaluated": len(confidences),
+        "abstained": len(candidate_pool) - len(confidences),
         "confidence_threshold": threshold,
     }
 
@@ -271,35 +362,48 @@ def rejected_memory_candidates(candidates: list[str], config: Any) -> set[int]:
     if not candidates or not provider_enabled(config):
         return set()
     threshold = float(_setting(config, "confidence_threshold", 0.9))
-    rejected: set[int] = set()
-    # Decision APIs answer all questions against one state in a single pass.
-    for offset in range(0, len(candidates), 8):
-        batch = candidates[offset : offset + 8]
+    candidate_data = [_sanitize_text(candidate[:320]) for candidate in candidates[:20]]
+    options = {
+        "store": "Explicit, durable user preference useful across future tasks.",
+        "reject": "One-off, temporary, inferred, unclear, or not useful as durable memory.",
+    }
+    if _setting(config, "provider", "disabled") == "laya":
+        shared_question = choice(
+            "capture",
+            "Should this explicit first-person user preference be saved for future coding tasks? Reject one-off instructions, temporary state, speculation, and statements with unclear ownership.",
+            options,
+        )
+        aligned_results = run_local_decision_batch(
+            [
+                {"candidate_id": index, "candidate": candidate}
+                for index, candidate in enumerate(candidate_data)
+            ],
+            {"capture": shared_question},
+            config,
+        )
+        answers = [
+            (item or {}).get("answers", {}).get("capture", {}) for item in aligned_results
+        ]
+    else:
         questions = {
             f"capture_{index}": choice(
                 f"capture_{index}",
-                "Should this explicit first-person user preference be saved for future coding tasks? Reject one-off instructions, temporary state, speculation, and statements with unclear ownership.",
-                {
-                    "store": "Explicit, durable preference or personal fact useful across future tasks.",
-                    "reject": "One-off, temporary, inferred, unclear, or not useful as durable memory.",
-                },
+                "Evaluate only this specific candidate: " + candidate,
+                options,
             )
-            for index in range(len(batch))
+            for index, candidate in enumerate(candidate_data)
         }
-        result = run_decision(
-            {"candidate_memories": [_sanitize_text(item[:1600]) for item in batch]},
-            questions,
-            config,
-        )
-        if not result:
-            continue
-        answers = result.get("answers", {})
-        for index in range(len(batch)):
-            answer = answers.get(f"capture_{index}", {})
-            label = answer.get("choice")
-            confidence = answer_confidence(answer, label)
-            if label == "reject" and confidence is not None and confidence >= threshold:
-                rejected.add(offset + index)
+        result = run_decision({"task": "Review durable-memory eligibility."}, questions, config) or {}
+        answers = [
+            result.get("answers", {}).get(f"capture_{index}", {})
+            for index in range(len(candidate_data))
+        ]
+    rejected: set[int] = set()
+    for index, answer in enumerate(answers):
+        label = answer.get("choice")
+        confidence = answer_confidence(answer, label)
+        if label == "reject" and confidence is not None and confidence >= threshold:
+            rejected.add(index)
     return rejected
 
 
