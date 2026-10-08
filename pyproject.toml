@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "poldergraph"
-version = "0.6.0"
+version = "0.7.0"
 description = "Fully local, zero-cloud code intelligence graph for developers and coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
