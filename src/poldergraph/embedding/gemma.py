@@ -24,6 +24,11 @@ _model_cache_dir = _HF_HUB_CACHE / f"models--{_default_model_id.replace('/', '--
 if _model_cache_dir.is_dir() and any(_model_cache_dir.iterdir()):
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
+#: Representation length, in characters, that a full batch is tuned for.
+#: Peak attention memory scales with batch * len^2, so this is the reference
+#: point for sizing a bucket. Calibrated from measurements on a 5.7 GB GPU.
+REFERENCE_CHARS = 600
+
 from ..errors import BackendUnavailableError
 from .protocol import (
     DOCUMENT_TASK,
@@ -226,43 +231,75 @@ class NativeGemmaBackend(EmbeddingBackend):
         prompt_name: str | None,
         target: int,
     ) -> list[list[float]]:
-        """Encode texts in length-sorted buckets, shrinking batches on OOM."""
+        """Encode in length-sorted buckets whose size adapts to content length.
+
+        Attention memory scales with (batch x sequence length)^2, so a fixed
+        batch count is either wasteful for short texts or fatal for long ones.
+        Measured on a 5.7 GB GPU: 600-char texts allow a batch of 64, while
+        2000-char texts in the same batch demand >10 GB. Each bucket therefore
+        derives its own size from the lengths it actually contains, and shrinks
+        on OOM before giving up.
+        """
         order = sorted(range(len(prepared)), key=lambda i: len(prepared[i]))
         out: list[list[float]] = [[] for _ in prepared]
-        bucket = self._bucket_size()
+        max_batch = self._bucket_size()
+
         i = 0
         while i < len(order):
-            chunk = order[i : i + bucket]
-            texts = [prepared[j] for j in chunk]
-            try:
-                vectors = self._encode_once(
-                    model, texts, prompt_name=prompt_name, batch_size=len(texts)
-                )
-            except MemoryError:
-                raise
-            except Exception as exc:
-                if not self._is_out_of_memory(exc):
-                    raise BackendUnavailableError(
-                        f"Embedding failed: {exc}", remediation="Run: poldergraph doctor"
-                    ) from exc
-                # Halve the bucket and retry; only fall back to CPU when the
-                # smallest usable batch still does not fit.
-                if bucket > 1:
-                    bucket = max(1, bucket // 2)
-                    self._batch_size = bucket
+            # Grow the bucket while the texts stay similar in length, so short
+            # representations batch aggressively and long ones stay small.
+            first_len = len(prepared[order[i]])
+            j = i + 1
+            while j < len(order) and len(prepared[order[j]]) <= first_len * 2:
+                j += 1
+            window = order[i:j]
+            bucket = self._length_bucket(window, prepared, max_batch)
+            while window:
+                chunk, window = window[:bucket], window[bucket:]
+                try:
+                    vectors = self._encode_once(
+                        model,
+                        [prepared[k] for k in chunk],
+                        prompt_name=prompt_name,
+                        batch_size=len(chunk),
+                    )
+                except Exception as exc:
+                    if not self._is_out_of_memory(exc):
+                        raise BackendUnavailableError(
+                            f"Embedding failed: {exc}",
+                            remediation="Run: poldergraph doctor",
+                        ) from exc
                     self._release_device_memory()
+                    if bucket > 1:
+                        bucket = max(1, bucket // 2)
+                        max_batch = min(max_batch, bucket)
+                        continue
+                    # Even a single text does not fit: use CPU from here on.
+                    self._force_cpu = True
+                    self._model = None
+                    self._release_device_memory()
+                    model = self._ensure_loaded()
                     continue
-                self._force_cpu = True
-                self._model = None
-                self._release_device_memory()
-                model = self._ensure_loaded()
-                continue
-            for slot, vector in zip(chunk, vectors):
-                out[slot] = truncate_and_normalize(
-                    [float(x) for x in vector], target, normalize=self.normalize
-                )
-            i += len(chunk)
+                for slot, vector in zip(chunk, vectors):
+                    out[slot] = truncate_and_normalize(
+                        [float(x) for x in vector], target, normalize=self.normalize
+                    )
+            i = j
         return out
+
+    @staticmethod
+    def _length_bucket(window: list[int], prepared: list[str], max_batch: int) -> int:
+        """Pick a batch size for texts of the given lengths.
+
+        Peak attention memory grows roughly with batch * len^2, so the budget
+        for a bucket is the batch size that a mid-length text can afford.
+        """
+        longest = max((len(prepared[k]) for k in window), default=0)
+        if longest <= 0:
+            return max_batch
+        # A short text can share a large batch; a long one needs few neighbours.
+        scaled = int(max_batch * (REFERENCE_CHARS / longest) ** 2)
+        return max(1, min(max_batch, scaled))
 
     def _encode_once(
         self,
