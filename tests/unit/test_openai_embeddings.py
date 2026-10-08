@@ -6,7 +6,10 @@ from unittest.mock import patch
 import pytest
 
 from poldergraph.config.loader import load_config
+from poldergraph.config.models import Config
+from poldergraph.embedding.gemma import create_backend
 from poldergraph.embedding.openai_compatible import OpenAICompatibleBackend
+from poldergraph.embedding.protocol import DisabledBackend
 from poldergraph.errors import BackendUnavailableError
 
 
@@ -30,6 +33,11 @@ def test_provider_fails_closed_without_consent():
     backend = OpenAICompatibleBackend(endpoint="https://api.openai.com/v1", model="x", dimensions=2)
     with pytest.raises(BackendUnavailableError, match="privacy policy"):
         backend.embed_texts(["private source"])
+
+
+def test_backend_factory_disables_api_without_trusted_consent():
+    config = Config.model_validate({"embedding": {"backend": "api"}})
+    assert isinstance(create_backend(config), DisabledBackend)
 
 
 def test_provider_rejects_plain_http_non_loopback_endpoint():

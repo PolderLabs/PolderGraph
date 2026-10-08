@@ -121,6 +121,10 @@ provider-specific `input_type` and `output_dimension` fields. In both cases,
 remote transmission remains disabled until `allow_remote_embedding = true` is
 set in trusted user config or the host environment. Workspace config alone
 cannot authorize egress. Do not put API keys in TOML.
+Changing the active provider, model, revision, dimensions, normalization, or task
+policy causes `poldergraph update` and `pg_update` to re-index the corpus for
+that vector space. Previously stored vectors remain isolated and can be reused
+when switching back to an exact prior configuration.
 
 ### `[semantic_edges]`
 

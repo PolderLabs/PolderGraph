@@ -198,7 +198,10 @@ def init(
                 p.update(done, total=total, detail=detail)
 
         indexer.progress = on_pipeline
-        stats = indexer.run(discovered)
+        from .indexing.incremental import embedding_space_fingerprint
+
+        embedding_space_id = embedding_space_fingerprint(backend) if backend else None
+        stats = indexer.run(discovered, embedding_space_id=embedding_space_id)
         p.finish_stage(
             name="Parsing and indexing",
             detail=f"{stats.files_indexed} files, {stats.entities_written} entities, "
@@ -348,11 +351,15 @@ def update(
         p.finish_stage(detail=str(workspace.index_dir))
 
         indexer = Indexer(workspace, backend=None)
+        embedding_space_id = None
         if workspace.config.embedding.backend != "none":
             p.start_stage("Loading embedding model")
             try:
                 indexer.backend = create_backend(workspace.config, cache_dir=None, offline=offline)
                 info = indexer.backend.model_info()
+                from .indexing.incremental import embedding_space_fingerprint
+
+                embedding_space_id = embedding_space_fingerprint(indexer.backend)
                 p.finish_stage(detail=f"{info.model_id} @ {info.dimensions}d on {_device_label(indexer.backend)}")
             except PolderGraphError as exc:
                 indexer.backend = None
@@ -369,13 +376,16 @@ def update(
         # full re-verify instead of an incremental patch.
         format_stale = not index_format_current(repo)
         plan = plan_update(
-            repo, discovered, root_id=workspace.root_id(), force=force or format_stale
+            repo, discovered, root_id=workspace.root_id(), force=force or format_stale,
+            embedding_space_id=embedding_space_id,
         )
         changed = len(plan.to_index)
         unchanged = len(plan.unchanged)
         removed = len(plan.removed)
         detail = f"{changed} changed, {unchanged} unchanged, {removed} removed"
-        if format_stale:
+        if plan.embedding_space_changed:
+            detail = f"embedding space changed; rebuilding semantic vectors across {changed} files"
+        elif format_stale:
             detail = f"index format changed; rebuilding all {changed} files"
         p.finish_stage(detail=detail)
 
@@ -410,7 +420,10 @@ def update(
                     p.update(done, total=total, detail=detail)
 
             indexer.progress = on_pipeline
-            stats = indexer.run(discovered, changed=plan.to_index, removed_paths=plan.removed)
+            stats = indexer.run(
+                discovered, changed=plan.to_index, removed_paths=plan.removed,
+                embedding_space_id=embedding_space_id,
+            )
             stats.files_skipped = unchanged
             p.finish_stage(
                 name="Parsing and indexing",
@@ -429,7 +442,10 @@ def update(
                         detail=stats.degraded[0] if stats.degraded else "",
                     )
         else:
-            stats = indexer.run(discovered, changed=[], removed_paths=plan.removed)
+            stats = indexer.run(
+                discovered, changed=[], removed_paths=plan.removed,
+                embedding_space_id=embedding_space_id,
+            )
             stats.files_skipped = unchanged
 
         p.start_stage("Building graph")

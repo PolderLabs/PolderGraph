@@ -127,6 +127,7 @@ class Indexer:
         changed: list[DiscoveredFile] | None = None,
         removed_paths: list[str] | None = None,
         full: bool = True,
+        embedding_space_id: str | None = None,
     ) -> IndexStats:
         """Index the given files and persist the results."""
         started = time.monotonic()
@@ -208,6 +209,8 @@ class Indexer:
             if head:
                 set_meta(self.workspace.con, "indexed_head", head)
             set_meta(self.workspace.con, "representation_version", str(REPRESENTATION_VERSION))
+            if embedding_space_id is not None and stats.semantic:
+                set_meta(self.workspace.con, "embedding_space_id", embedding_space_id)
             record_change_event(
                 self.workspace.con,
                 "reindex",

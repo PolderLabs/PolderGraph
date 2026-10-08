@@ -302,6 +302,24 @@ class TestIndexing:
 
 
 class TestIncrementalUpdate:
+    def test_embedding_space_change_forces_unchanged_files_to_reindex(self, indexed_workspace):
+        from poldergraph.indexing.incremental import plan_update
+        from poldergraph.indexing.pipeline import Indexer
+        from poldergraph.storage.repository import Repository
+        from poldergraph.storage.sqlite import set_meta
+
+        repo = Repository(indexed_workspace.con)
+        set_meta(repo.con, "embedding_space_id", "old-space")
+        indexer = Indexer(indexed_workspace, backend=None)
+        discovered = indexer.discover()
+        plan = plan_update(
+            repo, discovered, root_id=indexed_workspace.root_id(),
+            embedding_space_id="new-space",
+        )
+        assert plan.embedding_space_changed
+        assert len(plan.to_index) == len(discovered)
+        assert not plan.unchanged
+
     def test_unchanged_files_are_skipped(self, indexed_workspace):
         from poldergraph.indexing.incremental import plan_update
         from poldergraph.indexing.pipeline import Indexer

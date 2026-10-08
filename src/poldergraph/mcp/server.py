@@ -309,12 +309,21 @@ def build_server(root: Path | None = None) -> Any:
         from ..indexing.incremental import plan_update
         from ..indexing.pipeline import Indexer
 
-        service = session.service()
+        service = session.service(need_backend=True)
         workspace = service.workspace
         indexer = Indexer(workspace, backend=service.backend)
         discovered = indexer.discover()
-        plan = plan_update(session.repo(), discovered, root_id=workspace.root_id())
-        stats = indexer.run(discovered, changed=plan.to_index, removed_paths=plan.removed)
+        from ..indexing.incremental import embedding_space_fingerprint
+
+        embedding_space_id = embedding_space_fingerprint(service.backend)
+        plan = plan_update(
+            session.repo(), discovered, root_id=workspace.root_id(),
+            embedding_space_id=embedding_space_id,
+        )
+        stats = indexer.run(
+            discovered, changed=plan.to_index, removed_paths=plan.removed,
+            embedding_space_id=embedding_space_id,
+        )
         return _envelope("pg_update") | {"data": {"plan": plan.summary(), "index": stats.to_dict()}}
 
     # ------------------------------------------------------- pg_find_tests
