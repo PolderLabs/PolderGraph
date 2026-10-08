@@ -388,12 +388,21 @@ class Indexer:
             return
 
         by_id = {eid: text for eid, text in representations}
+        info = self.backend.model_info()
         # Reuse vectors whose semantic input did not change.
         to_embed: list[str] = []
         for position, (entity_id, text) in enumerate(representations):
             existing = self.repo.embedding_info(entity_id)
             digest = semantic_hash(text)
-            if any(record["input_hash"] == digest for record in existing):
+            if any(
+                record["input_hash"] == digest
+                and record["model_id"] == info.model_id
+                and record["model_revision"] == info.revision
+                and record["dimensions"] == info.dimensions
+                and record["task_type"] == DOCUMENT_TASK
+                and record["modality"] == "text"
+                for record in existing
+            ):
                 stats.embeddings_reused += 1
                 continue
             to_embed.append(entity_id)
@@ -410,7 +419,6 @@ class Indexer:
                 )
             return
 
-        info = self.backend.model_info()
         texts = [by_id[entity_id] for entity_id in to_embed]
         if progress:
             progress("embedding", 0, len(texts), detail=f"encoding on {_device_of(self.backend)}")
