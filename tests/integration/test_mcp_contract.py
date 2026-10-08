@@ -228,6 +228,11 @@ class TestToolResponses:
             "I prefer concise answers" not in item["content"]
             for item in learned["data"]["memories"]
         )
+        from poldergraph.memory import MemoryStore
+
+        workspace = server.poldergraph_session._workspace
+        assert workspace is not None
+        assert MemoryStore(workspace.root).status()["user_memories"] == 0
 
     def test_pg_entity(self, server):
         payload = _call(server, "pg_entity", {"entity": "AuthService"})
