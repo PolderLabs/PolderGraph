@@ -53,6 +53,14 @@ const EMPTY_GRAPH: RawGraph = { nodes: [], edges: [], truncated: false };
 
 const CHANGED_MARKER_MS = 8000;
 
+/**
+ * How long to coalesce SSE change events before reloading the global graph.
+ *
+ * A full reindex emits one event per entity batch; without a debounce the
+ * dashboard would issue hundreds of identical `/graph/global` requests.
+ */
+const SSE_REFRESH_DEBOUNCE_MS = 1500;
+
 export default function App(): JSX.Element {
   /* ---------------------------------------------------------------- prefs */
   const [preferences, setPreferences] = useState<ViewPreferencesState>(() => loadPreferences());
@@ -115,6 +123,7 @@ export default function App(): JSX.Element {
   const graphAbort = useRef<AbortController | null>(null);
   const inspectorAbort = useRef<AbortController | null>(null);
   const searchAbort = useRef<AbortController | null>(null);
+  const refreshTimer = useRef<number | null>(null);
   const liveView = useRef(view);
   const livePreferences = useRef(preferences);
   liveView.current = view;
@@ -351,22 +360,35 @@ export default function App(): JSX.Element {
       searchAbort.current?.abort();
       if (query.trim().length === 0) {
         setResults([]);
+        setView('global');
         return;
       }
       const controller = new AbortController();
       searchAbort.current = controller;
       setSearching(true);
       try {
-        const data = await api.search({ q: query.trim(), limit: 50, includeGraphContext: true, graphContextLimit: 8 }, controller.signal);
+        const data = await api.search(
+          {
+            q: query.trim(),
+            limit: 50,
+            includeSemantic: true,
+            includeStructuralContext: true,
+          },
+          controller.signal,
+        );
         setResults(data.results);
-        if (data.graph) {
-          setGraph({ nodes: data.graph.nodes as FilterableNode[], edges: data.graph.edges as FilterableEdge[], truncated: data.graph.truncated });
-          setGraphError(null);
-          setView('search');
-          setFitToken((token) => token + 1);
+        setView('search');
+
+        // The server returns no graph context for a search, so the graph is not
+        // replaced here. Selecting a result focuses that entity's local graph,
+        // which is the only way to see *why* it matched.
+        const best = data.results[0];
+        if (best) {
+          setSelectedId(best.id);
+          setPinnedIds(new Set());
         }
-        if (data.results.length > 0 && data.results[0]) {
-          selectNode(data.results[0].id);
+        if (data.degraded === true) {
+          showToast('Search ran in degraded mode: semantic recall was unavailable.');
         }
       } catch (error) {
         if (isAbortError(error)) return;
@@ -375,7 +397,7 @@ export default function App(): JSX.Element {
         if (!controller.signal.aborted) setSearching(false);
       }
     },
-    [selectNode, showToast],
+    [showToast],
   );
 
   /* ------------------------------------------------------------------ path */
@@ -414,41 +436,43 @@ export default function App(): JSX.Element {
 
   /* ------------------------------------------------------------- live SSE */
 
+  /**
+   * Coalesces change events.
+   *
+   * A reindex emits one event per batch of entities, so a single scan can
+   * produce hundreds of events in a second. Marking each node changed is cheap
+   * and instant, but refetching per event would be a denial of service against
+   * the server, so the refetch is debounced and only the *global* view is
+   * reloaded. The local, path and search views keep the payload the user is
+   * actually looking at.
+   */
   useEffect(() => {
     const client = new EventsClient({
       onStatus: setEventsStatus,
       onChange: (change) => {
+        const touched = change.ids.filter((id) => !id.startsWith('root:'));
+        if (touched.length === 0) return;
+
+        // Mark immediately so the change is visible before the refetch lands.
         setChangedIds((previous) => {
           const next = new Set(previous);
-          for (const id of change.changed) next.add(id);
-          for (const id of change.added) next.add(id);
+          for (const id of touched) next.add(id);
           return next;
         });
-
-        // Removals must disappear immediately; additions only appear if the
-        // current filters allow them, which the client filter re-evaluates.
-        if (change.removed.length > 0 || change.added.length > 0) {
-          setGraph((current) => {
-            const removed = new Set(change.removed);
-            const nodes = current.nodes.filter((node) => !removed.has(node.id));
-            const live = new Set(nodes.map((node) => node.id));
-            const edges = current.edges.filter(
-              (edge) => !removed.has(edge.id) && live.has(edge.source) && live.has(edge.target),
-            );
-            return { ...current, nodes, edges };
-          });
-          if (change.added.length > 0 && liveView.current === 'global') {
-            void loadGlobal(livePreferences.current.globalLimit, livePreferences.current.aggregate);
-          }
-        }
-
         window.setTimeout(() => {
           setChangedIds((previous) => {
             const next = new Set(previous);
-            for (const id of change.changed) next.delete(id);
+            for (const id of touched) next.delete(id);
             return next;
           });
         }, CHANGED_MARKER_MS);
+
+        if (liveView.current !== 'global') return;
+        if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+        refreshTimer.current = window.setTimeout(() => {
+          refreshTimer.current = null;
+          void loadGlobal(livePreferences.current.globalLimit, livePreferences.current.aggregate);
+        }, SSE_REFRESH_DEBOUNCE_MS);
       },
       onError: () => {
         // The client retries with backoff; the status pill reports the state.
@@ -456,7 +480,13 @@ export default function App(): JSX.Element {
     });
 
     client.start();
-    return () => client.close();
+    return () => {
+      client.close();
+      if (refreshTimer.current !== null) {
+        window.clearTimeout(refreshTimer.current);
+        refreshTimer.current = null;
+      }
+    };
   }, [loadGlobal]);
 
   /* -------------------------------------------------------------- keyboard */
@@ -697,11 +727,6 @@ export default function App(): JSX.Element {
               onHover={setHoveredId}
               onFocusNode={focusLocalGraph}
               onContextMenu={(id, x, y) => setContextMenu({ nodeId: id, x, y })}
-              onNodeMoved={() => {
-                // Positions are owned by the layout controller; persistence runs
-                // on idle so a drag does not synchronously write localStorage.
-                showToast('Node moved.');
-              }}
               onNodePinned={(id, pinned) =>
                 setPinnedIds((previous) => {
                   const next = new Set(previous);
@@ -711,7 +736,6 @@ export default function App(): JSX.Element {
                 })
               }
               onLayoutFrame={() => undefined}
-              onLayoutRunningChange={setLayoutRunning}
             />
           )}
 

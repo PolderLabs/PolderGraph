@@ -51,13 +51,11 @@ export function parseSseBlocks(buffer: string): { blocks: Block[]; rest: string 
 function toChangeEvent(raw: string): ChangeEvent | null {
   try {
     const parsed = JSON.parse(raw) as Partial<ChangeEvent>;
-    const asArray = (value: unknown): string[] =>
-      Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
-    return {
-      added: asArray(parsed.added),
-      removed: asArray(parsed.removed),
-      changed: asArray(parsed.changed),
-    };
+    const ids = Array.isArray(parsed.ids)
+      ? parsed.ids.filter((value): value is string => typeof value === 'string')
+      : [];
+    const kind = typeof parsed.kind === 'string' ? parsed.kind : 'unknown';
+    return { kind, ids };
   } catch {
     return null;
   }

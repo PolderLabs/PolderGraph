@@ -1,4 +1,10 @@
-import type { EntityData, EntityEdge, EntityRef, ImpactData } from '../api/types';
+import type {
+  CommunitySummary,
+  EntityData,
+  EntityEdge,
+  EntityRef,
+  ImpactData,
+} from '../api/types';
 import type { Palette } from '../graph/palette';
 import { isSemanticEdge, nodeColorForKind } from '../graph/palette';
 
@@ -50,47 +56,49 @@ export function Inspector(props: InspectorProps): JSX.Element {
     );
   }
 
-  const kindColor = nodeColorForKind(entity.kind, palette);
+  const record = entity.entity;
+  const kindColor = nodeColorForKind(record.kind, palette);
 
   const inbound = groupRelations(entity.inbound ?? []);
   const outbound = groupRelations(entity.outbound ?? []);
   const semantic = (entity.semantic_neighbors ?? [])
     .slice()
     .sort((a, b) => b.similarity - a.similarity);
+  const unresolved = entity.unresolved ?? [];
 
   return (
-    <aside className="inspector" aria-label={`Inspector for ${entity.qualified_name ?? entity.name}`}>
+    <aside className="inspector" aria-label={`Inspector for ${record.qualified_name ?? record.name}`}>
       <header className="inspector__header">
         <span className="inspector__kind" style={{ color: kindColor, borderColor: kindColor }}>
-          {entity.kind}
+          {record.kind}
         </span>
-        <h2 className="inspector__title">{entity.qualified_name ?? entity.name}</h2>
-        {entity.path && (
+        <h2 className="inspector__title">{record.qualified_name ?? record.name}</h2>
+        {record.path && (
           <p className="inspector__path">
             <button
               type="button"
               className="linkish"
-              onClick={() => props.onOpenSource(entity.path as string, entity.start_line)}
+              onClick={() => props.onOpenSource(record.path as string, record.start_line)}
               title="Open in editor"
             >
-              {entity.path}
-              {entity.start_line !== null ? `:${entity.start_line}` : ''}
+              {record.path}
+              {record.start_line !== null ? `:${record.start_line}` : ''}
             </button>
             <button
               type="button"
               className="iconButton"
-              onClick={() => props.onCopy(entity.path as string, 'path')}
+              onClick={() => props.onCopy(record.path as string, 'path')}
               title="Copy path"
             >
               copy
             </button>
           </p>
         )}
-        {entity.qualified_name && (
+        {record.qualified_name && (
           <button
             type="button"
             className="iconButton"
-            onClick={() => props.onCopy(entity.qualified_name as string, 'qualified name')}
+            onClick={() => props.onCopy(record.qualified_name as string, 'qualified name')}
           >
             Copy qualified name
           </button>
@@ -102,35 +110,43 @@ export function Inspector(props: InspectorProps): JSX.Element {
 
       {loading && <p className="inspector__loading">Loading…</p>}
 
-      {entity.signature && (
+      {record.signature && (
         <section className="inspector__section">
           <h3>Signature</h3>
-          <pre className="inspector__code">{entity.signature}</pre>
+          <pre className="inspector__code">{record.signature}</pre>
         </section>
       )}
 
-      {entity.docstring && (
+      {record.docstring && (
         <section className="inspector__section">
           <h3>Documentation</h3>
           {/* Server text is rendered as text nodes only, never as markup. */}
-          <p className="inspector__doc">{entity.docstring}</p>
+          <p className="inspector__doc">{record.docstring}</p>
+        </section>
+      )}
+
+      {entity.excerpt && (
+        <section className="inspector__section">
+          <h3>Excerpt</h3>
+          <pre className="inspector__code">{entity.excerpt}</pre>
         </section>
       )}
 
       <section className="inspector__section">
         <h3>Details</h3>
         <dl className="inspector__facts">
-          <Fact label="Language" value={entity.language} />
+          <Fact label="Language" value={record.language} />
           <Fact
             label="Lines"
             value={
-              entity.start_line !== null && entity.end_line !== null
-                ? `${entity.start_line}–${entity.end_line}`
+              record.start_line !== null && record.end_line !== null
+                ? `${record.start_line}–${record.end_line}`
                 : null
             }
           />
-          <Fact label="Visibility" value={entity.visibility} />
-          <Fact label="Generated" value={entity.is_generated ? 'yes' : 'no'} />
+          <Fact label="Visibility" value={record.visibility} />
+          <Fact label="Generated" value={record.is_generated ? 'yes' : 'no'} />
+          <Fact label="External" value={record.is_external ? 'yes' : 'no'} />
           {entity.parent && (
             <div className="inspector__fact">
               <dt>Parent</dt>
@@ -143,11 +159,37 @@ export function Inspector(props: InspectorProps): JSX.Element {
               </dd>
             </div>
           )}
-          {entity.community != null && (
-            <Fact label="Community" value={formatCommunity(entity.community)} />
+          {entity.communities?.structural && (
+            <Fact
+              label="Community (structural)"
+              value={formatCommunity(entity.communities.structural)}
+            />
+          )}
+          {entity.communities?.hybrid && (
+            <Fact label="Community (hybrid)" value={formatCommunity(entity.communities.hybrid)} />
           )}
         </dl>
       </section>
+
+      {unresolved.length > 0 && (
+        <section className="inspector__section">
+          <h3>Unresolved references</h3>
+          <p className="inspector__hint">
+            The index could not bind these names to a definition; they are not facts.
+          </p>
+          <ul className="inspector__list">
+            {unresolved.map((entry) => (
+              <li key={entry.id} className="inspector__listItem">
+                <RelationButton
+                  entity={{ id: entry.id, label: entry.label, kind: entry.kind, path: entry.path }}
+                  palette={palette}
+                  onClick={() => props.onNavigate(entry.id)}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <RelationGroup
         title="Inbound (uses / depends on)"
@@ -217,19 +259,19 @@ export function Inspector(props: InspectorProps): JSX.Element {
       <section className="inspector__section inspector__actions">
         <h3>Actions</h3>
         <div className="inspector__actionRow">
-          <button type="button" onClick={() => props.onFocusLocal(entity.id)}>
+          <button type="button" onClick={() => props.onFocusLocal(record.id)}>
             Local graph
           </button>
-          <button type="button" onClick={() => props.onPathFrom(entity.id)}>
+          <button type="button" onClick={() => props.onPathFrom(record.id)}>
             Path from here
           </button>
-          <button type="button" onClick={() => props.onPathTo(entity.id)}>
+          <button type="button" onClick={() => props.onPathTo(record.id)}>
             Path to here
           </button>
-          <button type="button" onClick={() => props.onImpact(entity.id)}>
+          <button type="button" onClick={() => props.onImpact(record.id)}>
             Impact
           </button>
-          <button type="button" onClick={() => props.onExplain(entity.id)}>
+          <button type="button" onClick={() => props.onExplain(record.id)}>
             Explain
           </button>
         </div>
@@ -248,15 +290,13 @@ function Fact({ label, value }: { label: string; value: string | number | boolea
   );
 }
 
-function formatCommunity(community: EntityData['community']): string {
-  if (community === null || community === undefined) return '—';
-  if (typeof community === 'object') {
-    const parts = [community.label, community.size].filter(
-      (part) => part !== null && part !== undefined && part !== '',
-    );
-    return parts.length > 0 ? parts.join(' · ') : String(community.community_id ?? '—');
-  }
-  return String(community);
+/** Renders a community summary, falling back to its bare id. */
+function formatCommunity(community: CommunitySummary | null | undefined): string {
+  if (!community) return '—';
+  const parts = [community.label, community.size].filter(
+    (part) => part !== null && part !== undefined && part !== '',
+  );
+  return parts.length > 0 ? parts.join(' · ') : String(community.community_id ?? '—');
 }
 
 /** Groups relations by edge type so related facts read together. */

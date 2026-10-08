@@ -105,19 +105,41 @@ export type Direction = 'in' | 'out' | 'both';
 export type EvidenceKind = 'exact' | 'lexical' | 'semantic' | 'graph-expanded';
 export type LayoutRunState = 'running' | 'stopped';
 
-/** Node as returned by graph endpoints. */
+/**
+ * Node as returned by graph endpoints.
+ *
+ * Verified against the live server: the payload also carries
+ * `qualified_name`, `start_line`, `end_line` and `is_generated`. An
+ * `aggregate=community` payload replaces the entity fields with `size` and a
+ * `members` id list, so both shapes are modelled here.
+ */
 export interface GraphNode {
   id: string;
   label: string;
   kind: NodeKind;
   language: string | null;
   path: string | null;
+  qualified_name?: string | null;
+  start_line?: number | null;
+  end_line?: number | null;
   community: number | string | null;
   importance: number;
   degree: number;
   is_container: boolean;
+  is_generated?: boolean;
+  /** Present on server-side aggregate meta-nodes only. */
+  size?: number;
+  members?: string[];
+  aggregate_mode?: AggregateMode;
 }
 
+/**
+ * Edge as returned by graph endpoints.
+ *
+ * The server sends `source`/`target` *and* the legacy `source_id`/`target_id`
+ * aliases; only the former are read. `resolver`, `source_location` and
+ * `metadata` are additional and unused.
+ */
 export interface GraphEdge {
   id: string;
   source: string;
@@ -125,23 +147,37 @@ export interface GraphEdge {
   type: EdgeType;
   provenance: Provenance;
   confidence: number;
+  source_id?: string;
+  target_id?: string;
+  resolver?: string | null;
+  source_location?: { path: string | null; line: number | null; col: number | null } | null;
+  metadata?: Record<string, unknown>;
 }
 
-/** Shared shape of global / neighborhood / search-graph payloads. */
+/** Shared shape of global / neighborhood payloads. */
 export interface GraphPayload {
   nodes: GraphNode[];
   edges: GraphEdge[];
   truncated: boolean;
   aggregate?: AggregateMode;
+  /** Total entities behind a sampled payload (`/graph/global` only). */
+  total_entities?: number;
+  cache_key?: string;
+}
+
+export interface StatusRoot {
+  root_id: string;
+  path: string;
+  name: string;
+  is_primary: boolean;
+  vcs_branch?: string;
+  vcs_head?: string;
+  updated_at?: number;
 }
 
 export interface StatusData {
-  roots: Array<{
-    root_id: string;
-    path: string;
-    name: string;
-    is_primary: boolean;
-  }>;
+  root?: string;
+  roots: StatusRoot[];
   fresh: boolean;
   counts: Record<string, number>;
   model: string;
@@ -149,12 +185,15 @@ export interface StatusData {
   schema_version: number;
   languages: string[];
   communities: { structural: number; hybrid: number };
+  capabilities?: string;
 }
 
-/** Neighbor entry in the inspector. */
+/** Neighbor entry in the inspector and in relation lists. */
 export interface EntityRef {
   id: string;
+  /** The server sends `name` on entity endpoints and `label` on relations. */
   label?: string;
+  name?: string;
   kind?: NodeKind;
   path?: string | null;
   qualified_name?: string | null;
@@ -194,34 +233,58 @@ export interface CommunitySummary {
   mode?: CommunityMode | string;
 }
 
-export interface EntityData {
+/** The `entity` object returned by `/api/entity/{id}`. */
+export interface EntityRecord {
   id: string;
+  root_id?: string;
   kind: NodeKind;
   name: string;
   qualified_name: string | null;
   path: string | null;
   language: string | null;
+  parent_id: string | null;
   start_line: number | null;
   end_line: number | null;
+  visibility: string | null;
   signature: string | null;
   docstring: string | null;
-  visibility: string | null;
+  content_hash?: string;
+  semantic_hash?: string | null;
   is_generated: boolean;
-  metrics: EntityMetrics;
-  community: CommunitySummary | string | number | null;
+  is_external: boolean;
+}
+
+/** Communities are returned keyed by detection mode. */
+export interface EntityCommunities {
+  structural?: CommunitySummary | null;
+  hybrid?: CommunitySummary | null;
+}
+
+/**
+ * `/api/entity/{id}` wraps the entity rather than flattening it, and adds
+ * `excerpt`, `unresolved`, `communities` and `metrics` alongside the relations.
+ */
+export interface EntityData {
+  entity: EntityRecord;
+  parent: EntityRecord | null;
   inbound: InboundRelation[];
   outbound: OutboundRelation[];
   semantic_neighbors: SemanticNeighbor[];
-  parent: EntityRef | null;
+  communities: EntityCommunities;
+  metrics: EntityMetrics;
+  excerpt: string | null;
+  unresolved: Array<{ id: string; label?: string; kind?: NodeKind; path?: string | null }>;
 }
 
-/** Tests and docs referencing an entity. */
+/** Tests and docs referencing an entity. The server sends `name`, not `label`. */
 export interface ImpactListEntry {
   id?: string;
   label?: string;
+  name?: string;
   kind?: NodeKind;
   path?: string | null;
   qualified_name?: string | null;
+  start_line?: number | null;
   type?: EdgeType;
   similarity?: number | null;
   [key: string]: unknown;
@@ -233,23 +296,42 @@ export interface ImpactData {
   tests: ImpactListEntry[];
   docs: ImpactListEntry[];
   semantic_only: ImpactListEntry[];
+  truncated: boolean;
+  entity: EntityRecord;
 }
 
 export interface SearchResult {
   id: string;
   label: string;
+  name?: string;
   kind: NodeKind;
   path: string | null;
   qualified_name: string | null;
+  language?: string | null;
+  start_line?: number | null;
+  end_line?: number | null;
   score: number;
   evidence: EvidenceKind;
   score_features: Record<string, number>;
 }
 
+/**
+ * `/api/search` returns no graph context on the current server, even with
+ * `include_graph_context`. Selecting a result focuses its local graph instead.
+ */
+export interface SearchRouting {
+  intent?: string;
+  degraded?: boolean;
+  [key: string]: unknown;
+}
+
 export interface SearchData {
+  query?: string;
   results: SearchResult[];
   truncated: boolean;
-  graph?: GraphPayload;
+  intent?: string;
+  routing?: SearchRouting;
+  degraded?: boolean;
 }
 
 export interface MemoryEntry {
@@ -283,6 +365,7 @@ export interface MemoryListData {
 export interface PathNode {
   id: string;
   label?: string;
+  name?: string;
   kind?: NodeKind;
   [key: string]: unknown;
 }
@@ -298,15 +381,19 @@ export interface PathEdge {
 
 export interface PathData {
   found: boolean;
+  reason?: string | null;
+  hops: number;
+  from?: EntityRecord;
+  to?: EntityRecord;
   nodes: PathNode[];
   edges: PathEdge[];
-  hops: number;
 }
 
 export interface CommunitySummaryEntry {
   community_id: number | string;
   label: string | null;
   size: number;
+  resolution?: number;
   top_entities: EntityRef[];
 }
 
@@ -322,11 +409,18 @@ export interface SourceData {
   content: string;
 }
 
-/** SSE payload for `event: change`. */
+/**
+ * SSE payload for `event: change`.
+ *
+ * Verified against the live server: the data is `{kind, ids}`. Kinds are
+ * `reindex` (the indexing pipeline rewrote entities) and `graph` (graph
+ * recomputation finished; carries no ids). There is no add/remove split — an
+ * entity id in a `reindex` event may have been added, changed or deleted, so
+ * the dashboard treats the ids as "touched" and re-validates the payload.
+ */
 export interface ChangeEvent {
-  added: string[];
-  removed: string[];
-  changed: string[];
+  kind: 'reindex' | 'graph' | (string & {});
+  ids: string[];
 }
 
 /** Free-form preference bag forwarded to `POST /api/view/preferences`. */

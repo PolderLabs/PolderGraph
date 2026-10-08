@@ -1,19 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Graph from 'graphology';
-import Sigma from 'sigma';
-import { layerDashed } from 'sigma/rendering';
-import { numberProp } from 'sigma/primitives';
-import type {
-  EdgeDisplayData,
-  MouseCoords,
-  NodeDisplayData,
-  SigmaEventPayload,
-  SigmaNodeEventPayload,
-} from 'sigma/types';
+import { MeasuredSigma } from './MeasuredSigma';
+import { EdgeRectangleProgram, NodeCircleProgram } from 'sigma/rendering';
+import type { EdgeDisplayData, NodeDisplayData, SigmaNodeEventPayload } from 'sigma/types';
 
 import type { FilterableEdge, FilterableNode } from './filters';
 import {
+  AGGREGATE_SIZE_SCALE,
   communityColor,
+  DEFAULT_SIZE_SCALE,
   edgeColor,
   edgeSizeFor,
   nodeColorForKind,
@@ -25,17 +20,15 @@ import { buildAdjacency, syncGraph, TRANSPARENT } from './sync';
 import type { PgEdgeAttributes, PgNodeAttributes } from './attributes';
 import type { ForceSettingsState } from '../state/preferences';
 import { desaturate } from '../util/color';
+import { DashedEdgeProgram } from './edgeProgram';
+import { NodeRingProgram } from './ringProgram';
 
 /** Sigma instance typed with the attributes this app stores on each item. */
-type PgSigma = Sigma<PgNodeAttributes, PgEdgeAttributes>;
+type PgSigma = MeasuredSigma<PgNodeAttributes, PgEdgeAttributes>;
 
-/**
- * Sigma's display types do not declare custom attributes, but the node data it
- * hands to reducers is the graph's own attribute object. These aliases make
- * that explicit instead of casting at every use.
- */
-type NodeDisplayDataWithAttrs = NodeDisplayData & PgNodeAttributes;
-type EdgeDisplayDataWithAttrs = EdgeDisplayData & PgEdgeAttributes;
+/** Sigma hands reducers the graph's own attribute object plus display fields. */
+type NodeDisplay = NodeDisplayData & PgNodeAttributes;
+type EdgeDisplay = EdgeDisplayData & PgEdgeAttributes;
 
 export interface CanvasInteractionState {
   selectedId: string | null;
@@ -65,10 +58,8 @@ export interface GraphCanvasProps {
   onHover: (id: string | null) => void;
   onFocusNode: (id: string) => void;
   onContextMenu: (id: string | null, x: number, y: number) => void;
-  onNodeMoved: (id: string) => void;
   onNodePinned: (id: string, pinned: boolean) => void;
   onLayoutFrame: () => void;
-  onLayoutRunningChange: (running: boolean) => void;
 }
 
 interface CanvasHandle {
@@ -86,6 +77,10 @@ interface CanvasHandle {
  * mutated in place. Rebuilding the renderer on every data change would drop the
  * camera, the WebGL contexts and all node positions, which is exactly what
  * makes a live update feel like a page reload.
+ *
+ * Node size is in device pixels (`itemSizesReference: "screen"`), so a node
+ * radius stays a readable number of pixels no matter how ForceAtlas2 rescales
+ * the coordinate space while it settles.
  */
 export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -106,72 +101,53 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     const controller = new ForceAtlas2Controller({
       graph,
       onFrame: () => propsRef.current.onLayoutFrame(),
-      onRunningChange: (running) => propsRef.current.onLayoutRunningChange(running),
     });
 
-    const primitives = {
-      edges: {
-        variables: {
-          dashSize: numberProp(10000, { variable: true }),
-          gapSize: numberProp(0, { variable: true }),
-        },
-        layers: [
-          layerDashed({
-            dashSize: { attribute: 'dashSize', default: 10000, mode: 'pixels' },
-            gapSize: { attribute: 'gapSize', default: 0, mode: 'pixels' },
-          }),
-        ],
+    const sigma = new MeasuredSigma<PgNodeAttributes, PgEdgeAttributes>(graph, container, {
+      // The ring is a second node program: Sigma 3 has no per-node border, so
+      // selected / changed / unresolved / pinned are drawn as a hollow disc.
+      nodeProgramClasses: {
+        circle: NodeCircleProgram<PgNodeAttributes, PgEdgeAttributes>,
+        ringed: NodeRingProgram<PgNodeAttributes, PgEdgeAttributes>,
       },
-    } as const;
-    const sigma = new Sigma<
-      PgNodeAttributes,
-      PgEdgeAttributes,
-      Record<string, unknown>,
-      Record<string, never>,
-      Record<string, never>,
-      Record<string, never>,
-      typeof primitives
-    >(graph, container, {
-      primitives,
-      styles: {
-        nodes: {
-          labelColor: { attribute: 'labelColor' },
-          backdropVisibility: 'visible',
-          backdropColor: 'rgba(9, 13, 22, 0.9)',
-          backdropPadding: 3,
-          backdropCornerRadius: 4,
-          backdropBorderColor: { attribute: 'ringColor' },
-          backdropBorderWidth: { attribute: 'ringWidth' },
-          backdropShadowColor: { attribute: 'glowColor' },
-          backdropShadowBlur: { attribute: 'glowBlur' },
-        },
-        edges: {
-          dashSize: { attribute: 'dashSize', defaultValue: 10000 },
-          gapSize: { attribute: 'gapSize', defaultValue: 0 },
-        },
-      } as any,
-      nodeReducer: (node, data, attrs) =>
-        reduceNode(node, { ...data, ...attrs } as NodeDisplayDataWithAttrs, propsRef.current, handleRef.current),
-      edgeReducer: (edge, data, attrs) =>
-        reduceEdge(edge, { ...data, ...attrs } as EdgeDisplayDataWithAttrs, propsRef.current),
-      settings: {
-        // Resize handling is ours; Sigma would otherwise fight the observer loop.
-        allowInvalidContainer: true,
-        // Edge labels are never drawn globally: at graph scale they are noise.
-        renderEdgeLabels: false,
-        renderLabels: true,
-        labelDensity: 0.08,
-        labelGridCellSize: 110,
-        labelRenderedSizeThreshold: 6,
-        minEdgeThickness: 0.5,
-        // ForceAtlas2 changes coordinate bounds while settling; keep all nodes
-        // fitted so layout movement remains visible across desktop and mobile.
-        autoRescale: true,
-        stagePadding: 20,
+      // A semantic edge is evidence, not a fact, and is drawn dashed. Sigma 3
+      // exposes custom edge programs as a documented extension point.
+      edgeProgramClasses: {
+        line: EdgeRectangleProgram<PgNodeAttributes, PgEdgeAttributes>,
+        dashed: DashedEdgeProgram<PgNodeAttributes, PgEdgeAttributes>,
       },
+      defaultNodeType: 'circle',
+      defaultEdgeType: 'line',
+      // Pixel-sized items: a node radius stays a real number of pixels however
+      // ForceAtlas2 rescales the coordinate space while it settles.
+      itemSizesReference: 'screen',
+      nodeReducer: (node, data) =>
+        reduceNode(node, data as NodeDisplay, propsRef.current, handleRef.current),
+      edgeReducer: (edge, data) => reduceEdge(edge, data as EdgeDisplay, propsRef.current),
+      // Resize handling is ours; Sigma would otherwise fight the observer.
+      allowInvalidContainer: true,
+      // Edge labels are never drawn globally: at graph scale they are noise.
+      renderEdgeLabels: false,
+      renderLabels: true,
+      labelDensity: 0.12,
+      labelGridCellSize: 110,
+      // Below this rendered diameter a label is unreadable clutter.
+      labelRenderedSizeThreshold: 9,
+      minEdgeThickness: 0.6,
+      labelColor: { attribute: 'labelColor' },
+      // ForceAtlas2 changes coordinate bounds while settling; keep all nodes
+      // fitted so layout movement remains visible across desktop and mobile.
+      autoRescale: true,
+      stagePadding: 24,
+      zIndex: true,
     }) as PgSigma;
 
     handleRef.current = { sigma, graph, controller, adjacency: new Map() };
+    // Diagnostic handle for the node-coordinate measurement: a ref callback runs
+    // before this effect, so the instance is published here.
+    if (container) {
+      (container as HTMLDivElement & { pgSigma?: PgSigma }).pgSigma = sigma;
+    }
     setReady(true);
 
     const onResize = () => sigma.refresh();
@@ -192,14 +168,11 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     const handle = handleRef.current;
     if (!ready || !handle) return;
 
-    const topologyChanged = syncGraph(handle.graph, handle.controller, props.nodes, props.edges);
+    const topologyChanged = syncGraph(handle.graph, props.nodes, props.edges);
     if (topologyChanged) handle.adjacency = buildAdjacency(handle.graph);
-    // The initial layout-running effect can fire before the async graph payload
-    // arrives. Start here as soon as the first nodes exist instead of waiting
-    // for the user to toggle pause/resume.
-    if (topologyChanged && props.layoutRunning) handle.controller.start();
+    handle.controller.sync();
     handle.sigma.refresh();
-  }, [ready, props.nodes, props.edges, props.layoutRunning]);
+  }, [ready, props.nodes, props.edges]);
 
   /* -------------------------------------------------------- layout controls */
 
@@ -217,10 +190,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       linLogMode: force.linLogMode,
       outboundAttractionDistribution: force.outboundAttractionDistribution,
     });
-  }, [
-    ready,
-    props.forceSettings,
-  ]);
+  }, [ready, props.forceSettings]);
 
   useEffect(() => {
     const handle = handleRef.current;
@@ -262,13 +232,14 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
   useEffect(() => {
     const handle = handleRef.current;
     if (!ready || !handle || props.fitToken === 0) return;
-    void handle.sigma.getCamera().animatedReset({ duration: 320 });
+    handle.sigma.getCamera().animatedReset({ duration: 320 });
   }, [ready, props.fitToken]);
 
   useEffect(() => {
     const handle = handleRef.current;
     if (!ready || !handle || props.layoutResetToken === 0) return;
     handle.controller.resetLayout();
+    handle.sigma.refresh();
   }, [ready, props.layoutResetToken]);
 
   /* ----------------------------------------------------------------- events */
@@ -277,7 +248,6 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     const handle = handleRef.current;
     if (!ready || !handle) return;
     const sigma = handle.sigma;
-    let pressedNode: string | null = null;
 
     const handleNodeClick = ({ node }: SigmaNodeEventPayload) => propsRef.current.onSelect(node);
     const handleDoubleClick = ({ node }: SigmaNodeEventPayload) => propsRef.current.onFocusNode(node);
@@ -285,25 +255,28 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     const handleLeave = () => propsRef.current.onHover(null);
     const handleStageClick = () => propsRef.current.onSelect(null);
 
-    // Sigma normalises mouse and touch into `MouseCoords`; `original` carries
-    // the untouched browser event, which is what clientX/clientY come from.
-    const openMenu = (node: string | null, coords: MouseCoords) => {
+    // Sigma normalises mouse and touch into `event`; `original` carries the
+    // untouched browser event, which is what clientX/clientY come from.
+    const openMenu = (node: string | null, coords: SigmaNodeEventPayload['event']) => {
       coords.preventSigmaDefault();
       const original = coords.original as MouseEvent;
       original.preventDefault();
       propsRef.current.onContextMenu(node, original.clientX, original.clientY);
     };
     const handleRightClickNode = (payload: SigmaNodeEventPayload) => openMenu(payload.node, payload.event);
-    const handleRightClickStage = (payload: SigmaEventPayload) => openMenu(null, payload.event);
+    const handleRightClickStage = (payload: { event: SigmaNodeEventPayload['event'] }) =>
+      openMenu(null, payload.event);
 
     // Sigma has no dedicated drag event, so a drag is inferred from a node
     // press followed by a release on the same node.
+    let pressedNode: string | null = null;
     const handleDownNode = ({ node }: SigmaNodeEventPayload) => {
       pressedNode = node;
+      handle.controller.setFixed(node, true);
       propsRef.current.onNodePinned(node, true);
     };
     const handleUpNode = ({ node }: SigmaNodeEventPayload) => {
-      if (pressedNode === node) propsRef.current.onNodeMoved(node);
+      if (pressedNode === node) propsRef.current.onNodePinned(node, true);
       pressedNode = null;
     };
 
@@ -335,7 +308,11 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     [props.palette.background],
   );
 
-  return <div className="graph-canvas" style={style} ref={containerRef} data-testid="graph-canvas" />;
+  const ref = useCallback((element: HTMLDivElement | null) => {
+    containerRef.current = element;
+  }, []);
+
+  return <div className="graph-canvas" style={style} ref={ref} data-testid="graph-canvas" />;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -345,10 +322,10 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
 
 function reduceNode(
   node: string,
-  data: NodeDisplayDataWithAttrs,
+  data: NodeDisplay,
   props: GraphCanvasProps,
   handle: CanvasHandle | null,
-): Partial<NodeDisplayDataWithAttrs> {
+): Partial<NodeDisplay> {
   const { palette, interaction } = props;
 
   const base =
@@ -364,8 +341,7 @@ function reduceNode(
   // structure around it stays readable while the rest of the graph recedes.
   const focusId = interaction.selectedId ?? interaction.hoveredId;
   const focusNeighbours = focusId === null ? undefined : handle?.adjacency.get(focusId);
-  const nearFocus =
-    focusId !== null && (node === focusId || focusNeighbours?.has(node) === true);
+  const nearFocus = focusId !== null && (node === focusId || focusNeighbours?.has(node) === true);
 
   let color = base;
   let labelColor = palette.text;
@@ -378,8 +354,8 @@ function reduceNode(
   }
   if (hovered) color = palette.selected;
 
-  const changed = interaction.changedIds.has(node) || data.pgChanged === 1;
-  const pinned = interaction.pinnedIds.has(node) || data.pgPinned === 1;
+  const changed = interaction.changedIds.has(node);
+  const pinned = interaction.pinnedIds.has(node);
   const unresolved = data.pgUnresolved === 1;
 
   // The ring is the only place these states are shown, so they never fight the
@@ -393,30 +369,34 @@ function reduceNode(
         : pinned
           ? palette.accent
           : TRANSPARENT;
-  const ringWidth = selected ? 1.5 : changed ? 1.1 : unresolved ? 1 : pinned ? 0.8 : 0;
+  const ringWidth = selected ? 3 : changed ? 2.2 : unresolved ? 2 : pinned ? 1.6 : 0;
+
+  // A community meta-node stands for many entities, so it gets its own, larger
+  // size band rather than the ordinary node scale.
+  const scale = data.kind === 'community' ? AGGREGATE_SIZE_SCALE : DEFAULT_SIZE_SCALE;
+  const size = sizeForImportance(data.pgImportance, data.pgDegree, scale);
 
   return {
     ...data,
     color,
-    // Sigma's fitted graph scale magnifies graph-space sizes; keep these small
-    // so a handful of nearby nodes does not balloon into canvas-sized discs.
-    size: sizeForImportance(data.pgImportance, data.pgDegree, { min: 0.08, max: 0.55 }),
+    size,
     labelColor,
-    ringColor,
-    ringWidth,
-    glowColor: selected ? palette.selected : 'rgba(0,0,0,0)',
-    glowBlur: selected ? 8 : 0,
+    // A node with ring state is drawn by the ring program, which widens the
+    // geometry and hollows the centre; without ring state it is a plain disc.
+    type: ringWidth > 0 ? 'ringed' : 'circle',
     zIndex: selected ? 3 : hovered ? 2 : changed ? 1 : 0,
-    labelVisibility: selected || hovered ? 'visible' : 'auto',
-    visibility: 'visible',
+    forceLabel: selected || hovered,
+    hidden: false,
+    pgRingColor: ringColor,
+    pgRingSize: ringWidth,
   };
 }
 
 function reduceEdge(
   edge: string,
-  data: EdgeDisplayDataWithAttrs,
+  data: EdgeDisplay,
   props: GraphCanvasProps,
-): Partial<EdgeDisplayDataWithAttrs> {
+): Partial<EdgeDisplay> {
   const { palette, interaction } = props;
 
   const onPath = interaction.pathEdgeIds.has(edge);
@@ -442,13 +422,12 @@ function reduceEdge(
   return {
     ...data,
     color,
-    size: onPath ? 2.6 : edgeSizeFor(data.provenance, data.edgeType, data.weight),
+    size: onPath ? 3 : edgeSizeFor(data.provenance, data.edgeType),
     label: '',
-    // Sigma's dashed primitive makes semantic evidence visually distinct.
-    dashSize: data.semantic === 1 ? 7 : 10000,
-    gapSize: data.semantic === 1 ? 5 : 0,
+    // The dashed program is what makes semantic evidence visually distinct.
+    type: data.semantic === 1 ? 'dashed' : 'line',
     zIndex: onPath ? 2 : emphasise ? 1 : 0,
     // Low-value edges stay hidden until focus makes them meaningful.
-    visibility: props.hideLowValueEdges && !emphasise && interaction.selectedId !== null ? 'hidden' : 'visible',
+    hidden: props.hideLowValueEdges && !emphasise && interaction.selectedId !== null,
   };
 }

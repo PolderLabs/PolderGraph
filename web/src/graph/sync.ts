@@ -1,21 +1,43 @@
-import type Graph from 'graphology';
-import { isSemanticEdge, UNRESOLVED_KINDS } from './palette';
-import type { ForceAtlas2Controller } from './layout';
-import type { PgEdgeAttributes, PgNodeAttributes } from './attributes';
-import type { FilterableEdge, FilterableNode } from './filters';
-
 /**
  * Reconciles the graphology graph with the incoming payload.
  *
- * Existing nodes keep their `x`/`y`, which is what makes SSE updates and view
- * switches non-destructive: the layout controller never re-seeds a node that
- * already has a position.
+ * Two invariants matter here and both exist for the same reason: a live update
+ * must never reset or explode the layout.
  *
- * @returns whether the topology changed, so adjacency can be rebuilt.
+ *  1. A node that already exists keeps its `x`/`y`. Only a genuinely new node
+ *     is seeded, and it is seeded next to its neighbours rather than randomly,
+ *     so an SSE update lands locally instead of teleporting half the graph.
+ *  2. The layout worker re-injects the current positions whenever topology
+ *     changes, so the worker never restarts from its own stale copy.
+ *
+ * The Sigma instance is created once and mutated in place; rebuilding it would
+ * drop the camera, the WebGL contexts and every position.
+ */
+
+import type Graph from 'graphology';
+import type { PgEdgeAttributes, PgNodeAttributes } from './attributes';
+import type { FilterableEdge, FilterableNode } from './filters';
+import { isSemanticEdge, UNRESOLVED_KINDS } from './palette';
+
+/** Edge program key used for a solid structural line. */
+const SOLID_EDGE_TYPE = 'line';
+
+/**
+ * Edge program key used for a dashed semantic line.
+ *
+ * Registered in `GraphCanvas` as `dashed`; the string is duplicated here so
+ * `sync.ts` has no import-time dependency on the Sigma renderer module.
+ */
+const DASHED_EDGE_TYPE = 'dashed';
+
+/** Fully transparent: an "empty" state marker that costs no fragment work. */
+export const TRANSPARENT = 'rgba(0,0,0,0)';
+
+/**
+ * @returns whether the topology changed, so adjacency must be rebuilt.
  */
 export function syncGraph(
   graph: Graph<PgNodeAttributes, PgEdgeAttributes>,
-  controller: ForceAtlas2Controller,
   nodes: FilterableNode[],
   edges: FilterableEdge[],
 ): boolean {
@@ -32,30 +54,32 @@ export function syncGraph(
         kind: node.kind,
         pgImportance: node.importance,
         pgDegree: node.degree,
-        pgCommunity: communityKey(node.community),
-        pgUnresolved: UNRESOLVED_KINDS[node.kind] ? 1 : 0,
-        pgChanged: node.changed === true ? 1 : 0,
+        pgCommunity: node.community === null || node.community === undefined
+          ? ''
+          : String(node.community),
+        pgUnresolved: UNRESOLVED_KINDS[node.kind] === true ? 1 : 0,
       });
       continue;
     }
 
     graph.addNode(node.id, {
-      x: Math.random(),
-      y: Math.random(),
+      x: 0,
+      y: 0,
       size: 1,
       label: node.label,
       kind: node.kind,
+      type: 'circle',
       color: '#7f8ea3',
       labelColor: '#e6edf5',
-      ringColor: TRANSPARENT,
-      ringWidth: 0,
-      glowColor: TRANSPARENT,
-      glowBlur: 0,
+      pgRingColor: TRANSPARENT,
+      pgRingSize: 0,
       pgImportance: node.importance,
       pgDegree: node.degree,
-      pgCommunity: communityKey(node.community),
-      pgUnresolved: UNRESOLVED_KINDS[node.kind] ? 1 : 0,
-      pgChanged: node.changed === true ? 1 : 0,
+      pgCommunity: node.community === null || node.community === undefined
+        ? ''
+        : String(node.community),
+      pgUnresolved: UNRESOLVED_KINDS[node.kind] === true ? 1 : 0,
+      pgChanged: 0,
       pgPinned: 0,
     });
     topologyChanged = true;
@@ -79,11 +103,10 @@ export function syncGraph(
       color: '#7f8ea3',
       label: '',
       weight: Number.isFinite(edge.confidence) ? edge.confidence : 1,
+      type: isSemanticEdge(edge.type) ? DASHED_EDGE_TYPE : SOLID_EDGE_TYPE,
       edgeType: edge.type,
       provenance: edge.provenance,
       semantic: isSemanticEdge(edge.type) ? 1 : 0,
-      dashSize: isSemanticEdge(edge.type) ? 7 : 10000,
-      gapSize: isSemanticEdge(edge.type) ? 5 : 0,
       sourceId: edge.source,
       targetId: edge.target,
     };
@@ -116,9 +139,6 @@ export function syncGraph(
     }
   }
 
-  // `dropNode` already removed every edge touching a removed node, so any edge
-  // left dangling has been caught by the prune above.
-  controller.sync();
   return topologyChanged;
 }
 
@@ -133,11 +153,4 @@ export function buildAdjacency(
     adjacency.get(target)?.add(source);
   });
   return adjacency;
-}
-
-/** Fully transparent border: an "empty" ring that costs no fragment work. */
-export const TRANSPARENT = 'rgba(0,0,0,0)';
-
-function communityKey(community: number | string | null | undefined): string {
-  return community === null || community === undefined ? '' : String(community);
 }

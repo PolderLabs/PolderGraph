@@ -15,6 +15,8 @@ export interface Palette {
   /** Categorical ramp used when coloring by community. */
   communityRamp: string[];
   edge: Record<string, string>;
+  /** Inferred / ambiguous edges: red, never a structural hue. */
+  unresolvedEdge: string;
   background: string;
   surface: string;
   text: string;
@@ -100,29 +102,30 @@ export const DARK: Palette = {
     '#b2df8a',
   ],
   edge: {
-    default: 'rgba(148, 170, 200, 0.34)',
-    structural: 'rgba(160, 186, 216, 0.46)',
-    contains: 'rgba(126, 158, 214, 0.36)',
-    defines: 'rgba(224, 176, 85, 0.46)',
-    imports: 'rgba(95, 168, 232, 0.46)',
-    exports: 'rgba(72, 194, 216, 0.46)',
-    calls: 'rgba(240, 138, 93, 0.58)',
-    constructs: 'rgba(232, 130, 90, 0.5)',
-    inherits: 'rgba(215, 160, 90, 0.5)',
-    implements: 'rgba(199, 176, 120, 0.5)',
-    overrides: 'rgba(232, 196, 106, 0.5)',
-    references: 'rgba(150, 170, 196, 0.4)',
-    reads: 'rgba(183, 194, 106, 0.42)',
-    writes: 'rgba(174, 186, 95, 0.42)',
-    returns_type: 'rgba(239, 208, 125, 0.4)',
-    accepts_type: 'rgba(239, 208, 125, 0.36)',
-    decorates: 'rgba(143, 124, 247, 0.45)',
-    routes_to: 'rgba(255, 138, 107, 0.45)',
-    tests: 'rgba(155, 127, 240, 0.48)',
-    documents: 'rgba(111, 168, 220, 0.44)',
-    semantically_related: 'rgba(122, 216, 190, 0.34)',
-    semantic: 'rgba(122, 216, 190, 0.34)',
+    default: 'rgba(148, 170, 200, 0.55)',
+    structural: 'rgba(176, 200, 228, 0.7)',
+    contains: 'rgba(146, 178, 234, 0.6)',
+    defines: 'rgba(230, 186, 100, 0.66)',
+    imports: 'rgba(110, 182, 240, 0.66)',
+    exports: 'rgba(88, 208, 228, 0.66)',
+    calls: 'rgba(244, 152, 108, 0.72)',
+    constructs: 'rgba(238, 142, 100, 0.66)',
+    inherits: 'rgba(222, 170, 100, 0.62)',
+    implements: 'rgba(206, 184, 130, 0.62)',
+    overrides: 'rgba(236, 202, 116, 0.62)',
+    references: 'rgba(166, 184, 208, 0.55)',
+    reads: 'rgba(190, 200, 116, 0.58)',
+    writes: 'rgba(182, 194, 105, 0.58)',
+    returns_type: 'rgba(242, 214, 138, 0.55)',
+    accepts_type: 'rgba(242, 214, 138, 0.5)',
+    decorates: 'rgba(158, 142, 252, 0.62)',
+    routes_to: 'rgba(255, 150, 120, 0.62)',
+    tests: 'rgba(168, 144, 246, 0.64)',
+    documents: 'rgba(126, 184, 232, 0.6)',
+    semantically_related: 'rgba(140, 228, 202, 0.6)',
+    semantic: 'rgba(140, 228, 202, 0.6)',
   },
+  unresolvedEdge: 'rgba(255, 122, 122, 0.72)',
   background: '#0e1117',
   surface: '#151a23',
   text: '#e6edf5',
@@ -154,29 +157,30 @@ export const LIGHT: Palette = {
     unknown_symbol: '#d92c2c',
   },
   edge: {
-    default: 'rgba(60, 80, 110, 0.3)',
-    structural: 'rgba(50, 72, 104, 0.42)',
-    contains: 'rgba(63, 111, 216, 0.34)',
-    defines: 'rgba(184, 121, 26, 0.42)',
-    imports: 'rgba(47, 134, 207, 0.42)',
-    exports: 'rgba(29, 159, 184, 0.42)',
-    calls: 'rgba(209, 89, 31, 0.52)',
-    constructs: 'rgba(200, 88, 40, 0.46)',
-    inherits: 'rgba(170, 120, 40, 0.46)',
-    implements: 'rgba(160, 140, 80, 0.44)',
-    overrides: 'rgba(194, 144, 31, 0.46)',
-    references: 'rgba(80, 100, 130, 0.36)',
-    reads: 'rgba(120, 135, 50, 0.38)',
-    writes: 'rgba(110, 128, 44, 0.38)',
-    returns_type: 'rgba(160, 130, 30, 0.36)',
-    accepts_type: 'rgba(150, 125, 40, 0.32)',
-    decorates: 'rgba(107, 82, 221, 0.42)',
-    routes_to: 'rgba(224, 80, 58, 0.42)',
-    tests: 'rgba(116, 66, 214, 0.44)',
-    documents: 'rgba(63, 119, 173, 0.4)',
-    semantically_related: 'rgba(30, 145, 120, 0.36)',
-    semantic: 'rgba(30, 145, 120, 0.36)',
+    default: 'rgba(60, 80, 110, 0.5)',
+    structural: 'rgba(50, 72, 104, 0.6)',
+    contains: 'rgba(63, 111, 216, 0.55)',
+    defines: 'rgba(184, 121, 26, 0.58)',
+    imports: 'rgba(47, 134, 207, 0.58)',
+    exports: 'rgba(29, 159, 184, 0.58)',
+    calls: 'rgba(209, 89, 31, 0.66)',
+    constructs: 'rgba(200, 88, 40, 0.6)',
+    inherits: 'rgba(170, 120, 40, 0.58)',
+    implements: 'rgba(160, 140, 80, 0.56)',
+    overrides: 'rgba(194, 144, 31, 0.58)',
+    references: 'rgba(80, 100, 130, 0.52)',
+    reads: 'rgba(120, 135, 50, 0.54)',
+    writes: 'rgba(110, 128, 44, 0.54)',
+    returns_type: 'rgba(160, 130, 30, 0.52)',
+    accepts_type: 'rgba(150, 125, 40, 0.48)',
+    decorates: 'rgba(107, 82, 221, 0.58)',
+    routes_to: 'rgba(224, 80, 58, 0.58)',
+    tests: 'rgba(116, 66, 214, 0.6)',
+    documents: 'rgba(63, 119, 173, 0.56)',
+    semantically_related: 'rgba(30, 145, 120, 0.6)',
+    semantic: 'rgba(30, 145, 120, 0.6)',
   },
+  unresolvedEdge: 'rgba(220, 38, 38, 0.72)',
   background: '#f7f9fc',
   surface: '#ffffff',
   text: '#131820',
@@ -216,17 +220,23 @@ export function nodeColorForKind(kind: NodeKind, palette: Palette): string {
   return palette.node[kind] ?? palette.node.default ?? '#7f8ea3';
 }
 
-/** Edge colors: semantic is lighter and dashed, inferred/ambiguous desaturated. */
+/**
+ * Edge colors.
+ *
+ * Three evidence classes, three visually distinct treatments: a resolved
+ * structural fact uses the edge type's own hue; semantic similarity uses the
+ * teal semantic hue (drawn dashed by the edge reducer); and an inferred or
+ * ambiguous edge uses the unresolved red, never a structural hue, so a
+ * guess can never be misread as a fact.
+ */
 export function edgeColor(
   type: EdgeType,
   provenance: Provenance,
   palette: Palette,
 ): string {
-  const base = palette.edge[type] ?? palette.edge.default;
-  if (isSemanticEdge(type)) return base;
-  if (UNRESOLVED_PROVENANCE[provenance]) return 'rgba(255, 122, 122, 0.36)';
-  if (provenance === 'resolved' || provenance === 'extracted') return base;
-  return base;
+  if (isSemanticEdge(type)) return palette.edge.semantic ?? palette.edge.default;
+  if (UNRESOLVED_PROVENANCE[provenance]) return palette.unresolvedEdge;
+  return palette.edge[type] ?? palette.edge.default;
 }
 
 export interface SizeScale {
@@ -234,29 +244,50 @@ export interface SizeScale {
   max: number;
 }
 
-export const DEFAULT_SIZE_SCALE: SizeScale = { min: 2.4, max: 16 };
+/**
+ * Node radii in **device pixels**.
+ *
+ * Sigma 3's `itemSizesReference: "screen"` setting makes `size` a pixel
+ * diameter, so these bounds are directly comparable to the canvas and cannot
+ * collapse to sub-pixel discs when the graph is normalised into [0,1]. A
+ * radius of 4..14 px keeps a 1000-node graph legible and clickable.
+ */
+export const DEFAULT_SIZE_SCALE: SizeScale = { min: 4, max: 14 };
+
+/** Larger bound used for community meta-nodes, which represent many entities. */
+export const AGGREGATE_SIZE_SCALE: SizeScale = { min: 12, max: 34 };
 
 /**
- * Bounded sqrt scale over degree/importance.
+ * Bounded scale over degree/importance.
  *
- * Squaring the input would make a handful of hubs the whole canvas; a square
- * root keeps a 100x degree range inside ~10x size range.
+ * The signal is the square root of importance plus the log of degree: a linear
+ * importance is heavily right-skewed (PageRank), so without the root a handful
+ * of hubs would swallow the whole size range. The result is clamped into
+ * `[0,1]` and mapped onto pixel radii, so a 1000x degree range stays inside a
+ * 3.5x size range.
  */
 export function sizeForImportance(importance: number, degree: number, scale: SizeScale): number {
-  const signal = Math.max(0, Math.sqrt(Math.max(importance, 0) + Math.log1p(Math.max(degree, 0))));
-  const upper = Math.sqrt(1 + Math.log1p(500));
+  const signal = Math.max(
+    0,
+    Math.sqrt(Math.max(importance, 0) * 10 + Math.log1p(Math.max(degree, 0)) / 2),
+  );
+  const upper = Math.sqrt(1 + Math.log1p(500) / 2);
   const normalized = Math.min(1, signal / upper);
-  return scale.min + (scale.max - scale.min) * Math.pow(normalized, 0.7);
+  return scale.min + (scale.max - scale.min) * normalized ** 0.7;
 }
 
-export function edgeSizeFor(
-  provenance: Provenance,
-  type: EdgeType,
-  base = 1,
-): number {
-  if (isSemanticEdge(type)) return Math.max(0.6, base * 0.75);
-  if (UNRESOLVED_PROVENANCE[provenance]) return Math.max(0.6, base * 0.8);
-  if (provenance === 'extracted') return base * 1.35;
-  if (provenance === 'resolved') return base * 1.2;
-  return base;
+/**
+ * Edge thickness in **device pixels**.
+ *
+ * A structural fact drawn from source reads stronger than evidence drawn from
+ * embeddings, which reads stronger than a guess: three distinct bands, all
+ * above the renderer-wide `minEdgeThickness` floor so nothing disappears
+ * entirely when zoomed out.
+ */
+export function edgeSizeFor(provenance: Provenance, type: EdgeType): number {
+  if (isSemanticEdge(type)) return 1.2;
+  if (UNRESOLVED_PROVENANCE[provenance]) return 1.1;
+  if (provenance === 'extracted') return 2.2;
+  if (provenance === 'resolved') return 1.8;
+  return 1.5;
 }
