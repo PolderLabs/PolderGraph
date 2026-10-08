@@ -187,6 +187,8 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 				ctx.cwd,
 			);
 			if (!context.ok || !context.data) return;
+			const contextData = context.data as { plan?: { skipped?: boolean } };
+			if (contextData.plan?.skipped) return;
 			return {
 				systemPrompt: [
 					...event.systemPrompt,

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..errors import API_VERSION
+from .context_plan import ContextPlan
 
 if TYPE_CHECKING:
     from .service import QueryService
@@ -48,6 +49,7 @@ class ContextResult:
     unresolved: list[dict[str, Any]] = field(default_factory=list)
     retrieval: dict[str, bool] = field(default_factory=dict)
     routing: dict[str, Any] = field(default_factory=dict)
+    plan: ContextPlan | None = None
     token_estimate: int = 0
     truncated: bool = False
 
@@ -64,6 +66,7 @@ class ContextResult:
             "unresolved": self.unresolved,
             "retrieval": self.retrieval,
             "routing": self.routing,
+            "plan": self.plan.to_dict() if self.plan else None,
             "token_estimate": self.token_estimate,
             "truncated": self.truncated,
         }

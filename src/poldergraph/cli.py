@@ -739,7 +739,7 @@ def search(
 @app.command()
 def explain(
     entity: str = typer.Argument(..., help="Entity ID, qualified name or path."),
-    root: Optional[Path] = typer.Option(None, "--root", help="Repository root."),
+    root: Path | None = typer.Option(None, "--root", help="Repository root."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Show identity, ownership, relations, neighbors and metrics for an entity."""
@@ -759,7 +759,7 @@ def explain(
             else:
                 _print_explain(remote)
             return
-        workspace, repo, service = build_service(root, need_backend=True)
+        workspace, _repo, service = build_service(root, need_backend=True)
         data = service.explain(entity)
         payload = envelope(command=command, index=freshness_payload(service), data=data)
         if json_output:
@@ -984,13 +984,25 @@ def impact(
 def context(
     query: str = typer.Argument(..., help="Question or task description."),
     budget: int = typer.Option(6000, "--budget", help="Token budget for the context pack."),
-    root: Optional[Path] = typer.Option(None, "--root", help="Repository root."),
+    root: Path | None = typer.Option(None, "--root", help="Repository root."),
     json_output: bool = typer.Option(True, "--json/--no-json", help="Machine-readable output."),
 ) -> None:
     """Agent-optimized repository context under a token budget."""
     command = "context"
     workspace = None
     try:
+        from .retrieval.context_plan import plan_context
+
+        plan = plan_context(query, budget)
+        if plan.skipped:
+            workspace, _repo, service = build_service(root, need_backend=False)
+            result = service.context(query, token_budget=budget).to_dict()
+            payload = envelope(command=command, index=freshness_payload(service), data=result)
+            if json_output:
+                emit_json(payload)
+            else:
+                typer.echo("No repository context needed for this message.")
+            return
         remote = try_daemon("context", {"query": query, "token_budget": budget}, root)
         if isinstance(remote, _DaemonRejection):
             emit_json(envelope(command=command, error=UsageError(
@@ -1013,7 +1025,7 @@ def context(
                 for entity in remote.get("entities", []):
                     typer.echo(entity_line(_Simple(entity)))
             return
-        workspace, repo, service = build_service(root, need_backend=True)
+        workspace, _repo, service = build_service(root, need_backend=True)
         result = service.context(query, token_budget=budget)
         data = result.to_dict()
         from .memory import MemoryStore, add_memories_to_context

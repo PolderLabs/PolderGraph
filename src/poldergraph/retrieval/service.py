@@ -19,6 +19,7 @@ from ..models.entity import Entity
 from ..storage.repository import Repository
 from ..storage.sqlite import get_meta
 from .context import ContextResult, pack_context
+from .context_plan import plan_context
 from .lexical import Candidate, exact_matches, lexical_candidates
 from .rerank import RankedResult, dedupe_results, detect_intent, fuse
 from .semantic import neighbors_of, semantic_candidates
@@ -560,9 +561,29 @@ class QueryService:
     ) -> ContextResult:
         """Build the canonical agent context pack."""
         budget = token_budget or self.config.retrieval.default_context_tokens
-        response = self.search(query, limit=30, filters=filters, include_structural_context=True)
+        plan = plan_context(query, budget)
+        if plan.skipped:
+            roots = self.repo.list_roots()
+            freshness = self.freshness()
+            return ContextResult(
+                query=query,
+                index={
+                    "root": roots[0]["path"] if roots else ".",
+                    **freshness,
+                    "context_skipped": True,
+                },
+                plan=plan,
+            )
+        budget = plan.budget
+        response = self.search(
+            query,
+            limit=30,
+            filters=filters,
+            include_semantic="semantic" in plan.lanes,
+            include_structural_context="structural" in plan.lanes,
+        )
         roots = self.repo.list_roots()
-        return pack_context(
+        result = pack_context(
             self,
             query,
             response,
@@ -571,6 +592,8 @@ class QueryService:
             freshness=self.freshness(),
             degraded=response.degraded,
         )
+        result.plan = plan
+        return result
 
     # ------------------------------------------------------------- utilities
 

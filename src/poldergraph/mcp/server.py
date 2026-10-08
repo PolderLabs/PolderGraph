@@ -194,12 +194,20 @@ def build_server(root: Path | None = None) -> Any:
 
         This is the preferred first tool for broad repository questions.
         """
+        from ..retrieval.context_plan import plan_context
         from ..retrieval.service import SearchFilters
 
         def run():
+            budget = max(500, min(int(token_budget), MAX_BUDGET_TOKENS))
+            plan = plan_context(query, budget)
+            if plan.skipped:
+                service = session.service(need_backend=False)
+                result = service.context(query, token_budget=budget).to_dict()
+                result["memories"] = []
+                result["memories_learned"] = 0
+                return _envelope("pg_context") | {"data": result}
             service = session.service(need_backend=True)
             filters = SearchFilters(kinds=kinds or [], languages=languages or [])
-            budget = max(500, min(int(token_budget), MAX_BUDGET_TOKENS))
             result = service.context(query, token_budget=budget, filters=filters).to_dict()
             from ..memory import (
                 MemoryStore,
