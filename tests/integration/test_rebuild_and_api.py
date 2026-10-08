@@ -165,6 +165,33 @@ class TestDashboardApi:
         assert stale["pending_changes"] > 0
         assert stale["source_read_required"] is True
 
+    def test_freshness_detects_same_size_edit_with_older_mtime(self, indexed_workspace):
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+
+        repo = Repository(indexed_workspace.con)
+        service = QueryService(
+            repo,
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        source = indexed_workspace.root / "pkg" / "auth.py"
+        original = source.read_text()
+        source.write_text(original.replace("Validate", "Verifies", 1))
+        indexed = repo.get_file(indexed_workspace.root_id(), "pkg/auth.py")
+        assert indexed is not None
+        import os
+
+        old_mtime = source.stat().st_mtime_ns + 1_000_000_000
+        repo.con.execute(
+            "UPDATE files SET mtime_ns=? WHERE root_id=? AND path=?",
+            (old_mtime, indexed_workspace.root_id(), "pkg/auth.py"),
+        )
+        source_mtime = old_mtime - 2_000_000_000
+        os.utime(source, ns=(source_mtime, source_mtime))
+        assert service.freshness()["fresh"] is False
+
     def test_global_graph_payload_shape(self, api_client):
         data = api_client.get("/api/graph/global?limit=50").json()["data"]
         assert data["nodes"] and data["edges"]
