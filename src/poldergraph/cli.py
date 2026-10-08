@@ -1415,17 +1415,17 @@ def upgrade(
 
         # Determine the install source. For release installs, prefer the
         # PyPI-style sdist/wheel from GitHub releases. For git installs,
-        # fall back to the git+https source.
-        source = f"poldergraph @ git+https://github.com/PolderLabs/PolderGraph.git@v{latest}"
+        # fall back to the git+https source with [all] extras.
+        source = f"poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v{latest}"
         asset_urls = [
             a.get("browser_download_url", "")
             for a in release.get("assets", [])
             if a.get("name", "").endswith((".whl", ".tar.gz"))
         ]
         if asset_urls:
-            # Prefer wheel over sdist
+            # Prefer wheel over sdist; append [all] to get all extras
             wheel = next((u for u in asset_urls if u.endswith(".whl")), asset_urls[0])
-            source = wheel
+            source = f"poldergraph[all] @ {wheel}"
 
         uv_cmd = ["uv", "tool", "install", "--force", "--upgrade", source]
         result = subprocess.run(uv_cmd, capture_output=True, text=True, timeout=300)
