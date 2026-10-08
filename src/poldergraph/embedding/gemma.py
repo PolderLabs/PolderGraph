@@ -509,6 +509,14 @@ def create_backend(config: Any, *, cache_dir: Path | None = None, offline: bool 
         )
 
     if backend_name == "api":
+        if (
+            offline
+            or not config.embedding.remote_authorized
+            or not config.embedding.endpoint_authorized
+        ):
+            from .protocol import DisabledBackend
+
+            return DisabledBackend("remote embeddings are not authorized for this workspace")
         from .openai_compatible import OpenAICompatibleBackend
 
         return OpenAICompatibleBackend(

@@ -7,11 +7,13 @@ bytes changed, so formatting churn never forces re-embedding.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from ..discovery.scanner import DiscoveredFile
-from ..embedding.representation import normalize_representation, representation_for
+from ..embedding.representation import normalize_representation
 from ..storage.repository import Repository
 from ..storage.schema import INDEX_FORMAT_VERSION
 
@@ -25,6 +27,7 @@ class UpdatePlan:
     unchanged: list[DiscoveredFile] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     stale_format: bool = False
+    embedding_space_changed: bool = False
 
     @property
     def to_index(self) -> list[DiscoveredFile]:
@@ -32,7 +35,10 @@ class UpdatePlan:
 
     @property
     def has_work(self) -> bool:
-        return bool(self.added or self.changed or self.removed or self.stale_format)
+        return bool(
+            self.added or self.changed or self.removed or self.stale_format
+            or self.embedding_space_changed
+        )
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -41,6 +47,7 @@ class UpdatePlan:
             "unchanged": len(self.unchanged),
             "removed": len(self.removed),
             "stale_format": self.stale_format,
+            "embedding_space_changed": self.embedding_space_changed,
         }
 
 
@@ -51,6 +58,7 @@ def plan_update(
     root_id: str,
     verify_hashes: bool = True,
     force: bool = False,
+    embedding_space_id: str | None = None,
 ) -> UpdatePlan:
     """Compare the filesystem against the index and plan the work."""
     plan = UpdatePlan()
@@ -63,6 +71,13 @@ def plan_update(
     if not index_format_current(repo):
         plan.stale_format = True
         force = True
+    if embedding_space_id is not None:
+        from ..storage.sqlite import get_meta
+
+        plan.embedding_space_changed = (
+            get_meta(repo.con, "embedding_space_id") != embedding_space_id
+        )
+        force = force or plan.embedding_space_changed
     known = {record["path"]: record for record in repo.all_files(root_id)}
 
     for file in discovered:
@@ -104,6 +119,28 @@ def _hash_file(file: DiscoveredFile) -> str:
         return content_hash(file.abs_path.read_bytes())
     except OSError:
         return ""
+
+
+def embedding_space_fingerprint(backend: Any) -> str | None:
+    """Return a stable, secret-free identity for all vector-space settings."""
+    if backend is None or not backend.capabilities():
+        return None
+    info = backend.model_info()
+    from ..embedding.representation import REPRESENTATION_VERSION
+
+    identity = {
+        "backend": info.backend,
+        "model_id": info.model_id,
+        "revision": info.revision,
+        "dimensions": info.dimensions,
+        "normalize": info.normalize,
+        "prompt_query": info.prompt_query,
+        "prompt_document": info.prompt_document,
+        "representation_version": REPRESENTATION_VERSION,
+        "task_policy": ["document", "query"],
+    }
+    raw = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(raw).hexdigest()
 
 
 def semantic_input_changed(old_hash: str | None, new_text: str) -> bool:
