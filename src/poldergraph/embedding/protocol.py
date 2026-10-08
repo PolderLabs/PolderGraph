@@ -192,11 +192,12 @@ def select_device(preference: str = "auto") -> str:
                 if hasattr(torch.cuda, "mem_get_info")
                 else total_gpu_bytes
             )
-            # The model weights alone need ~2 GB GPU. Embedding inference
-            # allocates ~2 GB more during forward pass. PyTorch CUDA allocator
-            # overhead adds ~1 GB. Require 6 GB total and 4 GB free.
+            # The model weights need ~1.6 GB GPU. During batched inference the
+            # PyTorch CUDA allocator fragments memory, and the real peak usage
+            # is ~4.5 GB. Require 6 GB total and 3 GB free so the GPU is only
+            # used when it can comfortably hold the model plus batches.
             MIN_TOTAL_GPU = 6 * 1024 * 1024 * 1024
-            MIN_FREE_GPU = 4 * 1024 * 1024 * 1024
+            MIN_FREE_GPU = 3 * 1024 * 1024 * 1024
             if total_gpu_bytes >= MIN_TOTAL_GPU and free_gpu_bytes >= MIN_FREE_GPU:
                 return "cuda"
             # GPU exists but not enough memory — fall through to CPU.

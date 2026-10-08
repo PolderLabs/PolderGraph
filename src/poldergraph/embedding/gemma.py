@@ -72,6 +72,7 @@ class NativeGemmaBackend(EmbeddingBackend):
         self._revision: str | None = revision
         self._prompts: dict[str, str] = {}
         self._loaded_modalities: set[str] = {"text"}
+        self._force_cpu: bool = False
 
     # -------------------------------------------------------------- loading
 
@@ -90,7 +91,7 @@ class NativeGemmaBackend(EmbeddingBackend):
                 remediation="Install the semantic extra: uv pip install 'poldergraph[semantic]'",
             ) from exc
 
-        kwargs: dict[str, Any] = {"trust_remote_code": True, "device": self.device}
+        kwargs: dict[str, Any] = {"trust_remote_code": True, "device": "cpu" if self._force_cpu else self.device}
         if self.requested_revision:
             kwargs["revision"] = self.requested_revision
         if self.cache_dir:
@@ -189,9 +190,22 @@ class NativeGemmaBackend(EmbeddingBackend):
             return []
         model = self._ensure_loaded()
         target = dimensions or self.dimensions
-        prepared = [self._apply_prompt(text, task) for text in items]
 
+        # Clear CUDA cache before large embedding batches. On small GPUs the
+        # warm-up pass and earlier operations fill the allocator cache, and
+        # without a clear the first large encode hits OOM even though the
+        # model fits.
+        using_cuda = "cuda" in str(getattr(model, "device", ""))
+        if using_cuda:
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        prepared = [self._apply_prompt(text, task) for text in items]
         prompt_name = task if task in self._prompts else None
+
         try:
             vectors = model.encode(
                 prepared,
@@ -202,14 +216,73 @@ class NativeGemmaBackend(EmbeddingBackend):
                 show_progress_bar=False,
             )
         except Exception as exc:
-            raise BackendUnavailableError(
-                f"Embedding failed: {exc}", remediation="Run: poldergraph doctor"
-            ) from exc
+            if "cuda" in str(exc).lower() or "out of memory" in str(exc).lower():
+                # GPU OOM: the GPU is too small for this batch. Set a flag
+                # so the next call loads on CPU directly, and retry now with
+                # the CPU model.
+                self._force_cpu = True
+                try:
+                    import torch
+                    self._model = None  # force reload on CPU
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                model = self._ensure_loaded()  # will load on CPU now
+                vectors = model.encode(
+                    prepared,
+                    batch_size=self.batch_size * 2,
+                    prompt_name=prompt_name,
+                    convert_to_numpy=True,
+                    normalize_embeddings=False,
+                    show_progress_bar=False,
+                )
+            else:
+                raise BackendUnavailableError(
+                    f"Embedding failed: {exc}", remediation="Run: poldergraph doctor"
+                ) from exc
 
         return [
             truncate_and_normalize([float(x) for x in vector], target, normalize=self.normalize)
             for vector in vectors
         ]
+
+    def _encode_chunked(
+        self,
+        model: Any,
+        prepared: list[str],
+        *,
+        prompt_name: str | None = None,
+        target: int,
+    ) -> Any:
+        """Encode in small chunks with cache clearing between them.
+
+        Used as a fallback when the full batch OOMs on a small GPU.
+        """
+        import torch
+
+        # Use a very small chunk size on CUDA to stay within memory.
+        chunk_size = min(16, max(1, self.batch_size // 4))
+        all_chunks: list[list[float]] = []
+        for start in range(0, len(prepared), chunk_size):
+            chunk = prepared[start : start + chunk_size]
+            torch.cuda.empty_cache()
+            try:
+                vectors = model.encode(
+                    chunk,
+                    batch_size=chunk_size,
+                    prompt_name=prompt_name,
+                    convert_to_numpy=True,
+                    normalize_embeddings=False,
+                    show_progress_bar=False,
+                )
+                for vec in vectors:
+                    all_chunks.append(truncate_and_normalize([float(x) for x in vec], target, normalize=self.normalize))
+            except Exception as exc:
+                raise BackendUnavailableError(
+                    f"Embedding failed even with chunked batches ({chunk_size}/batch): {exc}",
+                    remediation="Run: poldergraph doctor",
+                ) from exc
+        return all_chunks
 
     def embed_query(self, text: str, *, dimensions: int | None = None) -> list[float]:
         """Embed a search query with the query role."""
