@@ -11,18 +11,18 @@ import os
 from pathlib import Path
 from typing import Any
 
-# Set HF_HUB_OFFLINE before any huggingface_hub import when the model is
-# already cached. This avoids a 60-second Hub API round-trip on every CLI
-# invocation. The check runs once at module import time.
-try:
-    from huggingface_hub.constants import HF_HUB_CACHE
-
-    _default_model_id = "google/embeddinggemma-2"
-    _model_cache = Path(HF_HUB_CACHE) / f"models--{_default_model_id.replace('/', '--')}"
-    if _model_cache.is_dir() and any(_model_cache.iterdir()):
-        os.environ.setdefault("HF_HUB_OFFLINE", "1")
-except Exception:
-    pass
+# CRITICAL: Set HF_HUB_OFFLINE *before* importing anything from huggingface_hub.
+# The hub module caches the env var state at import time, so importing
+# huggingface_hub.constants (which triggers the cache read) before setting
+# the flag means the flag is ignored for that process lifetime.
+#
+# We check the default cache directory directly (without importing huggingface_hub)
+# to see if the model is already downloaded.
+_HF_HUB_CACHE = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface") / "hub")
+_default_model_id = "google/embeddinggemma-2"
+_model_cache_dir = _HF_HUB_CACHE / f"models--{_default_model_id.replace('/', '--')}"
+if _model_cache_dir.is_dir() and any(_model_cache_dir.iterdir()):
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 from ..errors import BackendUnavailableError
 from .protocol import (

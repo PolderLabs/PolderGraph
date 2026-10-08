@@ -99,21 +99,26 @@ def init(
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Create the index and run complete indexing."""
+    from .progress import ProgressDisplay, QuietProgress
+
     command = "init"
+    p = QuietProgress() if (json_output or not sys.stderr.isatty()) else ProgressDisplay()
     try:
         overrides = _overrides(dimensions=dimensions, backend=embedding_backend, media=media)
         root = (path or Path.cwd()).resolve()
         if root.is_file():
             root = root.parent
 
+        p.start_stage("Setting up index directory")
         index_existed = (root / ".poldergraph" / "index.sqlite3").exists()
         if force and index_existed:
             from .workspace import remove_index
-
             remove_index(root / ".poldergraph")
+            p.finish_stage(detail="existing index removed")
 
         config = Config()
         create_index(root, config)
+        p.finish_stage(detail=str(root / ".poldergraph"))
 
         from .agents.setup import setup_agent_guidance
         from .embedding.gemma import create_backend
@@ -125,39 +130,49 @@ def init(
         repo = Repository(workspace.con)
         backend = None
         degraded: list[str] = []
+
         if workspace.config.embedding.backend != "none":
+            p.start_stage("Loading embedding model")
             try:
                 backend = create_backend(workspace.config, cache_dir=None)
-                # Force model acquisition now so the first query is fast.
-                backend.model_info()
+                info = backend.model_info()
+                p.finish_stage(detail=f"{info.model_id} @ {info.dimensions}d on {_device_label(backend)}")
             except PolderGraphError as exc:
                 degraded.append(exc.message)
                 backend = None
+                p.finish_stage(status="skipped", detail=str(exc.message)[:80])
+        else:
+            p.add_stage("Embedding model")
+            p.finish_stage(status="skipped", detail="disabled in config")
 
+        p.start_stage("Discovering files")
         indexer = Indexer(workspace, backend=backend)
         indexer.ensure_root()
         discovered = indexer.discover()
+        p.finish_stage(detail=f"{len(discovered)} files found")
 
-        def progress(stage: str, done: int, total: int) -> None:
-            if json_output or not sys.stderr.isatty():
-                return
-            width = 24
-            filled = int(width * done / total) if total else 0
-            sys.stderr.write(
-                f"\r  {stage:<10} [{'#' * filled}{'.' * (width - filled)}] {done}/{total}"
-            )
-            sys.stderr.flush()
-
+        p.start_stage("Parsing and indexing")
         stats = indexer.run(discovered)
-        if not json_output and sys.stderr.isatty():
-            sys.stderr.write("\r" + " " * 70 + "\r")
+        p.finish_stage(
+            detail=f"{stats.entities_written} entities, {stats.edges_written} edges, "
+            f"{stats.embeddings_written} embeddings"
+        )
 
+        p.start_stage("Building graph")
         graph = run_graph_stage(workspace, workspace.config, repo, backend)
+        communities = sum(len(c.memberships) for c in graph.communities)
+        semantic = graph.semantic_edges.created
+        p.finish_stage(detail=f"{communities} communities, {semantic} semantic edges")
 
         _ensure_gitignore(root)
         agent_result = None
         if not no_agent:
+            p.start_stage("Writing agent guidance")
             agent_result = setup_agent_guidance(root, workspace.config)
+            written = ", ".join(agent_result.get("written", [])) or "nothing"
+            p.finish_stage(detail=written)
+
+        p.done()
 
         payload = envelope(
             command=command,
@@ -177,13 +192,19 @@ def init(
             _print_init_summary(root, stats, graph, repo, agent_result, degraded + stats.degraded)
         workspace.close()
     except PolderGraphError as exc:
+        p.error(exc.message)
+        if exc.remediation:
+            typer.secho(f"  -> {exc.remediation}", fg=typer.colors.YELLOW, err=True)
         if json_output:
             emit_error(command, exc)
-        else:
-            typer.secho(f"error: {exc.message}", fg=typer.colors.RED, err=True)
-            if exc.remediation:
-                typer.secho(f"  -> {exc.remediation}", fg=typer.colors.YELLOW, err=True)
         raise typer.Exit(int(exc.exit_code))
+
+
+def _device_label(backend: Any) -> str:
+    """Short label for the device an embedding backend selected."""
+    info = backend.model_info()
+    device = getattr(backend, "device", None) or "unknown"
+    return f"{device}"
 
 
 def model_payload_for(workspace: Any) -> dict[str, Any]:
@@ -251,7 +272,10 @@ def update(
     offline: bool = typer.Option(False, "--offline", help="Forbid network access."),
 ) -> None:
     """Incrementally update the index."""
+    from .progress import ProgressDisplay, QuietProgress
+
     command = "update"
+    p = QuietProgress() if (json_output or quiet or not sys.stderr.isatty()) else ProgressDisplay()
     workspace = None
     try:
         from .embedding.gemma import create_backend
@@ -260,21 +284,64 @@ def update(
         from .indexing.pipeline import Indexer
         from .storage.repository import Repository
 
+        p.start_stage("Opening index")
         workspace, repo, _ = build_service(path, offline=offline)
+        p.finish_stage(detail=str(workspace.index_dir))
+
         indexer = Indexer(workspace, backend=None)
         if workspace.config.embedding.backend != "none":
+            p.start_stage("Loading embedding model")
             try:
                 indexer.backend = create_backend(workspace.config, cache_dir=None, offline=offline)
+                info = indexer.backend.model_info()
+                p.finish_stage(detail=f"{info.model_id} @ {info.dimensions}d on {_device_label(indexer.backend)}")
             except PolderGraphError as exc:
                 indexer.backend = None
                 if not quiet and not json_output:
-                    typer.secho(f"warning: {exc.message}", fg=typer.colors.YELLOW, err=True)
+                    p.warning(exc.message)
+                p.finish_stage(status="skipped", detail=str(exc.message)[:80])
 
+        p.start_stage("Scanning for changes")
         discovered = indexer.discover()
         plan = plan_update(repo, discovered, root_id=workspace.root_id(), force=force)
-        stats = indexer.run(discovered, changed=plan.to_index, removed_paths=plan.removed)
-        stats.files_skipped = len(plan.unchanged)
+        changed = len(plan.to_index)
+        unchanged = len(plan.unchanged)
+        removed = len(plan.removed)
+        p.finish_stage(detail=f"{changed} changed, {unchanged} unchanged, {removed} removed")
+
+        if not plan.has_work:
+            p.done()
+            payload = envelope(
+                command=command,
+                index={"fresh": True, **model_payload_for(workspace)},
+                data={"plan": plan.summary(), "index": {"changed": 0}, "graph": {}},
+            )
+            if json_output:
+                emit_json(payload)
+            elif not quiet:
+                typer.echo("Nothing to update.")
+            workspace.close()
+            return
+
+        if changed > 0:
+            p.start_stage("Parsing and indexing")
+            stats = indexer.run(discovered, changed=plan.to_index, removed_paths=plan.removed)
+            stats.files_skipped = unchanged
+            p.finish_stage(
+                detail=f"{stats.entities_written} entities, {stats.edges_written} edges, "
+                f"{stats.embeddings_written} embeddings"
+            )
+        else:
+            stats = indexer.run(discovered, changed=[], removed_paths=plan.removed)
+            stats.files_skipped = unchanged
+
+        p.start_stage("Building graph")
         graph = run_graph_stage(workspace, workspace.config, repo, indexer.backend)
+        communities = sum(len(c.memberships) for c in graph.communities)
+        semantic = graph.semantic_edges.created
+        p.finish_stage(detail=f"{communities} communities, {semantic} semantic edges")
+
+        p.done()
 
         payload = envelope(
             command=command,
@@ -291,7 +358,7 @@ def update(
                 f"{stats.entities_written} entities, {stats.edges_written} edges"
             )
             for warning in stats.degraded:
-                typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW)
+                p.warning(warning)
     except PolderGraphError as exc:
         if json_output:
             emit_error(command, exc)
@@ -1413,19 +1480,9 @@ def upgrade(
         else:
             typer.echo(f"\nInstalling PolderGraph {latest}...")
 
-        # Determine the install source. For release installs, prefer the
-        # PyPI-style sdist/wheel from GitHub releases. For git installs,
-        # fall back to the git+https source with [all] extras.
+        # Determine the install source. Always use the git source with [all]
+        # extras — wheel URLs don't support extras syntax with uv tool install.
         source = f"poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v{latest}"
-        asset_urls = [
-            a.get("browser_download_url", "")
-            for a in release.get("assets", [])
-            if a.get("name", "").endswith((".whl", ".tar.gz"))
-        ]
-        if asset_urls:
-            # Prefer wheel over sdist; append [all] to get all extras
-            wheel = next((u for u in asset_urls if u.endswith(".whl")), asset_urls[0])
-            source = f"poldergraph[all] @ {wheel}"
 
         uv_cmd = ["uv", "tool", "install", "--force", "--upgrade", source]
         result = subprocess.run(uv_cmd, capture_output=True, text=True, timeout=300)
