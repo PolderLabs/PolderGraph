@@ -212,6 +212,43 @@ class TestPythonAdapter:
         assert result.imports[0].aliases == {"H": "Helper"}
 
 
+class TestJavaScriptReferences:
+    """A value read but never called is still a dependency.
+
+    Capturing only call targets meant `pathname.slice(MEDIA_PREFIX.length)`
+    produced no edge at all, so reverse dependency analysis reported that
+    nothing depended on `MEDIA_PREFIX`.
+    """
+
+    def test_bare_identifier_read_is_recorded(self, engine: ParseEngine):
+        source = b"const PREFIX = '/media/';\nfunction key(p) {\n  return p.slice(PREFIX.length);\n}\n"
+        result = engine.parse(source, "javascript", "w.js")
+        reads = [r for r in result.references if r.name == "PREFIX"]
+        assert reads, "reading a constant must produce a reference"
+        # Line 3 is `return p.slice(PREFIX.length);`.
+        assert reads[0].location.line == 3
+
+    def test_declaration_is_not_a_reference(self, engine: ParseEngine):
+        source = b"const PREFIX = '/media/';\n"
+        result = engine.parse(source, "javascript", "w.js")
+        assert not [r for r in result.references if r.name == "PREFIX"]
+
+    def test_property_key_is_not_a_reference(self, engine: ParseEngine):
+        source = b"function f(o) {\n  return { key: 1 };\n}\n"
+        result = engine.parse(source, "javascript", "w.js")
+        assert not [r for r in result.references if r.name == "key"]
+
+    def test_member_property_is_not_a_reference(self, engine: ParseEngine):
+        source = b"function f(o) {\n  return o.deep.prop;\n}\n"
+        result = engine.parse(source, "javascript", "w.js")
+        assert not [r for r in result.references if r.name == "prop"]
+
+    def test_template_substitution_is_recorded(self, engine: ParseEngine):
+        source = b"function f() {\n  return `${MEDIA_PREFIX}x`;\n}\n"
+        result = engine.parse(source, "javascript", "w.js")
+        assert [r for r in result.references if r.name == "MEDIA_PREFIX"]
+
+
 class TestIndexing:
     def test_entities_and_relations_are_created(self, indexed_workspace):
         from poldergraph.storage.repository import Repository

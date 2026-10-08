@@ -8,7 +8,6 @@ assumption.
 from __future__ import annotations
 
 import json
-import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -322,9 +321,62 @@ def dimension_benchmark(
     return {"dimensions": rows}
 
 
+def main(argv: list[str] | None = None) -> int:
+    """Run the benchmark and print a JSON report.
+
+    `docs/benchmark-methodology.md` documents this exact command, so the module
+    has to be runnable rather than import-only.
+    """
+    import argparse
+    import tempfile
+
+    parser = argparse.ArgumentParser(description="PolderGraph retrieval benchmarks")
+    parser.add_argument(
+        "--dest",
+        type=Path,
+        default=None,
+        help="Directory for the generated corpus (default: a temporary directory).",
+    )
+    parser.add_argument(
+        "--dimensions",
+        default="128,256,512,768",
+        help="Comma-separated embedding dimensions to compare.",
+    )
+    parser.add_argument(
+        "--skip-dimensions",
+        action="store_true",
+        help="Skip the embedding dimension comparison.",
+    )
+    args = parser.parse_args(argv)
+
+    temporary: tempfile.TemporaryDirectory[str] | None = None
+    if args.dest is None:
+        temporary = tempfile.TemporaryDirectory(prefix="poldergraph-bench-")
+        destination = Path(temporary.name)
+    else:
+        destination = args.dest
+        destination.mkdir(parents=True, exist_ok=True)
+
+    try:
+        report = run_benchmark(destination)
+        if not args.skip_dimensions:
+            sizes = [int(part) for part in args.dimensions.split(",") if part.strip()]
+            report["dimension_comparison"] = dimension_benchmark(destination, sizes)
+        print(json.dumps(report, indent=2, sort_keys=True))
+    finally:
+        if temporary is not None:
+            temporary.cleanup()
+    return 0
+
+
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
 def semantic_edge_calibration(service: Any, *, repo: Any) -> dict[str, Any]:
     """Report the degree distribution of materialized semantic edges."""
-    from poldergraph.config.models import Config
     from poldergraph.graph.builder import compute_semantic_edges
 
     config = service.config
@@ -345,3 +397,7 @@ def semantic_edge_calibration(service: Any, *, repo: Any) -> dict[str, Any]:
         "noisy_hubs": hubs,
         "degree_histogram": {str(value): values.count(value) for value in set(values)},
     }
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

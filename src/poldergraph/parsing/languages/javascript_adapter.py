@@ -91,6 +91,9 @@ class JavaScriptAdapter:
         if node_type == "call_expression":
             self._record_call(source, node, result, parent, path)
 
+        if node_type == "identifier":
+            self._record_identifier(source, node, result, parent, path)
+
         self._visit(source, node, result, parent, scope)
 
     # ------------------------------------------------------------- symbols
@@ -386,6 +389,32 @@ class JavaScriptAdapter:
                             )
                         )
 
+    def _record_identifier(
+        self, source: bytes, node: Node, result: ParseResult, parent: int | None, path: str
+    ) -> None:
+        """Record a bare identifier read as a reference to that symbol.
+
+        Without this, `pathname.slice(MEDIA_PREFIX.length)` produced no edge to
+        `MEDIA_PREFIX` at all: only call targets and members were captured, so a
+        value read but never invoked left no trace and reverse dependency
+        analysis reported "nothing depends on this". Declaration sites, property
+        keys and object-literal labels are not reads and are excluded.
+        """
+        if parent is None or _is_declaration_name(node):
+            return
+        text = node_text(source, node).strip()
+        if not text:
+            return
+        result.references.append(
+            Reference(
+                name=text,
+                edge_type=EdgeType.REFERENCES,
+                source_symbol_index=parent,
+                location=self._loc(node, path),
+                provenance=Provenance.EXTRACTED,
+            )
+        )
+
     def _record_call(
         self, source: bytes, node: Node, result: ParseResult, parent: int | None, path: str
     ) -> None:
@@ -472,6 +501,47 @@ def _leading_comment(source: bytes, node: Node) -> str | None:
             return " ".join(text.split()) or None
         previous = previous.prev_named_sibling
     return None
+
+
+def _is_declaration_name(node: Node) -> bool:
+    """Whether this identifier *names* something rather than reading a value.
+
+    `const MEDIA_PREFIX = ...`, `function f()`, `{ key: value }` and
+    `import { a }` all mention a name without depending on it. Treating those
+    as references would make every declaration depend on itself and make
+    object keys look like dependencies.
+    """
+    parent = node.parent
+    if parent is None:
+        return False
+    kind = parent.type
+    if kind in {
+        "variable_declarator",
+        "function_declaration",
+        "generator_function_declaration",
+        "class_declaration",
+        "method_definition",
+        "formal_parameters",
+        "required_parameter",
+        "optional_parameter",
+        "rest_pattern",
+        "import_specifier",
+        "pair_pattern",
+        "catch_clause",
+    }:
+        return True
+    # Shorthand `{ key }` reads the variable `key`; `{ key: value }` does not
+    # read a symbol called `key`.
+    if kind in {"pair", "pair_pattern"}:
+        key_node = parent.child_by_field_name("key")
+        return key_node is not None and key_node.id == node.id
+    # `obj.prop` / `obj?.[expr]` — the property half is not a symbol read.
+    if kind in {"member_expression", "subscript_expression"}:
+        prop = parent.child_by_field_name("property")
+        return prop is not None and prop.id == node.id
+    if kind in {"field_definition", "property_identifier", "shorthand_property_identifier"}:
+        return True
+    return False
 
 
 def _is_constructor(text: str) -> bool:
