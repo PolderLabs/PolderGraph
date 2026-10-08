@@ -583,6 +583,9 @@ def serve(workspace: Workspace, *, watch: bool = False) -> None:
             flush=True,
         )
 
+    # Find a free port: try the configured port first, then scan forward.
+    port = _find_free_port(host, port)
+
     app = create_app(workspace, watch=watch)
 
     if watch:
@@ -600,3 +603,22 @@ def serve(workspace: Workspace, *, watch: bool = False) -> None:
         webbrowser.open(url)
 
     uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+def _find_free_port(host: str, preferred: int, *, max_attempts: int = 20) -> int:
+    """Return the first available port starting from ``preferred``."""
+    import socket
+
+    for port in range(preferred, preferred + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((host, port))
+                return port
+        except OSError:
+            continue
+    raise PolderGraphError(
+        f"Ports {preferred}–{preferred + max_attempts - 1} are all in use on {host}.",
+        code="INDEX_LOCKED",
+        remediation=f"Stop the process using port {preferred} or set ui.port in .poldergraph/config.toml",
+    )

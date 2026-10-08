@@ -260,7 +260,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 			content: z.string().min(1).describe("One concise, reusable fact, preference, decision, or workflow"),
 			scope: z.enum(["project", "user"]).default("project"),
 			kind: z.enum(["fact", "preference", "decision", "workflow", "reference"]).default("fact"),
-			tags: z.array(z.string()).max(20).default([]),
+			tags: z.array(z.string()).max(20).default(() => []),
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const args = ["memory", "add", params.content, "--scope", params.scope, "--kind", params.kind];

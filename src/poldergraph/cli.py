@@ -1041,62 +1041,178 @@ def setup(
     all_agents: bool = typer.Option(
         False, "--all", help="Set up every supported agent integration."
     ),
+    skip_init: bool = typer.Option(
+        False, "--skip-init", help="Skip running poldergraph init after setup."
+    ),
 ) -> None:
-    """Interactively detect and configure coding agents for this repository."""
+    """Interactive guided setup: configure embedding, detect agents, initialize index."""
+    import sys as _sys
+
     from .agents.setup import AGENT_ADAPTERS, detect_installed_agents, setup_agent_guidance
+    from .embedding.protocol import select_device, SUPPORTED_DIMENSIONS
 
     root = (target or Path.cwd()).resolve()
-    supported = [adapter.name for adapter in AGENT_ADAPTERS]
-    if all_agents and agent:
-        raise typer.BadParameter("Use either --all or --agent, not both.")
+    is_tty = _sys.stdin.isatty()
+    supported_agents = [adapter.name for adapter in AGENT_ADAPTERS]
+
+    typer.echo()
+    typer.secho("  ┌──────────────────────────────────────────────┐", fg=typer.colors.CYAN)
+    typer.secho("  │        PolderGraph Setup Wizard               │", fg=typer.colors.CYAN)
+    typer.secho("  └──────────────────────────────────────────────┘", fg=typer.colors.CYAN)
+    typer.echo()
+    typer.echo(f"  Repository: {root}")
+    typer.echo()
+
+    # --- Step 1: Embedding backend ---
+    typer.secho("  ── Step 1: Embedding Backend ──", fg=typer.colors.YELLOW)
+    typer.echo("  PolderGraph uses EmbeddingGemma 2 for semantic search.")
+    typer.echo("  The model is ~2 GB and downloads once to your local cache.")
+    typer.echo()
+
+    if not is_tty:
+        backend_choice = "native"
+        device_choice = "auto"
+        dims_choice = 256
+    else:
+        backend_choice = typer.prompt(
+            "  Embedding backend",
+            type=typer.Choice(["native", "ollama", "none"], case_sensitive=False),
+            default="native",
+        )
+        device_choice = "auto"
+        dims_choice = 256
+        if backend_choice == "native":
+            device_choice = typer.prompt(
+                "  Compute device (auto picks best available)",
+                type=typer.Choice(["auto", "cpu", "cuda", "mps"], case_sensitive=False),
+                default="auto",
+            )
+            resolved = select_device(device_choice)
+            typer.echo(f"  → Will use: {resolved}")
+            dims_choice = typer.prompt(
+                "  Embedding dimensions (lower = faster, higher = more precise)",
+                type=typer.Choice(["128", "256", "512", "768"]),
+                default="256",
+            )
+            dims_choice = int(dims_choice)
+        elif backend_choice == "ollama":
+            typer.echo("  Make sure Ollama is running locally with an embedding model.")
+            typer.echo("  Default: http://127.0.0.1:11434 / embeddinggemma")
+        elif backend_choice == "none":
+            typer.echo("  Semantic search disabled. Only lexical and structural retrieval available.")
+
+    typer.echo()
+
+    # --- Step 2: Agent detection ---
+    typer.secho("  ── Step 2: Agent Integrations ──", fg=typer.colors.YELLOW)
+    detected = detect_installed_agents(root)
+    if detected:
+        typer.echo(f"  Detected: {', '.join(detected)}")
+    else:
+        typer.echo("  No coding agents detected on this machine.")
+    typer.echo(f"  Supported: {', '.join(supported_agents)}")
+
+    selected_agents: list[str] = []
     if all_agents:
-        selected = supported
+        selected_agents = supported_agents
     elif agent:
-        invalid = [name for name in agent if name not in supported]
+        invalid = [name for name in agent if name not in supported_agents]
         if invalid:
             raise typer.BadParameter(
-                f"Unknown agent(s): {', '.join(invalid)}. Choose from: {', '.join(supported)}"
+                f"Unknown agent(s): {', '.join(invalid)}. Choose from: {', '.join(supported_agents)}"
             )
-        selected = list(dict.fromkeys(agent))
-    else:
-        detected = detect_installed_agents(root)
-        typer.echo(f"Repository: {root}")
-        if detected:
-            typer.echo(f"Detected installed agents (recommended): {', '.join(detected)}")
-        else:
-            typer.echo("No supported coding agent installation was detected.")
-        typer.echo(f"Supported integrations: {', '.join(supported)}")
-        if not sys.stdin.isatty():
-            raise typer.BadParameter(
-                "Interactive setup needs a terminal; pass --agent NAME or --all."
-            )
+        selected_agents = list(dict.fromkeys(agent))
+    elif is_tty:
         default = ",".join(detected) if detected else "none"
         answer = (
             typer.prompt(
-                "Choose integrations by name, 'all' for every integration, or 'none' for AGENTS.md only",
+                "  Choose integrations (comma-separated, 'all', or 'none')",
                 default=default,
             )
             .strip()
             .lower()
         )
         if answer in {"", "none"}:
-            selected = []
+            selected_agents = []
         elif answer == "all":
-            selected = supported
+            selected_agents = supported_agents
         else:
-            selected = list(
+            selected_agents = list(
                 dict.fromkeys(part.strip() for part in answer.split(",") if part.strip())
             )
-            invalid = [name for name in selected if name not in supported]
+            invalid = [name for name in selected_agents if name not in supported_agents]
             if invalid:
                 raise typer.BadParameter(
-                    f"Unknown agent(s): {', '.join(invalid)}. Choose from: {', '.join(supported)}"
+                    f"Unknown agent(s): {', '.join(invalid)}."
                 )
+    typer.echo()
 
-    result = setup_agent_guidance(root, Config(), targets=selected)
-    typer.echo(f"Wrote: {', '.join(result['written']) or 'nothing'}")
+    # --- Step 3: Dashboard config ---
+    typer.secho("  ── Step 3: Dashboard ──", fg=typer.colors.YELLOW)
+    default_port = 7432
+    if is_tty:
+        port_answer = typer.prompt("  Dashboard port", default=str(default_port))
+        try:
+            default_port = int(port_answer)
+        except ValueError:
+            default_port = 7432
+    typer.echo(f"  Dashboard will run at http://127.0.0.1:{default_port}")
+    typer.echo()
+
+    # --- Step 4: Apply config ---
+    typer.secho("  ── Step 4: Writing Configuration ──", fg=typer.colors.YELLOW)
+    from .config.loader import write_config
+    from .config.models import Config
+
+    config = Config()
+    config.embedding.backend = backend_choice  # type: ignore[assignment]
+    config.embedding.device = device_choice
+    config.index.dimensions = dims_choice
+    config.ui.port = default_port
+
+    index_dir = root / ".poldergraph"
+    index_dir.mkdir(parents=True, exist_ok=True)
+    write_config(config, index_dir)
+    typer.echo(f"  Config written to {index_dir / 'config.toml'}")
+
+    # --- Step 5: Agent instructions ---
+    typer.echo()
+    typer.secho("  ── Step 5: Agent Instructions ──", fg=typer.colors.YELLOW)
+    result = setup_agent_guidance(root, config, targets=selected_agents)
+    typer.echo(f"  Wrote: {', '.join(result['written']) or 'nothing'}")
     if result["skipped"]:
-        typer.echo(f"Skipped: {', '.join(result['skipped'])}")
+        typer.echo(f"  Skipped: {', '.join(result['skipped'])}")
+
+    # --- Step 6: Index ---
+    typer.echo()
+    typer.secho("  ── Step 6: Index ──", fg=typer.colors.YELLOW)
+    if skip_init:
+        typer.echo("  Skipped (--skip-init). Run 'poldergraph init' when ready.")
+    elif is_tty:
+        run_init = typer.confirm("  Run poldergraph init now?", default=True)
+        if run_init:
+            typer.echo("  Initializing index...")
+            typer.echo()
+            init(target=root, force=False, no_agent=True, dimensions=dims_choice,
+                 embedding_backend=backend_choice, media=True, json_output=False)
+        else:
+            typer.echo("  Skipped. Run 'poldergraph init' when ready.")
+    else:
+        typer.echo("  Non-interactive mode: run 'poldergraph init' separately.")
+
+    # --- Done ---
+    typer.echo()
+    typer.secho("  ── Setup Complete ──", fg=typer.colors.GREEN)
+    typer.echo(f"  Config:  {index_dir / 'config.toml'}")
+    typer.echo(f"  Agents:  {', '.join(selected_agents) or 'none (AGENTS.md only)'}")
+    typer.echo(f"  Dashboard: http://127.0.0.1:{default_port}")
+    typer.echo()
+    typer.echo("  Next steps:")
+    typer.echo(f"    poldergraph init       Index the repository")
+    typer.echo(f"    poldergraph ui         Open the dashboard")
+    typer.echo(f"    poldergraph mcp        Start the MCP server")
+    typer.echo(f"    poldergraph status     Check index health")
+    typer.echo()
 
 
 @app.command("setup-agent")

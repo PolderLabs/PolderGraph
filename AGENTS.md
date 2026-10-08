@@ -42,3 +42,32 @@ There is no user-facing phased roadmap. Within a pull request or coding session,
 ## Source of truth
 
 When code and documentation disagree, treat that as a bug. Update the implementation and the relevant documentation in the same change.
+
+<!-- poldergraph:start -->
+## PolderGraph repository intelligence
+
+This repository uses PolderGraph for local structural and semantic code intelligence.
+
+When a task depends on understanding repository structure, finding implementations,
+tracing dependencies, locating tests, or estimating change impact:
+
+1. Prefer the PolderGraph MCP tools when available.
+2. Start with `pg_status` and `pg_context`; context includes relevant shared user
+   preferences and this project's saved knowledge. Without MCP, run:
+   `poldergraph context "<your task or question>" --json`
+3. If the result says the code index is stale, run:
+   `poldergraph update --quiet`
+   then query again.
+4. Use `pg_memory_search` to recall preferences or prior decisions directly.
+   When the user states a lasting preference or you establish durable project
+   knowledge, save it with `pg_memory_add` using `user` or `project` scope.
+   Do this without interrupting the user; do not store secrets or transient task data.
+5. Use `poldergraph path "<A>" "<B>" --json` for relationship/path questions.
+6. Use `poldergraph explain "<symbol>" --json` for a focused symbol.
+7. Use `poldergraph impact "<symbol-or-path>" --json` before broad refactors.
+8. Read/edit the actual source files returned by PolderGraph; do not treat semantic
+   similarity as proof of a source-code dependency.
+9. After substantial source changes, run `poldergraph update --quiet`.
+
+Do not read `.poldergraph/index.sqlite3` directly.
+<!-- poldergraph:end -->

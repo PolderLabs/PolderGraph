@@ -167,7 +167,8 @@ def auto_batch_size(device: str, *, requested: int = 0) -> int:
 def select_device(preference: str = "auto") -> str:
     """Resolve the compute device, reporting what was selected.
 
-    CUDA is never required: CPU is always a valid fallback.
+    CUDA is never required: CPU is always a valid fallback. When auto-detecting,
+    CUDA is only selected if the GPU has enough free memory for the model (~2 GB).
     """
     if preference and preference != "auto":
         return preference
@@ -177,7 +178,13 @@ def select_device(preference: str = "auto") -> str:
         return "cpu"
     try:
         if torch.cuda.is_available():
-            return "cuda"
+            props = torch.cuda.get_device_properties(0)
+            free_mem = torch.cuda.mem_get_info(0)[0] if hasattr(torch.cuda, "mem_get_info") else props.total_memory
+            # The embedding model needs ~2 GB; require at least 3 GB free to
+            # leave headroom for PyTorch overhead and non-model allocations.
+            if free_mem >= 3 * 1024 * 1024 * 1024:
+                return "cuda"
+            # GPU exists but too little memory — fall through to CPU.
     except Exception:
         pass
     try:
