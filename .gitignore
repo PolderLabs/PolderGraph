@@ -31,5 +31,8 @@ Thumbs.db
 .mypy_cache/
 .ruff_cache/
 
-# Build artifacts (force-include handles wheel packaging)
-# web/dist/ is kept committed for development
+# The dashboard build outputs to src/poldergraph/web/dist (Vite outDir), which
+# is the copy the Python server serves and the wheel packages. web/dist was a
+# stale duplicate with mismatched asset hashes; ignore it so there is one source
+# of truth.
+web/dist/
