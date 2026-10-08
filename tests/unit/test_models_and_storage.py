@@ -190,6 +190,14 @@ class TestPathSafety:
 
 
 class TestVectorMath:
+    def test_api_model_ids_make_safe_distinct_vector_tables(self):
+        from poldergraph.storage.vectors import _vec_table_name
+
+        first = _vec_table_name(256, "api:text-embedding-3-small:abc123", "document")
+        second = _vec_table_name(256, "api:text-embedding-3-small:def456", "document")
+        assert first != second
+        assert first.replace("_", "").isalnum()
+
     def test_truncation_renormalizes(self):
         from poldergraph.embedding.protocol import truncate_and_normalize
 

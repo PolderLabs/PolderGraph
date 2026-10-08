@@ -8,8 +8,10 @@ brute-force backend rather than silently disabling semantic search.
 from __future__ import annotations
 
 import array
+import hashlib
 import json
 import math
+import re
 import sqlite3
 import struct
 from typing import Any, Protocol, runtime_checkable
@@ -144,7 +146,11 @@ def _vec_table_name(dimensions: int, model_id: str, task_type: str) -> str:
     Embeddings from different revisions/dimensions are never mixed or
     overwritten in place, per the data model contract.
     """
-    safe_model = model_id.replace("/", "_").replace("-", "_")
+    safe_model = re.sub(r"[^A-Za-z0-9_]", "_", model_id.replace("/", "_").replace("-", "_"))
+    # Keep established local model table names stable, while isolating arbitrary
+    # provider/model identifiers that would otherwise collide after sanitizing.
+    if re.search(r"[^A-Za-z0-9_/-]", model_id):
+        safe_model += "_" + hashlib.sha256(model_id.encode("utf-8")).hexdigest()[:12]
     return f"vec_{safe_model}_{task_type}_{dimensions}"
 
 
