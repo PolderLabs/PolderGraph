@@ -115,13 +115,13 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 		const work = (async () => {
 			const status = await runJson(["status"], cwd);
 			if (!status.ok && status.error?.code === "INDEX_MISSING") {
-				const initialized = await runJson(["init"], cwd);
+				const initialized = await runJson(["init", "--no-embed"], cwd);
 				if (!initialized.ok) throw new Error(formatResult(initialized));
 				return;
 			}
 			if (!status.ok) throw new Error(formatResult(status));
 			if (status.index?.fresh === false) {
-				const updated = await runJson(["update"], cwd);
+				const updated = await runJson(["update", "--offline"], cwd);
 				if (!updated.ok) throw new Error(formatResult(updated));
 			}
 		})();
@@ -183,7 +183,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 			await ensureIndex(ctx.cwd);
 
 			const context = await runJson(
-				["context", event.prompt, "--budget", String(CONTEXT_BUDGET)],
+				["context", event.prompt, "--budget", String(CONTEXT_BUDGET), "--offline"],
 				ctx.cwd,
 			);
 			if (!context.ok || !context.data) return;

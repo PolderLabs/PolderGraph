@@ -1005,6 +1005,7 @@ def context(
     consistency: str = typer.Option(
         "bounded", "--consistency", help="strict, bounded (default), or best_effort."
     ),
+    offline: bool = typer.Option(False, "--offline", help="Do not download models or call hosted providers."),
     root: Path | None = typer.Option(None, "--root", help="Repository root."),
     json_output: bool = typer.Option(True, "--json/--no-json", help="Machine-readable output."),
 ) -> None:
@@ -1026,7 +1027,7 @@ def context(
             else:
                 typer.echo("No repository context needed for this message.")
             return
-        remote = try_daemon(
+        remote = None if offline else try_daemon(
             "context", {"query": query, "token_budget": budget, "consistency": consistency}, root
         )
         if isinstance(remote, _DaemonRejection):
@@ -1051,7 +1052,9 @@ def context(
                 for entity in remote.get("entities", []):
                     typer.echo(entity_line(_Simple(entity)))
             return
-        workspace, _repo, service = build_service(root, need_backend=True)
+        workspace, _repo, service = build_service(root, need_backend=True, offline=offline)
+        if offline:
+            workspace.config.decisions.provider = "disabled"
         result = service.context(query, token_budget=budget, consistency=consistency)
         data = result.to_dict()
         from .memory import MemoryStore, add_memories_to_context

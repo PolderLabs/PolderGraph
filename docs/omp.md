@@ -2,7 +2,10 @@
 
 PolderGraph includes a native Oh My Pi (OMP) extension. It queries the local
 `poldergraph` CLI and the repository's canonical `.poldergraph` index; it does
-not maintain a second index or make separate network requests. OMP adds the
+not maintain a second index. OMP bootstraps a structural index without blocking
+on model downloads and retrieves context in offline mode; configure and warm a
+local model explicitly with `poldergraph update` if semantic results are wanted.
+OMP adds the
 returned context to its model prompt, which is handled by the model provider
 configured for that session.
 
