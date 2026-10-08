@@ -16,7 +16,7 @@ Options:
 - `--force` — discard existing index and rebuild
 - `--no-agent` — skip agent instruction generation
 - `--dimensions 128|256|512|768` — embedding dimensions (default 256)
-- `--embedding-backend native|ollama` — embedding backend (default native)
+- `--embedding-backend native|ollama|api|none` — embedding backend (default native)
 - `--include-media/--no-media` — index media files
 - `--json` — machine-readable output
 

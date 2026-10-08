@@ -97,7 +97,7 @@ def init(
     no_embed: bool = typer.Option(False, "--no-embed", help="Skip embedding; structural index only. Run 'poldergraph update' later to add vectors."),
     dimensions: int = typer.Option(256, "--dimensions", help="Embedding dimensions."),
     embedding_backend: str = typer.Option(
-        "native", "--embedding-backend", help="native or ollama."
+        "native", "--embedding-backend", help="native, ollama, api, or none."
     ),
     media: bool = typer.Option(True, "--include-media/--no-media", help="Index media files."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),

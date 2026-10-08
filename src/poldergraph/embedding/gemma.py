@@ -503,6 +503,20 @@ def create_backend(config: Any, *, cache_dir: Path | None = None, offline: bool 
             offline=offline,
         )
 
+    if backend_name == "api":
+        from .openai_compatible import OpenAICompatibleBackend
+
+        return OpenAICompatibleBackend(
+            endpoint=config.embedding.api_endpoint,
+            model=config.embedding.api_model,
+            dimensions=config.index.dimensions,
+            normalize=config.embedding.normalize,
+            timeout=config.embedding.api_timeout,
+            offline=offline,
+            authorized=config.embedding.remote_authorized,
+            endpoint_authorized=config.embedding.endpoint_authorized,
+        )
+
     if backend_name != "native":
         from .protocol import DisabledBackend
 

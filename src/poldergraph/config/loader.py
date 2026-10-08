@@ -180,6 +180,14 @@ def load_config(
     config.decisions.endpoint_authorized = (
         endpoint_origin is None or endpoint_origin in trusted_origins
     )
+    config.embedding.remote_authorized = (
+        config.privacy.allow_remote_embedding
+        and origins.get("privacy.allow_remote_embedding") in trusted_origins
+    )
+    config.embedding.endpoint_authorized = (
+        origins.get("embedding.api_endpoint") is None
+        or origins.get("embedding.api_endpoint") in trusted_origins
+    )
 
     return LoadedConfig(
         config=config,

@@ -42,7 +42,7 @@ class IndexConfig(BaseModel):
 
 
 class EmbeddingConfig(BaseModel):
-    backend: Literal["native", "ollama", "none"] = "native"
+    backend: Literal["native", "ollama", "api", "none"] = "native"
     model: str = EMBEDDING_MODEL
     batch_size: int = 0  # 0 == auto
     device: str = "auto"
@@ -50,6 +50,12 @@ class EmbeddingConfig(BaseModel):
     revision: str | None = None
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "embeddinggemma"
+    api_endpoint: str = "https://api.openai.com/v1"
+    api_model: str = "text-embedding-3-small"
+    api_timeout: float = 30.0
+    # Runtime-only consent: workspace config must not authorize repository text egress.
+    remote_authorized: bool = Field(default=False, exclude=True, repr=False)
+    endpoint_authorized: bool = Field(default=False, exclude=True, repr=False)
     max_tokens: int = 2048
 
 

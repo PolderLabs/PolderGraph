@@ -31,6 +31,9 @@ device = "auto"
 normalize = true
 ollama_host = "http://127.0.0.1:11434"
 ollama_model = "embeddinggemma"
+api_endpoint = "https://api.openai.com/v1"
+api_model = "text-embedding-3-small"
+api_timeout = 30.0
 max_tokens = 2048
 
 [semantic_edges]
@@ -99,12 +102,15 @@ POLDERGRAPH_DECISIONS__PROVIDER=typesafe
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `backend` | string | "native" | Embedding backend: "native", "ollama", "none" |
+| `backend` | string | "native" | Embedding backend: "native", "ollama", "api", "none" |
 | `model` | string | "google/embeddinggemma-2" | Model identifier |
 | `batch_size` | int | 0 | Embedding batch size (0 = auto) |
 | `device` | string | "auto" | Compute device: "auto", "cpu", "cuda", "mps" |
 | `normalize` | bool | true | L2-normalize vectors |
 | `ollama_host` | string | "http://127.0.0.1:11434" | Ollama server URL |
+| `api_endpoint` | string | "https://api.openai.com/v1" | OpenAI-compatible embeddings endpoint base URL |
+| `api_model` | string | "text-embedding-3-small" | Remote embedding model |
+| `api_timeout` | float | 30.0 | Remote request timeout in seconds |
 | `max_tokens` | int | 2048 | Maximum sequence length |
 
 ### `[semantic_edges]`
@@ -149,7 +155,7 @@ POLDERGRAPH_DECISIONS__PROVIDER=typesafe
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `allow_model_downloads` | bool | true | Allow downloading the embedding model |
-| `allow_remote_embedding` | bool | false | Allow remote embedding endpoints |
+| `allow_remote_embedding` | bool | false | Allow remote embedding endpoints (requires trusted user config or environment) |
 | `allow_remote_decisions` | bool | false | Trusted user-level consent for hosted decision providers; workspace config cannot grant consent |
 | `telemetry` | bool | false | Send telemetry (always false by default) |
 
