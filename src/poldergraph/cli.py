@@ -100,8 +100,14 @@ def init(
     ),
     media: bool = typer.Option(True, "--include-media/--no-media", help="Index media files."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+    quiet: bool = typer.Option(False, "--quiet", help="Print nothing on success."),
+    offline: bool = typer.Option(False, "--offline", help="Forbid network access."),
 ) -> None:
-    """Create the index and run complete indexing."""
+    """Create the index and run complete indexing.
+
+    Re-running init on an existing index performs an incremental update, as the
+    specification requires, unless --force requests a full rebuild.
+    """
     from .progress import ProgressDisplay, QuietProgress
 
     command = "init"
@@ -114,6 +120,21 @@ def init(
 
         p.start_stage("Setting up index directory")
         index_existed = (root / ".poldergraph" / "index.sqlite3").exists()
+        if index_existed and not force:
+            # An existing index is updated incrementally; re-parsing and
+            # re-embedding an unchanged tree is pure waste.
+            p.finish_stage(detail="existing index found; running incremental update")
+            typer.echo(
+                f"{root} is already indexed; running an incremental update. "
+                f"Use --force to rebuild from scratch."
+            )
+            return update(
+                path=root,
+                quiet=quiet,
+                force=False,
+                json_output=json_output,
+                offline=offline,
+            )
         if force and index_existed:
             from .workspace import remove_index
             remove_index(root / ".poldergraph")
