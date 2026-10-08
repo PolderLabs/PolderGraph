@@ -32,6 +32,14 @@ def test_provider_fails_closed_without_consent():
         backend.embed_texts(["private source"])
 
 
+def test_provider_rejects_plain_http_non_loopback_endpoint():
+    with pytest.raises(BackendUnavailableError, match="HTTPS"):
+        OpenAICompatibleBackend(
+            endpoint="http://example.test/v1", model="x", dimensions=2,
+            authorized=True, endpoint_authorized=True,
+        )
+
+
 def test_provider_sends_api_payload_and_normalizes_vectors(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     backend = OpenAICompatibleBackend(
@@ -64,3 +72,37 @@ def test_provider_rejects_wrong_vector_width(monkeypatch):
     })()
     with patch("urllib.request.urlopen", return_value=response), pytest.raises(BackendUnavailableError, match="width"):
         backend.embed_texts(["a"])
+
+
+def test_voyage_uses_provider_specific_auth_and_task_contract(monkeypatch):
+    monkeypatch.setenv("VOYAGE_API_KEY", "voyage-test")
+    backend = OpenAICompatibleBackend(
+        provider="voyage", dimensions=2, authorized=True, endpoint_authorized=True,
+    )
+    response = type("Response", (), {
+        "__enter__": lambda self: self,
+        "__exit__": lambda self, *args: None,
+        "read": lambda self: b'{"data":[{"index":0,"embedding":[3,4]}]}',
+    })()
+    with patch("urllib.request.urlopen", return_value=response) as request:
+        assert backend.embed_texts(["query"], task="query") == [[0.6, 0.8]]
+    sent = json.loads(request.call_args.args[0].data)
+    assert sent["input_type"] == "query"
+    assert sent["output_dimension"] == 2
+    assert sent["model"] == "voyage-3.5"
+    assert request.call_args.args[0].full_url == "https://api.voyageai.com/v1/embeddings"
+
+
+def test_provider_rejects_duplicate_vector_indexes(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    backend = OpenAICompatibleBackend(
+        endpoint="https://example.test/v1", model="x", dimensions=2,
+        authorized=True, endpoint_authorized=True,
+    )
+    response = type("Response", (), {
+        "__enter__": lambda self: self,
+        "__exit__": lambda self, *args: None,
+        "read": lambda self: b'{"data":[{"index":0,"embedding":[1,0]},{"index":0,"embedding":[0,1]}]}',
+    })()
+    with patch("urllib.request.urlopen", return_value=response), pytest.raises(BackendUnavailableError, match="indexes"):
+        backend.embed_texts(["a", "b"])

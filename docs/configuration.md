@@ -31,8 +31,9 @@ device = "auto"
 normalize = true
 ollama_host = "http://127.0.0.1:11434"
 ollama_model = "embeddinggemma"
-api_endpoint = "https://api.openai.com/v1"
-api_model = "text-embedding-3-small"
+api_provider = "openai"
+api_endpoint = ""
+api_model = ""
 api_timeout = 30.0
 max_tokens = 2048
 
@@ -108,10 +109,18 @@ POLDERGRAPH_DECISIONS__PROVIDER=typesafe
 | `device` | string | "auto" | Compute device: "auto", "cpu", "cuda", "mps" |
 | `normalize` | bool | true | L2-normalize vectors |
 | `ollama_host` | string | "http://127.0.0.1:11434" | Ollama server URL |
-| `api_endpoint` | string | "https://api.openai.com/v1" | OpenAI-compatible embeddings endpoint base URL |
-| `api_model` | string | "text-embedding-3-small" | Remote embedding model |
+| `api_endpoint` | string | provider default | Optional API base URL; custom endpoints must come from trusted config |
+| `api_model` | string | provider default | Remote embedding model |
+| `api_provider` | string | "openai" | API provider: "openai" or "voyage" |
 | `api_timeout` | float | 30.0 | Remote request timeout in seconds |
 | `max_tokens` | int | 2048 | Maximum sequence length |
+
+For OpenAI set `backend = "api"` and provide `OPENAI_API_KEY`. To use Voyage,
+set `api_provider = "voyage"` and provide `VOYAGE_API_KEY`; its API uses the
+provider-specific `input_type` and `output_dimension` fields. In both cases,
+remote transmission remains disabled until `allow_remote_embedding = true` is
+set in trusted user config or the host environment. Workspace config alone
+cannot authorize egress. Do not put API keys in TOML.
 
 ### `[semantic_edges]`
 

@@ -507,6 +507,7 @@ def create_backend(config: Any, *, cache_dir: Path | None = None, offline: bool 
         from .openai_compatible import OpenAICompatibleBackend
 
         return OpenAICompatibleBackend(
+            provider=config.embedding.api_provider,
             endpoint=config.embedding.api_endpoint,
             model=config.embedding.api_model,
             dimensions=config.index.dimensions,

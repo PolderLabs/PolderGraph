@@ -50,13 +50,21 @@ class EmbeddingConfig(BaseModel):
     revision: str | None = None
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "embeddinggemma"
-    api_endpoint: str = "https://api.openai.com/v1"
-    api_model: str = "text-embedding-3-small"
+    api_provider: Literal["openai", "voyage"] = "openai"
+    api_endpoint: str | None = None
+    api_model: str | None = None
     api_timeout: float = 30.0
     # Runtime-only consent: workspace config must not authorize repository text egress.
     remote_authorized: bool = Field(default=False, exclude=True, repr=False)
     endpoint_authorized: bool = Field(default=False, exclude=True, repr=False)
     max_tokens: int = 2048
+
+    @field_validator("api_timeout")
+    @classmethod
+    def _check_api_timeout(cls, value: float) -> float:
+        if not 0.1 <= value <= 120:
+            raise ValueError("api_timeout must be between 0.1 and 120 seconds")
+        return value
 
 
 class SemanticEdgeConfig(BaseModel):
