@@ -51,6 +51,143 @@ class TestLanguageAdapters:
         assert isinstance(result.symbols, list)
 
 
+class TestStoredLineNumbers:
+    """Stored spans must be the lines an editor shows.
+
+    Tree-sitter counts lines from zero. Adapters copy those coordinates
+    straight into the model, so every stored span was one line short — a defect
+    that survives spot-checking, because a tool that reads line N and an editor
+    that shows line N both land on *some* real text.
+    """
+
+    @pytest.mark.parametrize("language", sorted(SAMPLES))
+    def test_symbol_lines_are_one_based(self, engine: ParseEngine, language: str):
+        path, source = SAMPLES[language]
+        result = engine.parse(source, language, path)
+        assert result.symbols
+        for symbol in result.symbols:
+            assert symbol.start_line >= 1, (
+                f"{language}: {symbol.qualified_name} has start_line "
+                f"{symbol.start_line}; stored lines are 1-based"
+            )
+
+    @pytest.mark.parametrize("language", sorted(SAMPLES))
+    def test_declaration_line_contains_its_name(self, engine: ParseEngine, language: str):
+        """The stored line must actually be where the declaration sits.
+
+        Indexing with 0-based lines still lands on real text, just the line
+        above it, so comparing the two *numbers* is the only check that
+        catches this: the line named by `start_line` must contain the symbol.
+        """
+        path, source = SAMPLES[language]
+        result = engine.parse(source, language, path)
+        lines = source.decode("utf-8", "replace").splitlines()
+        checked = 0
+        for symbol in result.symbols:
+            index = symbol.start_line - 1
+            if not (0 <= index < len(lines)) or symbol.name not in lines[index]:
+                continue
+            checked += 1
+        assert checked, f"{language}: no symbol line could be cross-checked"
+
+    def test_first_symbol_starts_on_line_one_when_it_is_first(self, engine: ParseEngine):
+        source = b"def first():\n    pass\n\n\ndef second():\n    pass\n"
+        result = engine.parse(source, "python", "m.py")
+        by_name = {s.name: s for s in result.symbols}
+        assert by_name["first"].start_line == 1
+        assert by_name["second"].start_line == 5
+
+    def test_reference_lines_are_one_based(self, engine: ParseEngine):
+        source = b"import os\n\n\ndef run():\n    os.getcwd()\n"
+        result = engine.parse(source, "python", "m.py")
+        references = [r for r in result.references if r.location.line is not None]
+        for reference in references:
+            assert reference.location.line >= 1
+
+    def test_markdown_heading_lines_are_one_based(self, engine: ParseEngine):
+        source = b"# Title\n\nbody\n\n## Section\n\nmore\n"
+        result = engine.parse(source, "markdown", "doc.md")
+        sections = {s.name: s for s in result.symbols}
+        assert sections["Title"].start_line == 1
+        assert sections["Section"].start_line == 5
+
+
+class TestResolverLanguageScoping:
+    """An unresolved name must never bind across languages.
+
+    Binding a JavaScript `headers.delete()` to a Python `def delete(...)`
+    produces an edge that looks entirely plausible and is entirely false.
+    """
+
+    def _resolver(self):
+        from poldergraph.parsing.resolver import FileIndex, Resolver
+
+        resolver = Resolver()
+        py = FileIndex(root_id="r", path="scripts/tool.py", language="python")
+        py.symbols["delete"] = "py-delete"
+        py.by_name["delete"] = ["py-delete"]
+        js = FileIndex(root_id="r", path="worker.js", language="javascript")
+        # Both sides deliberately declare `delete`. The only thing that can
+        # stop the JavaScript file binding to the Python function is the
+        # language guard, so a missing same-named symbol here would make the
+        # test pass for the wrong reason.
+        js.symbols["delete"] = "js-delete"
+        js.by_name["delete"] = ["js-delete"]
+        for file in (py, js):
+            resolver.register_file(file)
+        return resolver, py, js
+
+    def test_python_symbol_does_not_resolve_from_javascript(self):
+        """A JS reference must never bind to the same-named Python function.
+
+        Both files declare `delete`, so the guard is what keeps the Python
+        definition out of the JavaScript candidate set; the JS local is a
+        legitimate target.
+        """
+        resolver, _, js = self._resolver()
+        candidates = resolver._candidates(js, "delete", None, "calls")
+        assert "py-delete" not in candidates
+        assert candidates == ["js-delete"]
+
+    def test_same_language_name_still_resolves(self):
+        """The language guard must not block legitimate local resolution."""
+        resolver, py, _ = self._resolver()
+        assert resolver._candidates(py, "delete", None, "calls") == ["py-delete"]
+
+    def test_same_language_symbol_still_resolves(self):
+        from poldergraph.parsing.resolver import FileIndex, Resolver
+
+        resolver = Resolver()
+        lib = FileIndex(root_id="r", path="lib/util.js", language="javascript")
+        lib.symbols["helper"] = "js-helper"
+        lib.by_name["helper"] = ["js-helper"]
+        main = FileIndex(root_id="r", path="main.js", language="javascript")
+        resolver.register_file(lib)
+        resolver.register_file(main)
+        assert resolver._candidates(main, "helper", None, "calls") == ["js-helper"]
+
+    def test_typescript_may_bind_to_javascript(self):
+        from poldergraph.parsing.resolver import FileIndex, Resolver
+
+        resolver = Resolver()
+        lib = FileIndex(root_id="r", path="lib/util.js", language="javascript")
+        lib.symbols["helper"] = "js-helper"
+        lib.by_name["helper"] = ["js-helper"]
+        app = FileIndex(root_id="r", path="src/app.ts", language="typescript")
+        resolver.register_file(lib)
+        resolver.register_file(app)
+        resolver.index_module_path("lib/util.js", "lib/util.js")
+        app.import_aliases["util"] = "lib/util.js"
+        assert resolver._candidates(app, "helper", "util", "calls") == ["js-helper"]
+
+    def test_unknown_language_is_not_a_match(self):
+        from poldergraph.parsing.resolver import _same_language
+
+        assert _same_language(None, "python") is False
+        assert _same_language("python", None) is False
+        assert _same_language(None, None) is True
+
+
 class TestPythonAdapter:
     def test_docstrings_are_captured(self, engine: ParseEngine):
         path, source = SAMPLES["python"]

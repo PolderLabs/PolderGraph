@@ -338,7 +338,7 @@ def update(
     try:
         from .embedding.gemma import create_backend
         from .graph import run_graph_stage
-        from .indexing.incremental import plan_update
+        from .indexing.incremental import index_format_current, plan_update
         from .indexing.pipeline import Indexer
         from .storage.repository import Repository
 
@@ -361,11 +361,22 @@ def update(
 
         p.start_stage("Scanning for changes")
         discovered = indexer.discover()
-        plan = plan_update(repo, discovered, root_id=workspace.root_id(), force=force)
+        # A stored index written by an older format version holds
+        # representations this build no longer produces (0-based spans,
+        # cross-language edges). Re-parsing only the files whose hashes moved
+        # would leave the rest wrong forever, so a format change forces a
+        # full re-verify instead of an incremental patch.
+        format_stale = not index_format_current(repo)
+        plan = plan_update(
+            repo, discovered, root_id=workspace.root_id(), force=force or format_stale
+        )
         changed = len(plan.to_index)
         unchanged = len(plan.unchanged)
         removed = len(plan.removed)
-        p.finish_stage(detail=f"{changed} changed, {unchanged} unchanged, {removed} removed")
+        detail = f"{changed} changed, {unchanged} unchanged, {removed} removed"
+        if format_stale:
+            detail = f"index format changed; rebuilding all {changed} files"
+        p.finish_stage(detail=detail)
 
         if not plan.has_work:
             p.done()
@@ -772,7 +783,7 @@ def _print_explain(data: dict) -> None:
     if entity["path"]:
         location = entity["path"]
         if entity["start_line"] is not None:
-            location += f":{entity['start_line'] + 1}"
+            location += f":{entity['start_line']}"
         typer.echo(f"  {location}")
     if entity.get("signature"):
         typer.echo(f"  {entity['signature']}")

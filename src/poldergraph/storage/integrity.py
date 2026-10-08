@@ -264,14 +264,40 @@ def check_entity_paths_safety(repo: Repository) -> Check:
 
 
 def check_freshness_state(repo: Repository) -> Check:
+    """Report when the index was last built.
+
+    `detail` is printed verbatim even for a passing check, so it must describe
+    the healthy state too. Reporting "no files indexed" on every call made a
+    healthy index look broken — the one assertion an operator reaches for to
+    catch staleness was the one that lied.
+    """
     from ..models.entity import utcnow
 
+    indexed = repo.con.execute("SELECT COUNT(*) FROM files").fetchone()[0]
     row = repo.con.execute("SELECT MAX(last_indexed_at) FROM files").fetchone()
     last = row[0] if row else None
+    if indexed == 0 or last is None:
+        return Check(
+            "freshness_state", False, "no files indexed", severity="warning",
+            data={"indexed_files": indexed, "last_indexed_at": last, "now": utcnow()},
+        )
+    now = utcnow()
+    age = max(0, now - int(last))
     return Check(
-        "freshness_state", last is not None, "no files indexed", severity="warning",
-        data={"last_indexed_at": last, "now": utcnow()},
+        "freshness_state", True, f"{indexed} files indexed, last {_humanize_age(age)} ago",
+        data={"indexed_files": indexed, "last_indexed_at": last, "age_seconds": age, "now": now},
     )
+
+
+def _humanize_age(seconds: int) -> str:
+    """Render an elapsed duration compactly for a status line."""
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
 
 
 def run_doctor(repo: Repository, *, dimensions: int = 256) -> DoctorReport:

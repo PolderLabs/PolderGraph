@@ -223,10 +223,16 @@ At minimum:
 - `GET /api/path?from=&to=`
 - `GET /api/communities`
 - `GET /api/impact/{id}`
+- `GET /api/source?path=&start_line=&end_line=`
 - `POST /api/view/preferences`
 - `GET /api/events` or WebSocket equivalent
 
 All responses use stable IDs and explicit provenance.
+
+`/api/source` takes **1-based, inclusive** line numbers, matching every entity
+span the API reports. A client can therefore pass an entity's `start_line`
+straight through and land on the declaration it names, rather than one line
+above it.
 
 ## Security
 

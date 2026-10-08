@@ -53,13 +53,30 @@ class Resolver:
         #: module path -> file path across every parsed file
         self._module_index: dict[str, str] = {}
         self._export_index: dict[str, list[tuple[str, str]]] = {}
+        #: language -> the same index, so a name never binds across languages.
+        #: A JavaScript `Headers.delete()` must not resolve to a Python
+        #: `def delete(...)`: the edge would be syntactically plausible and
+        #: semantically false, which is worse for a consumer than no edge.
+        self._export_index_by_language: dict[str, dict[str, list[tuple[str, str]]]] = {}
+        #: entity id -> the file that declares it, so a resolved target's file
+        #: scope can be reported accurately instead of guessed from its id.
+        self._entity_path: dict[str, str] = {}
 
     # ------------------------------------------------------------ indexing
 
     def register_file(self, index: FileIndex) -> None:
         self.files[index.path] = index
+        for entity_id in index.symbol_ids.values():
+            self._entity_path[entity_id] = index.path
+        for entity_id in index.by_name.values():
+            for one in entity_id:
+                self._entity_path.setdefault(one, index.path)
         for qualified, entity_id in index.symbols.items():
             self._export_index.setdefault(qualified, []).append((index.path, entity_id))
+            bucket = self._export_index_by_language.setdefault(
+                index.language or "", {}
+            )
+            bucket.setdefault(qualified, []).append((index.path, entity_id))
         for module in index.module_paths:
             self._module_index.setdefault(module, index.path)
 
@@ -74,6 +91,19 @@ class Resolver:
                 self._module_index[module] = index.path
 
     # ----------------------------------------------------------- resolution
+
+    def _resolver_label(self, source_path: str, target_id: str) -> str:
+        """Name the resolution scope that actually produced an edge.
+
+        Most references resolve inside the file that makes them. Labelling those
+        ``cross_file`` overstated the resolution's scope and made consumers
+        distrust edges that were perfectly local. The comparison is made
+        against the declaring file of the target entity, not its id.
+        """
+        target_path = self._entity_path.get(target_id)
+        if target_path is None:
+            return "cross_file"
+        return "same_file" if target_path == source_path else "cross_file"
 
     def resolve(self, index: FileIndex, reference: Any) -> ResolvedReference | None:
         """Resolve one reference, returning an edge plus any candidates."""
@@ -106,7 +136,7 @@ class Resolver:
                     target_id=target,
                     type=reference.edge_type,
                     provenance=Provenance.RESOLVED,
-                    resolver="cross_file",
+                    resolver=self._resolver_label(index.path, target),
                     source_location=location,
                     metadata={"reference": name},
                 ),
@@ -124,7 +154,7 @@ class Resolver:
                         target_id=distinct[0],
                         type=reference.edge_type,
                         provenance=Provenance.RESOLVED,
-                        resolver="cross_file",
+                        resolver=self._resolver_label(index.path, distinct[0]),
                         source_location=location,
                         metadata={"reference": name},
                     ),
@@ -172,7 +202,9 @@ class Resolver:
             if qualifier in index.import_aliases:
                 module = index.import_aliases[qualifier]
                 target_index = self._index_for_module(index.path, module)
-                if target_index is not None:
+                if target_index is not None and _same_language(
+                    index.language, target_index.language
+                ):
                     if name in target_index.by_name:
                         out.extend(target_index.by_name[name])
                     qualified_module = f"{module}.{name}"
@@ -209,7 +241,9 @@ class Resolver:
         module = index.import_aliases.get(name)
         if module:
             target_index = self._index_for_module(index.path, module)
-            if target_index is not None:
+            if target_index is not None and _same_language(
+                index.language, target_index.language
+            ):
                 if name in target_index.by_name:
                     out.extend(target_index.by_name[name])
                 else:
@@ -225,16 +259,30 @@ class Resolver:
         # A bare name may still refer to something this module imports wholesale.
         for module in set(index.import_aliases.values()):
             target_index = self._index_for_module(index.path, module)
-            if target_index is not None and name in target_index.by_name:
+            if target_index is None or not _same_language(index.language, target_index.language):
+                continue
+            if name in target_index.by_name:
                 out.extend(target_index.by_name[name])
 
         if out:
             return _dedupe(out)
 
-        # Workspace-wide unique match.
-        matches = self._export_index.get(name)
+        # Workspace-wide unique match, restricted to this file's language. An
+        # unmatched name must not bind to a same-named symbol in an unrelated
+        # language, and the unscoped fallback below only admits dialects that
+        # are genuinely interchangeable.
+        matches = self._export_index_by_language.get(index.language or "", {}).get(name)
         if matches:
             out.extend(entity_id for _, entity_id in matches)
+            return _dedupe(out)
+
+        # Dialect companions (TypeScript importing JavaScript, a C header into
+        # a C++ file) have no separate bucket of their own, so they are
+        # admitted only through the same compatibility check.
+        for path, entity_id in self._export_index.get(name, ()):
+            other = self.files.get(path)
+            if other is not None and _same_language(index.language, other.language):
+                out.append(entity_id)
 
         return _dedupe(out)
 
@@ -309,6 +357,37 @@ def _module_prefix(path: str) -> str | None:
     if path.endswith("/__init__.py") or path == "__init__.py":
         return path.rsplit("/", 1)[0].replace("/", ".") if "/" in path else None
     return None
+
+
+def _same_language(source: str | None, target: str | None) -> bool:
+    """Whether a resolved target may legitimately live in that other language.
+
+    An unknown language on either side is *not* a match. Permissive handling of
+    ``None`` would reopen the exact cross-language leak this guard exists to
+    close, so an unclassified file binds only to another unclassified one.
+
+    The TypeScript/JavaScript and C-family dialects legitimately call into each
+    other (a ``.ts`` file imports the ``.js`` module it compiles to; a ``.h``
+    header declares what a ``.c``/``.cpp`` file defines), so those pairs count
+    as one language.
+    """
+    if source is None or target is None:
+        return source is None and target is None
+    if source == target:
+        return True
+    return frozenset((source, target)) in _SHARED_DIALECT_GROUPS
+
+
+#: Dialect pairs that are genuinely interchangeable at call sites.
+_SHARED_DIALECT_GROUPS: frozenset[frozenset[str]] = frozenset(
+    {
+        frozenset({"typescript", "javascript"}),
+        frozenset({"tsx", "javascript"}),
+        frozenset({"c", "cpp"}),
+        frozenset({"c", "csharp"}),
+        frozenset({"cpp", "csharp"}),
+    }
+)
 
 
 def _dedupe(items: list[str]) -> list[str]:

@@ -19,6 +19,28 @@ from ..discovery.languages import (
 from .types import AdapterInfo, ParseError, ParseResult
 
 
+def to_display_lines(result: ParseResult) -> None:
+    """Convert tree-sitter 0-based line numbers to 1-based, in place.
+
+    Adapters copy ``node.start_point[0]`` straight into the model, and
+    tree-sitter counts lines from zero. Columns stay 0-based, matching the
+    byte/column convention every other tool reports. Doing this once at the
+    engine boundary keeps the conversion out of ~20 adapter call sites and
+    makes the whole pipeline agree with ``grep`` and every editor.
+    """
+    for symbol in result.symbols:
+        symbol.start_line += 1
+        symbol.end_line += 1
+    for reference in result.references:
+        if reference.location.line is not None:
+            reference.location.line += 1
+    # Adapters stash derived line numbers under metadata; those are display
+    # values too (markdown heading_line is reported in section spans).
+    heading = result.metadata.get("heading_line")
+    if isinstance(heading, int):
+        result.metadata["heading_line"] = heading + 1
+
+
 class TreeSitterUnavailable(Exception):
     """Raised when the tree-sitter distribution is not installed."""
 
@@ -181,7 +203,20 @@ class ParseEngine:
         return infos
 
     def parse(self, source: bytes, language: str | None, path: str) -> ParseResult:
-        """Parse a file, degrading to metadata-only on unsupported input."""
+        """Parse a file, degrading to metadata-only on unsupported input.
+
+        Adapters read line numbers straight off tree-sitter nodes, which are
+        0-based. Everything downstream — stored spans, snippets, JSON output —
+        uses the 1-based convention of editors and ``grep``, so the conversion
+        happens here, once, rather than in each of the ~20 adapter call sites
+        that read ``node.start_point[0]``.
+        """
+        result = self._dispatch(source, language, path)
+        to_display_lines(result)
+        return result
+
+    def _dispatch(self, source: bytes, language: str | None, path: str) -> ParseResult:
+        """Run the strongest available adapter, without coordinate conversion."""
         adapter = self.adapter_for(language)
         grammar = grammar_for(language)
         if grammar is None or not grammar_available(grammar):

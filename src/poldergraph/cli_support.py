@@ -162,7 +162,7 @@ def table(rows: list[list[str]], headers: list[str]) -> str:
 def entity_line(entity: Any, *, extra: str = "") -> str:
     location = ""
     if entity.path:
-        location = f"{entity.path}:{entity.start_line + 1}" if entity.start_line is not None else entity.path
+        location = f"{entity.path}:{entity.start_line}" if entity.start_line is not None else entity.path
     name = entity.qualified_name or entity.name
     suffix = f"  {extra}" if extra else ""
     return f"{name}  [{entity.kind}]  {location}{suffix}"

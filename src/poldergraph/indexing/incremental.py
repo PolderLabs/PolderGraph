@@ -54,6 +54,15 @@ def plan_update(
 ) -> UpdatePlan:
     """Compare the filesystem against the index and plan the work."""
     plan = UpdatePlan()
+    # An index written by an older format version stores representations this
+    # build no longer produces (0-based spans, cross-language edges).
+    # Re-parsing only files whose hashes moved would leave the rest wrong
+    # forever, so a format change forces a full re-verify. This lives here
+    # rather than in one caller so the CLI, the watcher and MCP updates all
+    # get it.
+    if not index_format_current(repo):
+        plan.stale_format = True
+        force = True
     known = {record["path"]: record for record in repo.all_files(root_id)}
 
     for file in discovered:

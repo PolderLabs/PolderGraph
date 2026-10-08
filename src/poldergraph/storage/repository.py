@@ -468,6 +468,12 @@ class Repository:
             ),
         )
 
+    def set_entity_semantic_hash(self, entity_id: str, input_hash: str) -> None:
+        """Record which semantic text an entity's stored vector was built from."""
+        self.con.execute(
+            "UPDATE entities SET semantic_hash=? WHERE id=?", (input_hash, entity_id)
+        )
+
     def embedding_ids_for(self, entity_ids: list[str]) -> dict[str, list[str]]:
         out: dict[str, list[str]] = {}
         for chunk in _chunks(entity_ids, 400):

@@ -23,6 +23,7 @@ from ..embedding.representation import (
 )
 from ..models.entity import Entity, semantic_hash
 from ..storage.repository import Repository
+from ..storage.schema import INDEX_FORMAT_VERSION
 from ..storage.sqlite import record_change_event, set_meta, writer_transaction
 from ..storage.vectors import VectorRecord, create_vector_store, embedding_id_for
 from ..workspace import Workspace
@@ -193,6 +194,15 @@ class Indexer:
 
         with writer_transaction(self.workspace.con):
             set_meta(self.workspace.con, "last_scan_at", int(time.time()))
+            # Stamp the format this index actually holds, never optimistically.
+            # A no-op run (nothing to re-index) would otherwise assert "this
+            # index is current" while every stored span is still in the old
+            # format, permanently disarming the rebuild guard. Only a run that
+            # really rewrote files may advance the stamp.
+            if built:
+                set_meta(
+                    self.workspace.con, "index_format_version", INDEX_FORMAT_VERSION
+                )
             branch, head = git_state(self.workspace.root)
             if head:
                 set_meta(self.workspace.con, "indexed_head", head)
@@ -463,6 +473,11 @@ class Indexer:
                         "norm": 1.0,
                     }
                 )
+                # Mirror the hash onto the entity so a consumer can tell what
+                # text its vector was built from without joining the embeddings
+                # table. The column existed but was never populated, which
+                # made every row read as "no semantic representation".
+                self.repo.set_entity_semantic_hash(entity_id, digest)
             store.upsert(records)
         stats.embeddings_written += len(records)
 

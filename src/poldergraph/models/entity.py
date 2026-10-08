@@ -226,11 +226,6 @@ class Entity:
         except ValueError:
             return False
 
-    @property
-    def end_line_exclusive(self) -> int | None:
-        """Zero-based inclusive end converted to an exclusive bound for slicing."""
-        return None if self.end_line is None else self.end_line + 1
-
     def to_row(self) -> tuple[Any, ...]:
         import json
 

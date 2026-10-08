@@ -366,9 +366,11 @@ class TestDashboardApi:
             assert payload["error"]["code"]
 
     def test_source_endpoint_serves_indexed_file(self, api_client):
-        payload = api_client.get("/api/source?path=pkg/auth.py&start_line=0&end_line=3").json()
+        payload = api_client.get("/api/source?path=pkg/auth.py&start_line=1&end_line=3").json()
         assert payload["ok"] is True
         assert "from .models import Session" in payload["data"]["content"]
+        # 1-based inclusive: line 1 is the first line, not the second.
+        assert payload["data"]["content"].splitlines()[0] == "from .models import Session"
 
     def test_errors_use_the_envelope(self, api_client):
         payload = api_client.get("/api/entity/nonexistent_id").json()

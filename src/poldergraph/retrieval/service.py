@@ -514,8 +514,13 @@ class QueryService:
         if resolved is None or entity.start_line is None:
             return None
         lines = resolved.splitlines()
-        start = max(0, entity.start_line)
-        end = min(len(lines), (entity.end_line + 1) if entity.end_line is not None else start + 60)
+        # Entity lines are 1-based for display; list indices are 0-based.
+        start = max(0, entity.start_line - 1)
+        end = (
+            min(len(lines), entity.end_line)
+            if entity.end_line is not None
+            else min(len(lines), start + 60)
+        )
         return "\n".join(lines[start:end])[:max_chars]
 
     def _community_map(self) -> dict[str, str]:
@@ -552,10 +557,16 @@ class QueryService:
         }
 
     def _pending_changes(self) -> int:
-        """Count source files whose metadata drifted from the indexed state.
+        """Count source files whose state drifted from the indexed snapshot.
 
         Uses size and mtime as a cheap first filter; only a file whose metadata
         moved is re-hashed, so the freshness check stays interactive.
+
+        Walking only the indexed rows made every brand-new file invisible, so
+        `status` reported `fresh: true` for a tree containing an untracked file
+        that `poldergraph update` would immediately pick up. Freshness has to
+        see both directions: indexed files that moved, and files on disk that
+        the index has never seen.
         """
         from pathlib import Path
 
@@ -568,8 +579,10 @@ class QueryService:
             records = self.repo.all_files(self.root_id)
         except Exception:
             return 0
+        seen: set[str] = set()
         for record in records:
             path = root / record["path"]
+            seen.add(record["path"])
             try:
                 stat_result = path.stat()
             except OSError:
@@ -581,7 +594,37 @@ class QueryService:
             mtime_ns = int(stat_result.st_mtime * 1_000_000_000)
             if record["mtime_ns"] and mtime_ns > record["mtime_ns"]:
                 pending += 1
-        return pending
+        return pending + self._unindexed_files(root, seen)
+
+    def _unindexed_files(self, root: Path, seen: set[str]) -> int:
+        """Count indexable files on disk that the index has never seen.
+
+        An untracked file is exactly the case a human most needs warned about,
+        because retrieval will answer as if it were not there.
+        """
+        try:
+            files = self._discovery(root).scan().files
+        except OSError:
+            return 0
+        return sum(1 for f in files if f.path not in seen)
+
+    def _discovery(self, root: Path) -> Any:
+        """Build a discovery pass using the workspace's configured ignore rules."""
+        from ..discovery.scanner import Discovery
+
+        index_config = getattr(getattr(self.config, "index", None), "__dict__", {})
+        include = index_config.get("include")
+        exclude = index_config.get("exclude")
+        return Discovery(
+            root,
+            include=list(include) if include else None,
+            exclude=list(exclude) if exclude else None,
+            follow_symlinks=bool(index_config.get("follow_symlinks", False)),
+            include_generated=bool(index_config.get("include_generated", False)),
+            include_media=bool(index_config.get("include_media", True)),
+            max_file_bytes=int(index_config.get("max_file_bytes", 5_000_000)),
+            max_roots=int(index_config.get("max_roots", 64)),
+        )
 
 
 def Path_cwd() -> Any:

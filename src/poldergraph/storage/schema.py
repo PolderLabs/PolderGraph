@@ -12,7 +12,13 @@ SCHEMA_VERSION = 1
 
 #: Bump when the semantics of stored representations change (entity IDs,
 #: semantic text construction, edge identity) so derived data is rebuilt.
-INDEX_FORMAT_VERSION = 1
+#:
+#: 2: stored spans became 1-based (adapters had been writing tree-sitter's
+#:    0-based lines straight into the model), and resolved edges are scoped by
+#:    language and labelled same_file/cross_file by what actually ran. Existing
+#:    indexes hold 0-based spans and cross-language edges, so they must be
+#:    rebuilt rather than incrementally patched.
+INDEX_FORMAT_VERSION = 2
 
 #: Ordered migrations. Each entry is (target_version, sql_statements).
 MIGRATIONS: list[tuple[int, list[str]]] = [

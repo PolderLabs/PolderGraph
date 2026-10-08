@@ -20,6 +20,18 @@ separated by a `discriminator` derived from the declaration's byte offset.
 leading/trailing separators, so the same logical path written differently yields
 the same ID.
 
+### Line base
+
+Line numbers are **1-based** throughout the public surface — stored spans, CLI
+output, JSON envelopes, the HTTP API and MCP payloads. This matches `grep -n`
+and every editor, so an indexed line can be used directly.
+
+Tree-sitter reports 0-based coordinates. Adapters copy those coordinates
+straight off the syntax node, so `ParseEngine.parse` converts them once, at the
+single boundary every adapter returns through, rather than at ~20 adapter call
+sites. Anything slicing a file by a stored span must subtract 1 to get a list
+index. Columns stay 0-based, matching the byte/column convention.
+
 ## Entity
 
 `entities` table columns:
@@ -35,7 +47,7 @@ the same ID.
 | `path` | TEXT | Root-relative POSIX path |
 | `parent_id` | TEXT | Owning entity, NULL at file level |
 | `start_byte`, `end_byte` | INTEGER | Byte span in the source file |
-| `start_line`, `end_line` | INTEGER | Zero-based inclusive line span |
+| `start_line`, `end_line` | INTEGER | **1-based** inclusive line span, as editors and `grep -n` report |
 | `visibility` | TEXT | `public` / `private` / `protected` where known |
 | `signature` | TEXT | Declaration head, without the body |
 | `docstring` | TEXT | Leading docstring or doc comment |
@@ -70,12 +82,28 @@ generic consumers work on the set above.
 | `type` | TEXT | See the taxonomy below |
 | `provenance` | TEXT | `extracted`/`resolved`/`inferred`/`ambiguous`/`semantic`/`manual` |
 | `confidence` | REAL | Meaningful within the provenance class |
-| `resolver` | TEXT | Which resolver produced the mapping |
+| `resolver` | TEXT | Resolution strategy: `same_file`, `cross_file`, `local`, `vector_knn` |
 | `source_path`, `source_line`, `source_col` | | Where the relationship was seen |
 | `metadata_json` | TEXT | Model/revision/threshold for semantic edges |
 
 On the wire, edges carry both `source`/`target` (the dashboard and MCP contract)
 and `source_id`/`target_id` (the database column names).
+
+### Resolution scope
+
+Name resolution never crosses a language boundary. A JavaScript
+`headers.delete()` must not bind to a Python `def delete(...)`: the resulting
+edge would be syntactically plausible and semantically false, which is worse for
+a consuming tool than a missing edge. An unclassified (`NULL`) language is not a
+match either, so an unknown file binds only to another unknown one.
+
+The exceptions are dialects that genuinely call into each other: TypeScript/TSX
+into JavaScript, and the C family (`c`/`cpp`/`csharp`).
+
+`resolver` records what actually happened, not merely that something resolved.
+Most references resolve inside the file that makes them and are labelled
+`same_file`; only genuine cross-file resolution is `cross_file`. A consumer that
+wants to know whether a dependency is local can trust this field.
 
 ### Edge types
 

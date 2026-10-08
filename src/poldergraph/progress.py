@@ -318,6 +318,10 @@ class QuietProgress:
 
     def done(self, *a: Any, **kw: Any) -> None: ...
 
+    def _find(self, name: str) -> int:
+        """No stages are recorded, so a lookup always reports "not present"."""
+        return -1
+
 
 def make_progress(*, json_mode: bool = False, quiet: bool = False) -> ProgressDisplay | QuietProgress:
     """Build the right progress sink for the current invocation."""

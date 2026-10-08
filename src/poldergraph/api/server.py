@@ -354,10 +354,15 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
     @app.get("/api/source")
     def source(
         path: str = Query(...),
-        start_line: int = Query(default=0, ge=0),
+        start_line: int = Query(default=1, ge=1),
         end_line: int = Query(default=0, ge=0),
     ) -> Any:
-        """Return source text for an indexed path inside a configured root."""
+        """Return source text for an indexed path inside a configured root.
+
+        Line numbers are 1-based and inclusive, matching every entity span the
+        API reports, so a caller can pass an entity's ``start_line`` straight
+        through and land on the declaration it names.
+        """
         text = safe_read(workspace.root, path)
         if text is None:
             return fail(
@@ -369,14 +374,16 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
                 ),
             )
         lines = text.splitlines()
-        end = end_line or min(len(lines), start_line + 400)
+        start = min(max(1, start_line), max(1, len(lines)))
+        end = min(len(lines), end_line) if end_line else min(len(lines), start + 399)
+        end = max(start, end)
         return ok(
             "source",
             {
                 "path": path,
-                "start_line": start_line,
+                "start_line": start,
                 "end_line": end,
-                "content": "\n".join(lines[start_line:end]),
+                "content": "\n".join(lines[start - 1:end]),
             },
         )
 

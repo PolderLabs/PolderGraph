@@ -132,10 +132,20 @@ def migrate(con: sqlite3.Connection, *, force: bool = False) -> int:
 
 
 def initialize(path: Path) -> sqlite3.Connection:
-    """Create or open an index database, migrating it to the current schema."""
+    """Create or open an index database, migrating it to the current schema.
+
+    The index-format stamp is deliberately *not* written here. This function
+    runs on every workspace open, so stamping it would assert that the stored
+    contents match the current build even when an older index was just opened
+    untouched — permanently disarming the rebuild guard. A newly created
+    database has no contents to be stale, so it records the current format;
+    an existing one keeps its stamp until a run actually rewrites its files.
+    """
+    created = not path.exists()
     con = connect(path)
     migrate(con)
-    set_meta(con, "index_format_version", INDEX_FORMAT_VERSION)
+    if created:
+        set_meta(con, "index_format_version", INDEX_FORMAT_VERSION)
     return con
 
 
