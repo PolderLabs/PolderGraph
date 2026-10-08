@@ -93,7 +93,7 @@ POLDERGRAPH_DECISIONS__PROVIDER=typesafe
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `dimensions` | int | 256 | Embedding dimensions (128, 256, 512, 768) |
+| `dimensions` | int | 256 | Embedding vector width (1–3072); native Gemma/Ollama support 128, 256, 512, 768 |
 | `include_media` | bool | true | Index image/audio/video files |
 | `include_generated` | bool | false | Index generated/vendor files |
 | `follow_symlinks` | bool | false | Follow symbolic links during discovery |

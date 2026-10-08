@@ -495,6 +495,11 @@ def create_backend(config: Any, *, cache_dir: Path | None = None, offline: bool 
     if backend_name == "ollama":
         from .ollama import OllamaBackend
 
+        if config.index.dimensions not in SUPPORTED_DIMENSIONS:
+            raise BackendUnavailableError(
+                f"Ollama embeddings support configured dimensions {SUPPORTED_DIMENSIONS}; got {config.index.dimensions}."
+            )
+
         return OllamaBackend(
             host=config.embedding.ollama_host,
             model=config.embedding.ollama_model,
@@ -522,6 +527,11 @@ def create_backend(config: Any, *, cache_dir: Path | None = None, offline: bool 
         from .protocol import DisabledBackend
 
         return DisabledBackend(f"unknown backend '{backend_name}'")
+
+    if config.index.dimensions not in SUPPORTED_DIMENSIONS:
+        raise BackendUnavailableError(
+            f"Native EmbeddingGemma supports dimensions {SUPPORTED_DIMENSIONS}; got {config.index.dimensions}."
+        )
 
     return NativeGemmaBackend(
         model_id=config.embedding.model,

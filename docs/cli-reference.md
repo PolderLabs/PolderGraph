@@ -15,7 +15,7 @@ Create the index and run complete indexing. Downloads the embedding model on fir
 Options:
 - `--force` — discard existing index and rebuild
 - `--no-agent` — skip agent instruction generation
-- `--dimensions 128|256|512|768` — embedding dimensions (default 256)
+- `--dimensions N` — embedding vector width (default 256; API models may support up to 3072)
 - `--embedding-backend native|ollama|api|none` — embedding backend (default native)
 - `--include-media/--no-media` — index media files
 - `--json` — machine-readable output

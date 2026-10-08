@@ -105,7 +105,22 @@ class TestConfigPrecedence:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            Config.model_validate({"index": {"dimensions": 999}})
+            Config.model_validate({"index": {"dimensions": 4096}})
+
+    def test_api_config_accepts_larger_vector_width(self):
+        config = Config.model_validate({
+            "index": {"dimensions": 1536},
+            "embedding": {"backend": "api", "api_provider": "openai"},
+        })
+        assert config.index.dimensions == 1536
+
+    def test_native_backend_rejects_unsupported_vector_width(self):
+        from poldergraph.embedding.gemma import create_backend
+        from poldergraph.errors import BackendUnavailableError
+
+        config = Config.model_validate({"index": {"dimensions": 1024}})
+        with pytest.raises(BackendUnavailableError, match="supports dimensions"):
+            create_backend(config)
 
     def test_toml_roundtrip(self, tmp_path: Path):
         original = Config()

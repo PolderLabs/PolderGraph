@@ -51,7 +51,7 @@ memory_app = typer.Typer(
 app.add_typer(memory_app, name="memory")
 
 DimensionOption = typer.Option(
-    256, "--dimensions", help="Embedding dimensions: 128, 256, 512 or 768."
+    256, "--dimensions", help="Embedding vector width (API models may support up to 3072)."
 )
 
 
@@ -95,7 +95,7 @@ def init(
     force: bool = typer.Option(False, "--force", help="Discard an existing index and rebuild."),
     no_agent: bool = typer.Option(False, "--no-agent", help="Skip agent instruction generation."),
     no_embed: bool = typer.Option(False, "--no-embed", help="Skip embedding; structural index only. Run 'poldergraph update' later to add vectors."),
-    dimensions: int = typer.Option(256, "--dimensions", help="Embedding dimensions."),
+    dimensions: int = typer.Option(256, "--dimensions", help="Embedding vector width (API models may support up to 3072)."),
     embedding_backend: str = typer.Option(
         "native", "--embedding-backend", help="native, ollama, api, or none."
     ),
@@ -1429,13 +1429,15 @@ def setup(
 
     # --- Step 1: Embedding backend ---
     typer.secho("  ── Step 1: Embedding Backend ──", fg=typer.colors.YELLOW)
-    typer.echo("  PolderGraph uses EmbeddingGemma 2 for semantic search.")
-    typer.echo("  The model is ~2 GB and downloads once to your local cache.")
+    typer.echo("  Choose local EmbeddingGemma/Ollama or an explicitly authorized API provider.")
     typer.echo()
 
-    _VALID_BACKENDS = {"native", "ollama", "none"}
+    _VALID_BACKENDS = {"native", "ollama", "api", "none"}
     _VALID_DEVICES = {"auto", "cpu", "cuda", "mps"}
-    _VALID_DIMS = {"128", "256", "512", "768"}
+    _LOCAL_DIMS = {"128", "256", "512", "768"}
+    _VALID_DIMS = {"128", "256", "512", "768", "1024", "1536", "2048", "3072"}
+    api_provider_choice = "openai"
+    allow_remote_embedding = False
 
     if not is_tty:
         backend_choice = "native"
@@ -1443,7 +1445,7 @@ def setup(
         dims_choice = 256
     else:
         backend_choice = typer.prompt(
-            "  Embedding backend (native/ollama/none)", default="native"
+            "  Embedding backend (native/ollama/api/none)", default="native"
         ).strip().lower()
         if backend_choice not in _VALID_BACKENDS:
             typer.secho(f"  Invalid choice '{backend_choice}', using 'native'", fg=typer.colors.RED)
@@ -1461,7 +1463,7 @@ def setup(
             dims_str = typer.prompt(
                 "  Embedding dimensions (128/256/512/768)", default="256"
             ).strip()
-            if dims_str in _VALID_DIMS:
+            if dims_str in _LOCAL_DIMS:
                 dims_choice = int(dims_str)
             else:
                 typer.echo(f"  Invalid dimensions '{dims_str}', using 256")
@@ -1471,6 +1473,24 @@ def setup(
             typer.echo("  Default: http://127.0.0.1:11434 / embeddinggemma")
         elif backend_choice == "none":
             typer.echo("  Semantic search disabled. Only lexical and structural retrieval available.")
+        elif backend_choice == "api":
+            api_provider_choice = typer.prompt(
+                "  API provider (openai/voyage)", default="openai"
+            ).strip().lower()
+            if api_provider_choice not in {"openai", "voyage"}:
+                typer.secho("  Invalid provider; using openai.", fg=typer.colors.RED)
+                api_provider_choice = "openai"
+            allowed_dimensions = {"256", "512", "1024", "2048"} if api_provider_choice == "voyage" else _VALID_DIMS
+            dimensions = typer.prompt(
+                "  API vector dimensions", default="256"
+            ).strip()
+            if dimensions in allowed_dimensions:
+                dims_choice = int(dimensions)
+            else:
+                typer.echo("  Unsupported dimension for this provider; using 256")
+            allow_remote_embedding = typer.confirm(
+                "  Allow sending indexed source text to the selected API provider?", default=False
+            )
 
     typer.echo()
 
@@ -1529,7 +1549,9 @@ def setup(
     config = Config()
     config.embedding.backend = backend_choice  # type: ignore[assignment]
     config.embedding.device = device_choice
+    config.embedding.api_provider = api_provider_choice  # type: ignore[assignment]
     config.index.dimensions = dims_choice
+    config.privacy.allow_remote_embedding = allow_remote_embedding
     config.ui.port = default_port
 
     config_path = user_config_path()
