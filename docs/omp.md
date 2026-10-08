@@ -44,10 +44,12 @@ installed, it reuses the executable on `PATH`.
 
 On session start, the extension bootstraps the CLI if needed and initializes a
 missing index or updates a stale one in the background. Before each user task,
-it ensures indexing is current and adds a 3,000-token `poldergraph context`
-pack to that request's system context. Successful OMP edit/write operations
-trigger a background incremental refresh. If automatic setup fails, the agent
-receives the error and continues with normal repository inspection; it retries
+it ensures indexing is current and uses a cheap local context plan. Social
+messages skip repository retrieval and add no PolderGraph context; narrow symbol
+lookups use a compact lexical pack; broader coding tasks use the configured
+token budget and hybrid evidence. Successful OMP edit/write operations trigger
+a background incremental refresh. If automatic setup fails, the agent receives
+the error and continues with normal repository inspection; it retries
 PolderGraph on a later task.
 
 The model can also call these tools for focused queries:
