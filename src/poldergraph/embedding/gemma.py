@@ -73,6 +73,8 @@ class NativeGemmaBackend(EmbeddingBackend):
         self._prompts: dict[str, str] = {}
         self._loaded_modalities: set[str] = {"text"}
         self._force_cpu: bool = False
+        #: Current encode batch size; lowered automatically if the device OOMs.
+        self._batch_size: int = self.batch_size
 
     # -------------------------------------------------------------- loading
 
@@ -206,83 +208,100 @@ class NativeGemmaBackend(EmbeddingBackend):
         prepared = [self._apply_prompt(text, task) for text in items]
         prompt_name = task if task in self._prompts else None
 
-        try:
-            vectors = model.encode(
-                prepared,
-                batch_size=self.batch_size,
-                prompt_name=prompt_name,
-                convert_to_numpy=True,
-                normalize_embeddings=False,
-                show_progress_bar=False,
-            )
-        except Exception as exc:
-            if "cuda" in str(exc).lower() or "out of memory" in str(exc).lower():
-                # GPU OOM: the GPU is too small for this batch. Set a flag
-                # so the next call loads on CPU directly, and retry now with
-                # the CPU model.
-                self._force_cpu = True
-                try:
-                    import torch
-                    self._model = None  # force reload on CPU
-                    torch.cuda.empty_cache()
-                except Exception:
-                    pass
-                model = self._ensure_loaded()  # will load on CPU now
-                vectors = model.encode(
-                    prepared,
-                    batch_size=self.batch_size * 2,
-                    prompt_name=prompt_name,
-                    convert_to_numpy=True,
-                    normalize_embeddings=False,
-                    show_progress_bar=False,
-                )
-            else:
-                raise BackendUnavailableError(
-                    f"Embedding failed: {exc}", remediation="Run: poldergraph doctor"
-                ) from exc
+        # Group by length so short representations batch together and long ones
+        # never inflate the batch. Attention cost scales with
+        # (batch x sequence length)^2, so mixing a 4000-token body with 400
+        # short ones wastes most of the device.
+        vectors = self._encode_by_length(
+            model, prepared, prompt_name=prompt_name, target=target
+        )
 
-        return [
-            truncate_and_normalize([float(x) for x in vector], target, normalize=self.normalize)
-            for vector in vectors
-        ]
+        return vectors
 
-    def _encode_chunked(
+    def _encode_by_length(
         self,
         model: Any,
         prepared: list[str],
         *,
-        prompt_name: str | None = None,
+        prompt_name: str | None,
         target: int,
-    ) -> Any:
-        """Encode in small chunks with cache clearing between them.
-
-        Used as a fallback when the full batch OOMs on a small GPU.
-        """
-        import torch
-
-        # Use a very small chunk size on CUDA to stay within memory.
-        chunk_size = min(16, max(1, self.batch_size // 4))
-        all_chunks: list[list[float]] = []
-        for start in range(0, len(prepared), chunk_size):
-            chunk = prepared[start : start + chunk_size]
-            torch.cuda.empty_cache()
+    ) -> list[list[float]]:
+        """Encode texts in length-sorted buckets, shrinking batches on OOM."""
+        order = sorted(range(len(prepared)), key=lambda i: len(prepared[i]))
+        out: list[list[float]] = [[] for _ in prepared]
+        bucket = self._bucket_size()
+        i = 0
+        while i < len(order):
+            chunk = order[i : i + bucket]
+            texts = [prepared[j] for j in chunk]
             try:
-                vectors = model.encode(
-                    chunk,
-                    batch_size=chunk_size,
-                    prompt_name=prompt_name,
-                    convert_to_numpy=True,
-                    normalize_embeddings=False,
-                    show_progress_bar=False,
+                vectors = self._encode_once(
+                    model, texts, prompt_name=prompt_name, batch_size=len(texts)
                 )
-                for vec in vectors:
-                    all_chunks.append(truncate_and_normalize([float(x) for x in vec], target, normalize=self.normalize))
+            except MemoryError:
+                raise
             except Exception as exc:
-                raise BackendUnavailableError(
-                    f"Embedding failed even with chunked batches ({chunk_size}/batch): {exc}",
-                    remediation="Run: poldergraph doctor",
-                ) from exc
-        return all_chunks
+                if not self._is_out_of_memory(exc):
+                    raise BackendUnavailableError(
+                        f"Embedding failed: {exc}", remediation="Run: poldergraph doctor"
+                    ) from exc
+                # Halve the bucket and retry; only fall back to CPU when the
+                # smallest usable batch still does not fit.
+                if bucket > 1:
+                    bucket = max(1, bucket // 2)
+                    self._batch_size = bucket
+                    self._release_device_memory()
+                    continue
+                self._force_cpu = True
+                self._model = None
+                self._release_device_memory()
+                model = self._ensure_loaded()
+                continue
+            for slot, vector in zip(chunk, vectors):
+                out[slot] = truncate_and_normalize(
+                    [float(x) for x in vector], target, normalize=self.normalize
+                )
+            i += len(chunk)
+        return out
+
+    def _encode_once(
+        self,
+        model: Any,
+        texts: list[str],
+        *,
+        prompt_name: str | None,
+        batch_size: int,
+    ) -> Any:
+        return model.encode(
+            texts,
+            batch_size=batch_size,
+            prompt_name=prompt_name,
+            convert_to_numpy=True,
+            normalize_embeddings=False,
+            show_progress_bar=False,
+        )
+
+    @staticmethod
+    def _is_out_of_memory(exc: Exception) -> bool:
+        text = str(exc).lower()
+        return "out of memory" in text or "cuda" in text or isinstance(exc, MemoryError)
+
+    @staticmethod
+    def _release_device_memory() -> None:
+        try:
+            import gc
+
+            import torch
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+    def _bucket_size(self) -> int:
+        """Batch size for the next encode, bounded by the configured maximum."""
+        return max(1, min(getattr(self, "_batch_size", self.batch_size), self.batch_size))
 
     def embed_query(self, text: str, *, dimensions: int | None = None) -> list[float]:
         """Embed a search query with the query role."""

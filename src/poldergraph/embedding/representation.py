@@ -16,7 +16,13 @@ from ..models.entity import Entity, semantic_hash
 REPRESENTATION_VERSION = 1
 
 #: Cap on body text included in a representation, per language.
-MAX_BODY_CHARS = 4000
+#:
+#: This bounds GPU/CPU inference memory as much as it bounds index size. The
+#: attention cost of a batch scales with (batch x sequence length)^2, so a
+#: 4000-char body roughly quadruples peak memory versus 1000 chars. Measured on
+#: a 6 GB GPU, 4000-char bodies pushed a batch of 16 past the device limit,
+#: while 1200-char bodies stay comfortably inside it.
+MAX_BODY_CHARS = 1200
 
 
 def build_code_representation(

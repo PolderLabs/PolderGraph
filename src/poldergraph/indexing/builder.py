@@ -387,6 +387,12 @@ class EntityBuilder:
                 built.edges.append(edge)
 
     def _record_unresolved(self, built: FileEntities, reference: Any, candidates: list[str]) -> None:
+        # Language builtins (len, append, dict, ...) are not repository
+        # entities. Recording them as unresolved references is pure noise: it
+        # bloats the database and buries the genuinely unresolved symbols that
+        # an agent actually needs to see.
+        if _is_builtin(reference.name) or (reference.qualifier or "") in {"self", "this"}:
+            return
         ref_id = "unres:" + hashlib.sha256(
             f"{built.path}:{reference.location.line}:{reference.name}:{reference.edge_type}".encode()
         ).hexdigest()[:24]
@@ -410,6 +416,38 @@ class EntityBuilder:
                 "root_id": self.root_id,
             }
         )
+
+
+#: Builtins and standard-library names that never resolve to a repository
+#: entity. Keeping this in one place means every adapter benefits instead of
+#: each maintaining its own skip list.
+_BUILTIN_NAMES = frozenset(
+    {
+        # Python
+        "abs", "all", "any", "append", "ascii", "bin", "bool", "breakpoint", "bytes",
+        "callable", "chr", "classmethod", "compile", "complex", "delattr", "dict",
+        "dir", "divmod", "enumerate", "eval", "exec", "filter", "float", "format",
+        "frozenset", "getattr", "globals", "hasattr", "hash", "help", "hex", "id",
+        "input", "int", "isinstance", "issubclass", "iter", "len", "list", "locals",
+        "map", "max", "memoryview", "min", "next", "object", "oct", "open", "ord",
+        "pow", "print", "property", "range", "repr", "reversed", "round", "set",
+        "setattr", "slice", "sorted", "staticmethod", "str", "sum", "super", "tuple",
+        "type", "vars", "zip", "self", "cls",
+        # common dunder / protocol methods that are never repository symbols
+        "__init__", "__str__", "__repr__", "__eq__", "__hash__", "__len__",
+        "__enter__", "__exit__", "__iter__", "__next__", "__call__", "__getattr__",
+        "get", "items", "keys", "values", "update", "pop", "join", "split",
+        "strip", "replace", "startswith", "endswith", "find", "format", "read",
+        "write", "close", "add", "remove", "extend", "index", "count", "copy",
+        "flush", "encode", "decode", "isalnum", "isdigit", "lower", "upper",
+        "ljust", "rjust", "zfill", "partition", "casefold", "isupper", "islower",
+    }
+)
+
+
+def _is_builtin(name: str) -> bool:
+    """True when a reference names a builtin rather than a repository symbol."""
+    return name in _BUILTIN_NAMES
 
 
 def _import_bindings(imports: list[Any]) -> dict[str, str]:
