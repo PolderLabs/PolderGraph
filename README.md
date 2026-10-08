@@ -17,7 +17,9 @@ Start with one command. Explore the graph in your browser, or connect your codin
 
 ## Install
 
-Requirements: Python 3.11 or newer, `curl`, and internet access for installing dependencies and downloading the embedding model the first time you index a repository. The model takes about 2 GB of disk space. No API key or cloud service is required.
+> **⚠️ Disk space:** PolderGraph downloads a ~2 GB embedding model (EmbeddingGemma 2) the first time you run `poldergraph init`. Python dependencies (PyTorch, transformers, tree-sitter) add another ~1.5 GB. Expect **3–4 GB of free disk space** before installing. The model and dependencies are cached locally and reused across all repositories.
+
+Requirements: Python 3.11 or newer, `curl`, and internet access for installing dependencies and downloading the embedding model the first time you index a repository. No API key or cloud service is required.
 
 ### Linux and macOS
 
@@ -210,6 +212,46 @@ uv run --extra semantic --extra vectors python scripts/benchmark_memory.py --dev
 ```
 
 The test follows the separation of accurate retrieval and abstention emphasized by [LongMemEval](https://arxiv.org/abs/2410.10813) and [MemoryAgentBench](https://arxiv.org/abs/2507.05257). These results are local to the recorded dataset, model, and CPU; rerun on the target machine before comparing performance.
+
+## Typed decisions API
+
+PolderGraph includes a provider-neutral typed decisions engine for asking structured questions about code and state. It supports three backends:
+
+- **Jev** (hosted TypeSafe) — `provider="typesafe"`, requires `TYPESAFE_API_KEY`
+- **OpenAI Decisions** — `provider="openai"`, requires `OPENAI_API_KEY`
+- **Laya** (local model) — `provider="laya"`, runs entirely offline
+
+Nothing is called by default. The engine is integrated into:
+
+- **Search routing**: ambiguous natural-language queries get a typed decision to select semantic vs structural retrieval path
+- **Memory relevance**: weak candidate memories are filtered before entering agent context
+- **Automatic preference capture**: explicit first-person statements are classified before saving
+
+```python
+from poldergraph.decisions import choice, decide, predicate, score
+
+result = decide(
+    {"request": "Remember that this repo uses pnpm, not npm.", "source": "explicit user statement"},
+    {
+        "action": choice("action", "Should this become a durable memory?",
+                         {"store": "explicit and durable", "reject": "temporary or ambiguous"}),
+        "explicit": predicate("explicit", "The user directly stated this."),
+    },
+    provider="laya",
+)
+print(result["answers"]["action"]["choice"])
+```
+
+Decisions are cached for 5 minutes by content hash. Raw prompts are never retained. Hosted providers receive only the short query or candidate excerpts needed for each decision. Enable in config:
+
+```toml
+[decisions]
+provider = "laya"  # typesafe, openai, laya, or disabled
+confidence_threshold = 0.9
+timeout = 3.0
+```
+
+See [docs/decisions.md](docs/decisions.md) for API details and privacy model.
 
 ## Codex setup
 

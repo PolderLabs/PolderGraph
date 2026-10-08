@@ -29,6 +29,11 @@ if [ -z "$tag" ]; then
 fi
 
 echo "Installing PolderGraph from GitHub release $tag..."
+echo ''
+echo 'NOTE: PolderGraph downloads a ~2 GB embedding model the first time you run'
+echo '      poldergraph init. Python dependencies add another ~1.5 GB.'
+echo '      Expect 3-4 GB of free disk space.'
+echo ''
 install_dir=$(mktemp -d)
 trap 'rm -rf "$install_dir"' EXIT HUP INT TERM
 curl -fsSL -H 'Accept: application/vnd.github+json' \

@@ -28,6 +28,11 @@ if (-not $release.tag_name) {
 }
 
 Write-Host "Installing PolderGraph from GitHub release $($release.tag_name)..."
+Write-Host ''
+Write-Host 'NOTE: PolderGraph downloads a ~2 GB embedding model the first time you run'
+Write-Host '      poldergraph init. Python dependencies add another ~1.5 GB.'
+Write-Host '      Expect 3-4 GB of free disk space.'
+Write-Host ''
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $tempDir | Out-Null
 try {
