@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "poldergraph"
-version = "0.2.1"
+version = "0.2.2"
 description = "Fully local, zero-cloud code intelligence graph for developers and coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,11 +32,11 @@ dependencies = [
   "watchfiles>=1.0",
   "platformdirs>=4.3",
   "mcp>=1.2",
+  "tree-sitter-language-pack>=0.9",
 ]
 
 [project.optional-dependencies]
 semantic = [
-  "tree-sitter-language-pack>=0.9",
   "torch>=2.4",
   "transformers>=5.19,<6",
   "sentence-transformers>=6.1,<7",
