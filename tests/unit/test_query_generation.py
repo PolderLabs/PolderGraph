@@ -3,9 +3,11 @@ import sys
 
 import pytest
 
+import poldergraph.retrieval.service as retrieval_service
 from poldergraph.errors import IndexStaleError
 from poldergraph.retrieval.service import QueryService
 from poldergraph.storage.repository import Repository
+from poldergraph.storage.sqlite import connect, set_meta, writer_transaction
 
 
 def test_query_service_pins_generation_and_marks_mid_query_commit(
@@ -77,6 +79,37 @@ def test_freshness_names_source_read_instruction_for_pending_file(indexed_worksp
     assert "Read the listed source files directly" in freshness["source_read_instruction"]
 
 
+def test_search_cache_reuses_results_only_within_same_generation(
+    indexed_workspace, monkeypatch
+):
+    service = QueryService(
+        Repository(indexed_workspace.con),
+        indexed_workspace.config,
+        root_id=indexed_workspace.root_id(),
+        workspace=indexed_workspace,
+    )
+    calls = 0
+
+    def fake_semantic(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return [], None
+
+    monkeypatch.setattr(retrieval_service, "semantic_candidates", fake_semantic)
+    first = service.search("token behavior", include_semantic=True)
+    second = service.search("token behavior", include_semantic=True)
+    assert calls == 1
+    assert first.consistency_report["status"] == second.consistency_report["status"] == "fresh"
+
+    writer = connect(indexed_workspace.index_dir / "index.sqlite3")
+    try:
+        with writer_transaction(writer):
+            set_meta(writer, "index_generation", "cache-invalidation-generation")
+    finally:
+        writer.close()
+
+    service.search("token behavior", include_semantic=True)
+    assert calls == 2
 def test_git_revision_change_marks_index_stale(indexed_workspace):
     root = indexed_workspace.root
     source = root / "pkg" / "auth.py"

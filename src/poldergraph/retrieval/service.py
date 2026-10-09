@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import subprocess
 import threading
+from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import wraps
 from pathlib import Path
@@ -253,6 +255,8 @@ class QueryService:
         self._freshness_directory_generation: str | None = None
         self._snapshot_lock = threading.RLock()
         self._snapshot_local = threading.local()
+        self._search_cache: OrderedDict[tuple[Any, ...], SearchResponse] = OrderedDict()
+        self._search_cache_limit = 64
 
     def workspace_index(self) -> Any:
         """Index directory, used for size reporting."""
@@ -280,6 +284,20 @@ class QueryService:
         """Run hybrid retrieval across the independent evidence channels."""
         snapshot = self._start_consistency(consistency)
         filters = filters or SearchFilters()
+        # Decision-enabled searches first check deterministic fast paths, which
+        # may change independently of a prior ambiguous-query route.
+        cache_key = None
+        if not provider_enabled(self.config):
+            cache_key = self._search_cache_key(
+                query, limit, filters, include_semantic, include_structural_context
+            )
+            cached = self._search_cache.get(cache_key)
+            if cached is not None:
+                self._search_cache.move_to_end(cache_key)
+                response = deepcopy(cached)
+                response.consistency = consistency
+                response.consistency_report = self._finish_consistency(consistency, snapshot)
+                return response
         baseline_intent = detect_intent(query)
         degraded: list[str] = []
 
@@ -463,7 +481,63 @@ class QueryService:
             consistency=consistency,
         )
         response.consistency_report = self._finish_consistency(consistency, snapshot)
+        if cache_key is not None:
+            self._search_cache[cache_key] = deepcopy(response)
+            self._search_cache.move_to_end(cache_key)
+            while len(self._search_cache) > self._search_cache_limit:
+                self._search_cache.popitem(last=False)
         return response
+
+    def _search_cache_key(
+        self,
+        query: str,
+        limit: int,
+        filters: SearchFilters,
+        include_semantic: bool,
+        include_structural_context: bool,
+    ) -> tuple[Any, ...]:
+        """Key deterministic candidate/ranking work to every retrieval input."""
+        retrieval = self.config.retrieval
+        settings = (
+            retrieval.lexical_candidates,
+            retrieval.semantic_candidates,
+            retrieval.graph_hops,
+            retrieval.max_graph_candidates,
+            retrieval.max_expansion_fanout,
+            tuple(sorted(retrieval.weights.items())),
+            tuple(sorted(retrieval.kind_priors.items())),
+        )
+        backend = None
+        if self.backend is not None:
+            try:
+                info = self.backend.model_info()
+                backend = (info.model_id, info.revision, info.dimensions, info.backend)
+            except Exception:
+                backend = (type(self.backend).__qualname__,)
+        decisions = self.config.decisions
+        decision_settings = (
+            decisions.provider,
+            decisions.model,
+            decisions.endpoint,
+            decisions.confidence_threshold,
+            provider_enabled(self.config),
+        )
+        return (
+            self._index_generation(),
+            self.root_id,
+            query,
+            limit,
+            tuple(sorted(filters.kinds)),
+            tuple(sorted(filters.languages)),
+            tuple(sorted(filters.roots)),
+            tuple(sorted(filters.path_prefixes)),
+            tuple(sorted(filters.provenances)),
+            include_semantic,
+            include_structural_context,
+            settings,
+            backend,
+            decision_settings,
+        )
 
     def _index_generation(self) -> str:
         """Return a stable identifier for the currently indexed scan generation."""
