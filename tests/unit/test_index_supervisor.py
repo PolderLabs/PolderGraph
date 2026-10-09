@@ -25,6 +25,12 @@ def test_poll_backoff_is_bounded_and_resets_on_change() -> None:
     ) == 1.0
 
 
+def test_windows_uses_configurable_polling_fallback() -> None:
+    native_watch = object()
+    assert watcher._watch_backend_for_platform(native_watch, "nt") is None
+    assert watcher._watch_backend_for_platform(native_watch, "posix") is native_watch
+
+
 def test_watch_intervals_are_configurable_and_validated() -> None:
     import pytest
     from pydantic import ValidationError
