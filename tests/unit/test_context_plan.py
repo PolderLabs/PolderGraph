@@ -15,7 +15,7 @@ def test_narrow_lookup_gets_small_lexical_plan():
     plan = plan_context("Where is the AuthService class defined?", 3000)
     assert plan.skipped is False
     assert plan.intent == "locate"
-    assert plan.budget == 1200
+    assert plan.budget == 1000
     assert plan.lanes == ("exact", "lexical")
 
 
@@ -24,6 +24,17 @@ def test_change_task_gets_structural_evidence_plan():
     assert plan.intent == "modify"
     assert "structural" in plan.lanes
     assert "tests" in plan.lanes
+
+
+def test_context_budget_adapts_to_task_intent_and_respects_user_limit():
+    locate = plan_context("Where is AuthService defined?", 6000)
+    debug = plan_context("Debug the failing auth token refresh behavior", 6000)
+    architecture = plan_context("Explain the repository architecture", 6000)
+
+    assert locate.budget == 1000
+    assert debug.budget == 3200
+    assert architecture.budget == 4200
+    assert plan_context("Debug the token flow", 900).budget == 900
 
 
 def test_skipped_context_does_not_run_retrieval(indexed_workspace, monkeypatch):
