@@ -22,6 +22,26 @@ def _project_root(cwd: Path) -> Path:
     return root
 
 
+def _capture_trusted_preferences(event: dict[str, Any]) -> None:
+    """Learn only explicit durable preferences from Codex's user-input event."""
+    prompt = event.get("prompt")
+    cwd = event.get("cwd")
+    if not isinstance(prompt, str) or not isinstance(cwd, str):
+        return
+    root = _project_root(Path(cwd))
+    try:
+        from ..memory import MemoryStore, capture_explicit_user_preferences
+
+        capture_explicit_user_preferences(
+            MemoryStore(root),
+            prompt,
+            trusted_user_message=True,
+        )
+    except Exception as exc:
+        # Memory capture must not prevent Codex from handling its user prompt.
+        sys.stderr.write(f"PolderGraph preference capture skipped ({type(exc).__name__}).\n")
+
+
 def _run(root: Path, args: list[str], timeout: float) -> dict[str, Any] | None:
     executable = shutil.which("poldergraph")
     command = (
@@ -98,6 +118,7 @@ def run_hook(stdin: Any = None, stdout: Any = None) -> int:
     if not isinstance(event, dict) or event.get("hook_event_name") != "UserPromptSubmit":
         target.write("{}\n")
         return 0
+    _capture_trusted_preferences(event)
     context = _context_for(event)
     if context is None:
         target.write("{}\n")

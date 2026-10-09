@@ -31,6 +31,43 @@ def test_codex_hook_emits_user_prompt_submit_context_json(tmp_path, monkeypatch)
     }
 
 
+def test_codex_user_event_captures_explicit_preference_only(tmp_path, monkeypatch):
+    from poldergraph import memory
+
+    database = tmp_path / "shared-memory.sqlite3"
+    monkeypatch.setattr(memory, "default_memory_path", lambda: database)
+    monkeypatch.setattr(codex_hook, "_context_for", lambda event: None)
+    event = {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "I prefer concise explanations.",
+        "cwd": str(tmp_path),
+        "session_id": "session-2",
+        "turn_id": "turn-2",
+    }
+    output = io.StringIO()
+
+    assert codex_hook.run_hook(io.StringIO(json.dumps(event)), output) == 0
+    saved = memory.MemoryStore(tmp_path).list(scope="user")
+    assert [item["content"] for item in saved] == ["I prefer concise explanations."]
+    assert "I prefer concise explanations." not in output.getvalue()
+
+
+def test_codex_non_user_event_cannot_capture_memory(tmp_path, monkeypatch):
+    from poldergraph import memory
+
+    database = tmp_path / "shared-memory.sqlite3"
+    monkeypatch.setattr(memory, "default_memory_path", lambda: database)
+    event = {
+        "hook_event_name": "AfterAgentTurn",
+        "prompt": "I prefer concise explanations.",
+        "cwd": str(tmp_path),
+    }
+    output = io.StringIO()
+
+    assert codex_hook.run_hook(io.StringIO(json.dumps(event)), output) == 0
+    assert not database.exists()
+
+
 def test_codex_hook_uses_offline_context_and_skips_social_plan(tmp_path, monkeypatch):
     calls = []
 

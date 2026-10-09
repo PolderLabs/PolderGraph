@@ -61,10 +61,13 @@ OMP and Codex receive matching user/project memories automatically in
 counts memory text against the same token budget and marks truncation. Context
 retrieval is read-only: it never writes shared memory from query text. This
 prevents quoted repository text or agent-authored tool arguments from being
-treated as user-authored preferences. Users can save preferences and project
-decisions through explicit memory tools. Trusted host user-input capture is
-disabled until an integration can provide verifiable user-message provenance.
-Agents must not write speculative facts or one-time task data.
+treated as user-authored preferences. When explicitly installed, Codex's
+documented `UserPromptSubmit` hook provides trusted user-message provenance and
+may save only preferences accepted by deterministic, secret-filtered rules. It
+does not save raw prompts or load an embedding model. OMP currently retrieves
+memories but does not auto-capture them. Users can save preferences and project
+decisions through explicit memory tools. Agents must not write speculative
+facts or one-time task data.
 
 Project decisions are not inferred from arbitrary task prose; the coding agent
 must save them when it establishes durable, evidence-backed knowledge.

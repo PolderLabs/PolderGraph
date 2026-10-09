@@ -212,7 +212,7 @@ PolderGraph keeps one private memory database for your user account and separate
 - **User memories** carry across every project, such as writing preferences and recurring workflow choices.
 - **Project memories** stay available only when an agent is working in that repository, such as architecture decisions and local conventions.
 
-OMP and Codex retrieve relevant memories automatically when they build task context. Explicit first-person preferences such as “I prefer concise explanations” are learned automatically from that context request; durable project decisions are saved by the agent when established. No separate memory service or repository file is needed. Memory search combines local EmbeddingGemma vectors with keyword matching, rejects weak matches, and avoids model inference when exact keyword evidence is already strong. The same bounded results are available through the CLI and MCP.
+OMP and Codex retrieve relevant memories automatically when they build task context. When the Codex lifecycle hook is explicitly installed, its trusted user-input event can save only explicit, durable first-person preferences; repository context and agent-authored tool arguments never trigger preference capture. Durable project decisions are saved by the agent when established. No separate memory service or repository file is needed. Memory search combines local EmbeddingGemma vectors with keyword matching, rejects weak matches, and avoids model inference when exact keyword evidence is already strong. The same bounded results are available through the CLI and MCP.
 
 ```bash
 # Save a preference for all projects
@@ -255,7 +255,7 @@ Nothing is called by default. The engine is integrated into:
 
 - **Search routing**: ambiguous natural-language queries get a typed decision to select semantic vs structural retrieval path
 - **Memory relevance**: weak candidate memories are filtered before entering agent context
-- **Automatic preference capture**: explicit first-person statements are classified before saving
+- **Automatic preference capture**: the opt-in Codex user-input hook applies deterministic, secret-filtered rules to explicit first-person statements
 
 ```python
 from poldergraph.decisions import choice, decide, predicate, score
