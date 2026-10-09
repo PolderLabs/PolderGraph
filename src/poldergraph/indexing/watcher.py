@@ -76,8 +76,11 @@ def run_watch(
 
     def apply_pending() -> None:
         nonlocal pending, next_reconcile
+        # Model loading can take seconds (and must never occur under the SQLite
+        # writer lock). Prepare the shared backend before serializing the batch.
+        active_backend = get_backend()
         with IndexLock(workspace.index_dir, timeout=0.0):
-            result = apply_changes(workspace, backend=get_backend())
+            result = apply_changes(workspace, backend=active_backend)
         stats["updates"] += 1
         stats["files_indexed"] += result.files_indexed
         if on_update:
