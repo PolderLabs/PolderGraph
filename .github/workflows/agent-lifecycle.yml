@@ -53,6 +53,8 @@ jobs:
         run: uv pip install --system . pytest
       - name: Test bootstrap, locking, and generation consistency
         run: pytest -q tests/unit/test_agent_bootstrap.py tests/unit/test_index_supervisor.py tests/unit/test_query_generation.py tests/unit/test_query_daemon_platform.py tests/unit/test_codex_hook.py
+      - name: Exercise actual MCP server startup and tool flow
+        run: pytest -q tests/integration/test_mcp_contract.py
       - name: Test supervised local decision worker
         run: pytest -q tests/unit/test_decision_worker.py tests/unit/test_decision_runtime.py tests/unit/test_decisions.py
       - name: Test embedding space switching and vector reuse
