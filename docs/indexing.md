@@ -209,7 +209,8 @@ workspace. Its singleton lock prevents duplicate watcher processes, and it reuse
 host's resident embedding backend lazily when an update needs one. Set
 `POLDERGRAPH_NO_WATCHER=1` to opt out. If `watchfiles` is unavailable, it falls back to
 configurable polling that backs off while idle and resets to its configured base interval
-after a change. The default detection interval grows from one to at most ten seconds;
+after a change. Windows uses this loop too because `watchfiles` polling has independent
+timing that cannot honor the workspace bounds. The default detection interval grows from one to at most ten seconds;
 `watch_reconcile_interval_seconds` bounds full reconciliations. `pg_status` reports
 watcher state. The index writer lock uses
 OS-level advisory locking on Linux/macOS and Windows.

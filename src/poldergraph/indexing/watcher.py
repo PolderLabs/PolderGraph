@@ -25,6 +25,11 @@ RECONCILE_SECONDS = 30.0
 POLL_SECONDS = 1.0
 
 
+def _watch_backend_for_platform(watch: Any, platform: str) -> Any:
+    """Prefer the configurable Python polling loop on Windows."""
+    return None if platform == "nt" else watch
+
+
 def _next_poll_interval(current: float, *, minimum: float, maximum: float, changed: bool) -> float:
     """Back off idle fallback scans while keeping change detection bounded."""
     if changed:
@@ -56,6 +61,10 @@ def run_watch(
         from watchfiles import watch
     except ImportError:
         watch = None
+    # The watchfiles polling backend has its own fixed cadence and does not
+    # honor PolderGraph's idle backoff/reconcile limits. Use the same bounded
+    # fallback loop on Windows, where native notifications are unreliable.
+    watch = _watch_backend_for_platform(watch, os.name)
 
     workspace = open_workspace(path)
     debounce = debounce if debounce is not None else workspace.config.index.watch_debounce_seconds
@@ -193,7 +202,7 @@ def _poll_changes(
     def fingerprint() -> dict[str, tuple[int, int]]:
         return {
             item.path: (item.size, item.mtime_ns)
-            for item in Indexer(workspace, backend=None).discover().files
+            for item in Indexer(workspace, backend=None).discover()
         }
 
     previous = fingerprint()

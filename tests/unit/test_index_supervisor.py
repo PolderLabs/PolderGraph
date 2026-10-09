@@ -25,6 +25,12 @@ def test_poll_backoff_is_bounded_and_resets_on_change() -> None:
     ) == 1.0
 
 
+def test_windows_uses_configurable_polling_fallback() -> None:
+    native_watch = object()
+    assert watcher._watch_backend_for_platform(native_watch, "nt") is None
+    assert watcher._watch_backend_for_platform(native_watch, "posix") is native_watch
+
+
 def test_watch_intervals_are_configurable_and_validated() -> None:
     import pytest
     from pydantic import ValidationError
@@ -88,6 +94,7 @@ def test_watcher_ready_callback_fires_after_watch_registration(tmp_path: Path, m
         yield set()
 
     monkeypatch.setitem(sys.modules, "watchfiles", SimpleNamespace(watch=fake_watch))
+    monkeypatch.setattr(watcher, "_watch_backend_for_platform", lambda backend, _platform: backend)
 
     def on_started():
         assert registered.is_set()
@@ -132,6 +139,7 @@ def test_watcher_loads_backend_before_acquiring_writer_lock(indexed_workspace, m
     monkeypatch.setattr(watcher, "IndexLock", FakeIndexLock)
     monkeypatch.setattr(watcher, "apply_changes", fake_apply)
     monkeypatch.setitem(sys.modules, "watchfiles", SimpleNamespace(watch=fake_watch))
+    monkeypatch.setattr(watcher, "_watch_backend_for_platform", lambda backend, _platform: backend)
 
     def backend_provider():
         backend_loaded_under_writer.append("writer" in active_locks)
