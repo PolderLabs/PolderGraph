@@ -39,6 +39,7 @@ def test_codex_hook_bootstraps_fresh_repo_and_injects_real_context(tmp_path, mon
         encoding="utf-8",
     )
     monkeypatch.setenv("POLDERGRAPH_MEMORY_DB", str(tmp_path / "memory" / "memory.sqlite3"))
+    monkeypatch.setenv("POLDERGRAPH_AUTO_INDEX", "1")
     monkeypatch.setenv("POLDERGRAPH_NO_DAEMON", "1")
     event = {
         "hook_event_name": "UserPromptSubmit",
