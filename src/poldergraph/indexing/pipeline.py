@@ -516,7 +516,7 @@ def git_state(root: Path) -> tuple[str | None, str | None]:
     def run(args: list[str]) -> str | None:
         try:
             completed = subprocess.run(
-                [binary, *args], cwd=root, capture_output=True, timeout=10, check=False
+                [binary, *args], cwd=root, capture_output=True, timeout=2, check=False
             )
         except (OSError, subprocess.SubprocessError):
             return None
