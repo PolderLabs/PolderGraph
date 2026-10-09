@@ -723,6 +723,12 @@ class QueryService:
             )
             result.consistency_report = self._finish_consistency(consistency, snapshot)
             return result
+        # Feed known source drift into task planning. These paths are disclosed
+        # as needing a source read: the indexed graph cannot safely stand in
+        # for edits that have not yet been indexed.
+        _pending, changed_paths, _truncated, _error = self._pending_change_details()
+        if changed_paths:
+            plan = plan_context(query, budget, changed_paths=changed_paths)
         budget = plan.budget
         response = self.search(
             query,

@@ -30,6 +30,7 @@ class ContextPlan:
     skipped: bool
     reason: str
     lanes: tuple[str, ...]
+    changed_paths: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -38,13 +39,19 @@ class ContextPlan:
             "skipped": self.skipped,
             "reason": self.reason,
             "lanes": list(self.lanes),
+            "changed_paths": list(self.changed_paths),
+            "changed_paths_source_read_required": bool(self.changed_paths),
         }
 
 
-def plan_context(query: str, budget: int) -> ContextPlan:
+def plan_context(
+    query: str, budget: int, *, changed_paths: tuple[str, ...] | list[str] = ()
+) -> ContextPlan:
     """Select a cheap context policy without initializing embedding backends."""
     text = query.strip()
     normalized_budget = max(0, int(budget))
+    # Stable ordering and a small cap keep plans deterministic and bounded.
+    changed = tuple(sorted(set(changed_paths))[:32])
     if not text or _SOCIAL.fullmatch(text):
         return ContextPlan(
             intent="none",
@@ -52,6 +59,7 @@ def plan_context(query: str, budget: int) -> ContextPlan:
             skipped=True,
             reason="No repository evidence is needed for this message.",
             lanes=(),
+            changed_paths=(),
         )
     if _NARROW.search(text) and len(text.split()) <= 12 and not _BROAD.search(text):
         return ContextPlan(
@@ -60,6 +68,7 @@ def plan_context(query: str, budget: int) -> ContextPlan:
             skipped=False,
             reason="Narrow lookup: use compact exact and lexical evidence.",
             lanes=("exact", "lexical"),
+            changed_paths=changed,
         )
     intent = "modify" if re.search(r"\b(refactor|change|modify|implement|fix)\b", text, re.I) else (
         "debug" if re.search(r"\b(debug|error|failure|failing|bug)\b", text, re.I) else (
@@ -73,6 +82,8 @@ def plan_context(query: str, budget: int) -> ContextPlan:
     lanes = ("exact", "lexical", "semantic")
     if intent in {"modify", "debug", "test", "architecture"}:
         lanes = (*lanes, "structural", "tests")
+    if changed and intent in {"modify", "debug", "test"}:
+        lanes = (*lanes, "changed_files")
     recommended_budget = {
         "explain": 1800,
         "test": 2400,
@@ -92,4 +103,5 @@ def plan_context(query: str, budget: int) -> ContextPlan:
             "retrieve bounded evidence for the selected lanes."
         ),
         lanes=lanes,
+        changed_paths=changed,
     )
