@@ -267,8 +267,55 @@ class Daemon:
         del self._request_local.service
 
     def handle(self, command: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Execute one retrieval command against the resident service."""
+        """Execute one request in a single committed SQLite read generation."""
         service = self._service_for_thread()
+        connection = service.repo.con
+        connection.execute("BEGIN")
+        generation_start = service._index_generation()
+        try:
+            result = self._dispatch(command, arguments, service)
+        except BaseException:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        else:
+            if connection.in_transaction:
+                connection.execute("COMMIT")
+
+        freshness = service.freshness()
+        report = result.get("consistency_report") if isinstance(result, dict) else None
+        if isinstance(report, dict):
+            generation_end = freshness["generation"]
+            changed = generation_start != generation_end
+            report["generation_start"] = generation_start
+            report["generation_end"] = generation_end
+            report["generation_changed"] = changed
+            report["structural_freshness"] = freshness["structural"]
+            report["pending_changes"] = freshness["pending_changes"]
+            report["stale_files"] = freshness["stale_files"]
+            report["stale_files_truncated"] = freshness["stale_files_truncated"]
+            report["stale_since"] = freshness["stale_since"]
+            stale = not freshness["fresh"]
+            if stale or changed:
+                report["status"] = "stale" if stale else "generation_changed"
+                report["source_read_required"] = True
+                report["verified"] = False
+            if report.get("mode") == "strict" and (stale or changed):
+                from .errors import IndexStaleError
+
+                error = IndexStaleError(
+                    "The index changed during this query.",
+                    details={"freshness": freshness},
+                )
+                return {"ok": False, "error": error.to_dict()}
+        if isinstance(result, dict) and isinstance(result.get("index"), dict):
+            result["index"].update(freshness)
+        return result
+
+    def _dispatch(
+        self, command: str, arguments: dict[str, Any], service: Any
+    ) -> dict[str, Any]:
+        """Dispatch a request while its read transaction is active."""
         from .errors import PolderGraphError
 
         try:

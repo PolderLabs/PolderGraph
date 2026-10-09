@@ -6,7 +6,9 @@ implementation of search for any surface.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
+from functools import wraps
 from pathlib import Path
 from typing import Any, Literal
 
@@ -26,6 +28,82 @@ from .semantic import neighbors_of, semantic_candidates
 from .structural import PathResult, expand, find_path, find_tests, impact
 
 STRICT_FRESHNESS_HASH_BYTE_LIMIT = 64 * 1024 * 1024
+
+
+def _read_generation(method: Any) -> Any:
+    """Run nested query operations against one serialized SQLite snapshot."""
+
+    @wraps(method)
+    def wrapped(self: QueryService, *args: Any, **kwargs: Any) -> Any:
+        with self._snapshot_lock:
+            connection = self.repo.con
+            depth = getattr(self._snapshot_local, "depth", 0)
+            owns_transaction = depth == 0 and not connection.in_transaction
+            if owns_transaction:
+                connection.execute("BEGIN")
+                data_version = int(connection.execute("PRAGMA data_version").fetchone()[0])
+                generation_start = self._index_generation()
+                self._snapshot_local.data_version = data_version
+                self._snapshot_local.generation = generation_start
+            self._snapshot_local.depth = depth + 1
+            try:
+                result = method(self, *args, **kwargs)
+            except BaseException:
+                self._snapshot_local.depth = depth
+                if owns_transaction and connection.in_transaction:
+                    connection.execute("ROLLBACK")
+                raise
+            self._snapshot_local.depth = depth
+            if not owns_transaction:
+                return result
+
+            connection.execute("COMMIT")
+            generation_end = self._index_generation()
+            data_version_end = int(connection.execute("PRAGMA data_version").fetchone()[0])
+            freshness = self.freshness()
+            generation_changed = generation_start != generation_end
+            database_changed = data_version != data_version_end
+            changed = generation_changed or database_changed
+            freshness.update(
+                {
+                    "generation_start": generation_start,
+                    "generation_end": generation_end,
+                    "generation_changed": generation_changed,
+                    "database_changed": database_changed,
+                }
+            )
+            report = getattr(result, "consistency_report", None)
+            if report is None and isinstance(result, dict):
+                report = result.get("consistency_report")
+            stale = not freshness["fresh"]
+            if isinstance(report, dict):
+                report.update(
+                    {
+                        "generation_start": generation_start,
+                        "generation_end": generation_end,
+                        "generation_changed": generation_changed,
+                        "database_changed": database_changed,
+                        "structural_freshness": freshness["structural"],
+                        "pending_changes": freshness["pending_changes"],
+                        "stale_files": freshness["stale_files"],
+                        "stale_files_truncated": freshness["stale_files_truncated"],
+                        "stale_since": freshness["stale_since"],
+                    }
+                )
+                if stale or changed:
+                    report["status"] = "stale" if stale else "generation_changed"
+                    report["source_read_required"] = True
+                    report["verified"] = False
+            if kwargs.get("consistency", "bounded") == "strict" and (stale or changed):
+                raise IndexStaleError(
+                    "The index changed during this query.",
+                    details={"freshness": freshness},
+                )
+            if isinstance(result, dict) and isinstance(result.get("index"), dict):
+                result["index"].update(freshness)
+            return result
+
+    return wrapped
 
 
 @dataclass
@@ -136,6 +214,8 @@ class QueryService:
         self._communities_token: tuple[Any, ...] | None = None
         self._freshness_directories: dict[str, int] | None = None
         self._freshness_directory_generation: str | None = None
+        self._snapshot_lock = threading.RLock()
+        self._snapshot_local = threading.local()
 
     def workspace_index(self) -> Any:
         """Index directory, used for size reporting."""
@@ -149,6 +229,7 @@ class QueryService:
 
     # ---------------------------------------------------------------- search
 
+    @_read_generation
     def search(
         self,
         query: str,
@@ -381,6 +462,7 @@ class QueryService:
 
     # --------------------------------------------------------------- explain
 
+    @_read_generation
     def explain(
         self,
         entity_ref: str,
@@ -457,6 +539,7 @@ class QueryService:
             "language": entity.language,
         }
 
+    @_read_generation
     def path(
         self,
         source_ref: str,
@@ -507,6 +590,7 @@ class QueryService:
             "edges": [edge.to_dict() for edge in result.edges],
         }
 
+    @_read_generation
     def impact(
         self,
         entity_ref: str,
@@ -535,6 +619,7 @@ class QueryService:
         payload["consistency_report"] = self._finish_consistency(consistency, snapshot)
         return payload
 
+    @_read_generation
     def related(
         self,
         entity_ref: str,
@@ -570,6 +655,7 @@ class QueryService:
         result["consistency_report"] = self._finish_consistency(consistency, snapshot)
         return result
 
+    @_read_generation
     def find_tests(
         self,
         entity_ref: str | None = None,
@@ -609,6 +695,7 @@ class QueryService:
 
     # --------------------------------------------------------------- context
 
+    @_read_generation
     def context(
         self,
         query: str,

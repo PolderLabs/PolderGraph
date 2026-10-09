@@ -232,6 +232,57 @@ def test_socket_server_serves_three_clients_concurrently(tmp_path):
     assert not server.is_alive()
 
 
+def test_daemon_pins_query_generation_and_marks_post_commit_change(tmp_path, monkeypatch):
+    from poldergraph.config.models import Config
+    from poldergraph.indexing.pipeline import Indexer
+    from poldergraph.storage.sqlite import connect, set_meta, writer_transaction
+    from poldergraph.workspace import create_index, open_workspace
+
+    (tmp_path / "auth.py").write_text("class AuthService:\n    pass\n", encoding="utf-8")
+    create_index(tmp_path, Config(embedding={"backend": "none"}))
+    workspace = open_workspace(tmp_path)
+    indexer = Indexer(workspace, backend=None)
+    indexer.ensure_root()
+    indexer.run(indexer.discover())
+    workspace.close()
+
+    daemon = Daemon(tmp_path)
+    daemon._ensure_loaded()
+    original_dispatch = daemon._dispatch
+    revisions = iter(("generation-during-query-1", "generation-during-query-2"))
+
+    def dispatch_and_commit_change(command, arguments, service):
+        result = original_dispatch(command, arguments, service)
+        writer = connect(tmp_path / ".poldergraph" / "index.sqlite3")
+        try:
+            with writer_transaction(writer):
+                set_meta(writer, "index_generation", next(revisions))
+        finally:
+            writer.close()
+        return result
+
+    monkeypatch.setattr(daemon, "_dispatch", dispatch_and_commit_change)
+    try:
+        bounded = daemon.handle(
+            "search",
+            {"query": "AuthService", "include_semantic": False, "consistency": "bounded"},
+        )
+        assert bounded["consistency_report"]["status"] == "generation_changed"
+        assert bounded["consistency_report"]["generation_changed"] is True
+        assert bounded["consistency_report"]["source_read_required"] is True
+
+        strict = daemon.handle(
+            "search",
+            {"query": "AuthService", "include_semantic": False, "consistency": "strict"},
+        )
+        assert strict["ok"] is False
+        assert strict["error"]["code"] == "INDEX_STALE"
+    finally:
+        if daemon._supervisor:
+            daemon._supervisor.stop()
+        daemon.close()
+
+
 class TestSocketPaths:
     def test_socket_lives_inside_index_dir(self, indexed_workspace):
         index_dir = indexed_workspace.index_dir

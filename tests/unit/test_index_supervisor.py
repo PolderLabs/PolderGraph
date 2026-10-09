@@ -41,3 +41,51 @@ def test_supervisor_can_be_disabled_without_starting_thread(tmp_path: Path, monk
     supervisor = IndexSupervisor(tmp_path)
     assert supervisor.start()["state"] == "disabled"
     assert supervisor._thread is None
+
+
+def test_supervisor_indexes_a_live_edit_without_model_download(tmp_path: Path) -> None:
+    import time
+
+    from poldergraph.config.models import Config
+    from poldergraph.indexing.pipeline import Indexer
+    from poldergraph.workspace import create_index, open_workspace
+
+    source = tmp_path / "module.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    create_index(tmp_path, Config(embedding={"backend": "none"}))
+    workspace = open_workspace(tmp_path)
+    indexer = Indexer(workspace, backend=None)
+    indexer.ensure_root()
+    indexer.run(indexer.discover())
+    workspace.close()
+
+    supervisor = IndexSupervisor(tmp_path)
+    assert supervisor.start(wait_seconds=3)["state"] in {"running", "supervised_elsewhere"}
+    source.write_text("def live_supervisor_probe():\n    return True\n", encoding="utf-8")
+    deadline = time.monotonic() + 15
+    try:
+        while time.monotonic() < deadline:
+            workspace = open_workspace(tmp_path)
+            try:
+                if indexer_entity_exists(workspace, "live_supervisor_probe"):
+                    break
+            finally:
+                workspace.close()
+            time.sleep(0.1)
+    finally:
+        supervisor.stop()
+
+    workspace = open_workspace(tmp_path)
+    try:
+        assert indexer_entity_exists(workspace, "live_supervisor_probe")
+    finally:
+        workspace.close()
+
+
+def indexer_entity_exists(workspace, name: str) -> bool:
+    return (
+        workspace.con.execute(
+            "SELECT 1 FROM entities WHERE name=? LIMIT 1", (name,)
+        ).fetchone()
+        is not None
+    )
