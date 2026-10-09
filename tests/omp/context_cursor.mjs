@@ -3,6 +3,7 @@ import extension from "../../omp/index.ts";
 
 const handlers = new Map();
 const contextCalls = [];
+let readyCalls = 0;
 const chain = () => ({
 	int() { return this; }, min() { return this; }, max() { return this; },
 	default() { return this; }, describe() { return this; }, optional() { return this; },
@@ -24,7 +25,11 @@ const pi = {
 	logger: { warn(message) { throw new Error(message); } },
 	async exec(_command, args) {
 		if (args[0] === "--version") return { code: 0, stdout: "poldergraph test", stderr: "", killed: false };
-		if (args[0] === "agent-ready") return { code: 0, stdout: JSON.stringify({ ok: true, data: { state: "ready" } }), stderr: "", killed: false };
+		if (args[0] === "agent-ready") {
+			readyCalls += 1;
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			return { code: 0, stdout: JSON.stringify({ ok: true, data: { state: "ready" } }), stderr: "", killed: false };
+		}
 		if (args[0] !== "context") throw new Error(`Unexpected PolderGraph command: ${args[0]}`);
 		contextCalls.push(args);
 		const repeat = contextCalls.length > 1;
@@ -60,4 +65,10 @@ assert(contextCalls[1].includes("--new-evidence-since"), "subsequent retrieval m
 const stale = await handlers.get("before_agent_start")(event, { cwd: process.cwd() });
 assert(stale?.systemPrompt?.some((item) => item.includes("AuthService")), "stale index evidence remains visible");
 assert.equal(contextCalls.length, 3);
-console.log("OMP context cursor suppresses repeated fresh evidence and retains stale-state context.");
+
+const setupCount = readyCalls;
+handlers.get("tool_result")({ toolName: "edit", isError: false }, { cwd: process.cwd() });
+handlers.get("tool_result")({ toolName: "write", isError: false }, { cwd: process.cwd() });
+await new Promise((resolve) => setTimeout(resolve, 30));
+assert.equal(readyCalls - setupCount, 1, "concurrent successful edits should coalesce into one refresh");
+console.log("OMP cursor suppresses repeated fresh evidence, preserves stale context, and coalesces edit refreshes.");
