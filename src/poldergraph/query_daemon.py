@@ -285,6 +285,7 @@ class Daemon:
         """Execute one request in a single committed SQLite read generation."""
         service = self._service_for_thread()
         connection = service.repo.con
+        data_version_start = int(connection.execute("PRAGMA data_version").fetchone()[0])
         connection.execute("BEGIN")
         generation_start = service._index_generation()
         try:
@@ -302,20 +303,31 @@ class Daemon:
         if isinstance(report, dict):
             generation_end = freshness["generation"]
             changed = generation_start != generation_end
+            database_changed = (
+                int(connection.execute("PRAGMA data_version").fetchone()[0])
+                != data_version_start
+            )
             report["generation_start"] = generation_start
             report["generation_end"] = generation_end
             report["generation_changed"] = changed
+            report["database_changed"] = database_changed
             report["structural_freshness"] = freshness["structural"]
             report["pending_changes"] = freshness["pending_changes"]
             report["stale_files"] = freshness["stale_files"]
             report["stale_files_truncated"] = freshness["stale_files_truncated"]
             report["stale_since"] = freshness["stale_since"]
             stale = not freshness["fresh"]
-            if stale or changed:
-                report["status"] = "stale" if stale else "generation_changed"
+            if stale or changed or database_changed:
+                report["status"] = (
+                    "stale"
+                    if stale
+                    else "generation_changed"
+                    if changed
+                    else "database_changed"
+                )
                 report["source_read_required"] = True
                 report["verified"] = False
-            if report.get("mode") == "strict" and (stale or changed):
+            if report.get("mode") == "strict" and (stale or changed or database_changed):
                 from .errors import IndexStaleError
 
                 error = IndexStaleError(
