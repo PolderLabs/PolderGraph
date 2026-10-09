@@ -1,6 +1,10 @@
+import json
 from concurrent.futures import ThreadPoolExecutor
 
+from typer.testing import CliRunner
+
 from poldergraph.agents.bootstrap import ensure_workspace_ready
+from poldergraph.cli import app
 from poldergraph.workspace import find_index_dir, open_workspace
 
 
@@ -42,6 +46,31 @@ def test_project_opt_out_prevents_automatic_index_creation(tmp_path):
     assert result["state"] == "unavailable"
     assert "Remove .poldergraph-disable" in result["recovery"]
     assert find_index_dir(tmp_path) is None
+
+
+def test_agent_auto_index_command_disables_and_reenables_project(tmp_path):
+    marker = tmp_path / ".poldergraph-disable"
+    runner = CliRunner()
+
+    disabled = runner.invoke(app, ["agent-auto-index", str(tmp_path), "--json"])
+    assert disabled.exit_code == 0, disabled.output
+    assert json.loads(disabled.output)["data"] == {
+        "root": str(tmp_path),
+        "enabled": False,
+        "changed": True,
+        "opt_out_file": str(marker),
+    }
+    assert marker.is_file()
+    assert ensure_workspace_ready(tmp_path)["state"] == "unavailable"
+
+    enabled = runner.invoke(
+        app, ["agent-auto-index", str(tmp_path), "--enable", "--json"]
+    )
+    assert enabled.exit_code == 0, enabled.output
+    assert json.loads(enabled.output)["data"]["enabled"] is True
+    assert json.loads(enabled.output)["data"]["changed"] is True
+    assert not marker.exists()
+    assert ensure_workspace_ready(tmp_path)["state"] == "ready_structural"
 
 
 def test_environment_opt_out_prevents_automatic_index_creation(tmp_path, monkeypatch):

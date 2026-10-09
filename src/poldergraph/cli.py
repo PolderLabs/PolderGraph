@@ -115,6 +115,48 @@ def agent_ready(
         raise typer.Exit(int(exc.exit_code))
 
 
+@app.command("agent-auto-index")
+def agent_auto_index(
+    path: Optional[Path] = typer.Argument(None, help="Repository or workspace root."),
+    enable: bool = typer.Option(False, "--enable", help="Remove the project's auto-index opt-out."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Disable automatic structural indexing for this project, or re-enable it."""
+    from .agents.bootstrap import workspace_root
+
+    root = workspace_root(path)
+    marker = root / ".poldergraph-disable"
+    try:
+        was_enabled = not marker.exists()
+        if enable:
+            marker.unlink(missing_ok=True)
+            enabled = True
+        else:
+            marker.touch(exist_ok=True)
+            enabled = False
+    except OSError as exc:
+        error = UsageError(
+            f"Could not update automatic indexing preference ({type(exc).__name__}).",
+            remediation=f"Check write permissions for {root} and retry.",
+        )
+        if json_output:
+            emit_error("agent-auto-index", error)
+        else:
+            typer.secho(f"error: {error.message}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(int(error.exit_code)) from exc
+    data = {
+        "root": str(root),
+        "enabled": enabled,
+        "changed": was_enabled != enabled,
+        "opt_out_file": str(marker),
+    }
+    if json_output:
+        emit_json(envelope(command="agent-auto-index", data=data))
+    else:
+        state = "enabled" if enabled else "disabled"
+        typer.echo(f"Automatic PolderGraph indexing {state} for {root}.")
+
+
 @app.command()
 def init(
     path: Optional[Path] = typer.Argument(None, help="Repository or workspace root."),

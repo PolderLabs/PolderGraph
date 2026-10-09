@@ -42,6 +42,19 @@ poldergraph update --quiet
 
 If MCP is available, use MCP tools instead of shelling out.
 
+### Project-level auto-index opt-out
+
+Automatic structural indexing can be disabled or re-enabled explicitly for a
+project. This does not delete its existing index or change global agent setup:
+
+```bash
+poldergraph agent-auto-index /path/to/project
+poldergraph agent-auto-index /path/to/project --enable
+```
+
+The command creates or removes `.poldergraph-disable` at the detected project
+root. `POLDERGRAPH_AUTO_INDEX=0` remains available as a global opt-out.
+
 ## MCP server
 
 Command:
