@@ -204,9 +204,12 @@ Semantic edges primarily support visualization/community discovery; live semanti
 - publishes graph/index change events to the dashboard,
 - remains responsive under rapid editor writes.
 
-The index writer lock uses OS-level advisory locking on Linux/macOS and Windows. Automatic
-startup from MCP and the query daemon, plus a polling fallback when native watching is
-unavailable, are still being integrated.
+MCP stdio and the query daemon start this supervisor automatically for an indexed
+workspace. Its singleton lock prevents duplicate watcher processes, and it reuses the
+host's resident embedding backend lazily when an update needs one. Set
+`POLDERGRAPH_NO_WATCHER=1` to opt out. If `watchfiles` is unavailable, it falls back to
+five-second polling; `pg_status` reports watcher state. The index writer lock uses
+OS-level advisory locking on Linux/macOS and Windows.
 
 ## Git awareness
 

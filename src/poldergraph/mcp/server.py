@@ -6,6 +6,7 @@ is no agent-only retrieval implementation.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -65,33 +66,48 @@ def build_server(root: Path | None = None) -> Any:
             self._workspace = None
             self._repo: Repository | None = None
             self._service = None
+            self._supervisor = None
+            self._service_lock = threading.RLock()
 
         def service(self, *, need_backend: bool = False) -> Any:
-            if self._service is None:
-                self._workspace, self._repo, self._service = build_service(root, need_backend=False)
-            if need_backend and getattr(self._service, "backend", None) is None:
-                from ..embedding.gemma import create_backend
+            with self._service_lock:
+                if self._service is None:
+                    self._workspace, self._repo, self._service = build_service(
+                        root, need_backend=False
+                    )
+                if need_backend and getattr(self._service, "backend", None) is None:
+                    from ..embedding.gemma import create_backend
 
-                config = self._service.config
-                if config.embedding.backend != "none":
-                    try:
-                        self._service.backend = create_backend(
-                            config,
-                            cache_dir=None,  # type: ignore[union-attr]
-                        )
-                    except Exception:
-                        # Model load can fail for many reasons (disk, network,
-                        # version). Degrade to lexical-only rather than failing
-                        # the entire tool invocation.
-                        self._service.backend = None
-            return self._service
+                    config = self._service.config
+                    if config.embedding.backend != "none":
+                        try:
+                            self._service.backend = create_backend(config, cache_dir=None)
+                        except Exception:
+                            # A missing local model must not disable structural
+                            # retrieval or interrupt the MCP request.
+                            self._service.backend = None
+                return self._service
 
         def repo(self) -> Repository:
             self.service()
             assert self._repo is not None
             return self._repo
 
+        def start_supervisor(self) -> dict[str, Any]:
+            service = self.service()
+            if self._supervisor is None:
+                from ..indexing.supervisor import IndexSupervisor
+
+                self._supervisor = IndexSupervisor(
+                    service.root,
+                    backend_provider=lambda: self.service(need_backend=True).backend,
+                )
+            return self._supervisor.start()
+
         def close(self) -> None:
+            if self._supervisor is not None:
+                self._supervisor.stop()
+                self._supervisor = None
             if self._workspace is not None:
                 self._workspace.close()
             self._workspace = None
@@ -142,6 +158,11 @@ def build_server(root: Path | None = None) -> Any:
             },
             "database_bytes": database_size_bytes(service.workspace_index()),
             "last_scan_at": get_meta(repo.con, "last_scan_at"),
+            "supervisor": (
+                session._supervisor.status()
+                if session._supervisor is not None
+                else {"state": "not_started", "error": None}
+            ),
         }
         return _envelope("pg_status") | {"data": payload}
 
@@ -507,6 +528,8 @@ def run_server(root: Path | None = None) -> None:
     server = build_server(root)
     session = getattr(server, "poldergraph_session", None)
     try:
+        if session is not None:
+            session.start_supervisor()
         server.run()
     finally:
         if session is not None:

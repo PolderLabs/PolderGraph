@@ -854,6 +854,7 @@ class QueryService:
         stale_paths: list[str] = []
         pending = 0
         hashed_bytes = 0
+        reconciliation_required = False
 
         def mark_stale(path: str) -> None:
             nonlocal pending
@@ -877,6 +878,12 @@ class QueryService:
                 bool(record["mtime_ns"]) and mtime_ns != record["mtime_ns"]
             )
             if metadata_changed:
+                if Path(record["path"]).name in {
+                    ".gitignore",
+                    ".ignore",
+                    ".poldergraphignore",
+                }:
+                    reconciliation_required = True
                 mark_stale(record["path"])
                 continue
             if verify_content:
@@ -914,7 +921,7 @@ class QueryService:
                 except OSError:
                     directories_unchanged = False
                     break
-            if directories_unchanged:
+            if directories_unchanged and not reconciliation_required:
                 # File edits/deletions were checked above. Unchanged directory
                 # mtimes prove there are no new or renamed entries, avoiding a
                 # full ignore-aware tree walk on the common query path.

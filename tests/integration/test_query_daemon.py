@@ -7,6 +7,8 @@ execution, correct invalidation after an index update, and safe fallback.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from poldergraph.query_daemon import (
@@ -52,6 +54,8 @@ def daemon(tmp_path_factory):
     instance = Daemon(workspace)
     instance._ensure_loaded()
     yield instance
+    if instance._supervisor:
+        instance._supervisor.stop()
     instance._workspace.close() if instance._workspace else None
 
 
@@ -67,6 +71,10 @@ class TestArgumentMapping:
 
 
 class TestDaemonResults:
+    def test_daemon_starts_workspace_supervisor(self, daemon):
+        assert daemon._supervisor is not None
+        assert daemon._supervisor.status()["state"] in {"running", "supervised_elsewhere"}
+
     def test_search_matches_in_process(self, daemon):
         """A daemon answer must equal the answer computed in-process.
 
@@ -118,6 +126,20 @@ class TestDaemonResults:
         assert result["ok"] is False
         assert result["error"]["code"] == "INDEX_STALE"
         assert "auth.py" in result["error"]["details"]["freshness"]["stale_files"]
+
+    def test_supervisor_indexes_an_edit_without_manual_update(self, daemon):
+        source = daemon.root / "auth.py"
+        source.write_text(
+            source.read_text() + "\n\ndef automatic_watch_probe():\n    return True\n"
+        )
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if daemon._service.resolve_entity("automatic_watch_probe") is not None:
+                break
+            time.sleep(0.1)
+        assert daemon._service.resolve_entity("automatic_watch_probe") is not None, (
+            daemon._supervisor.status() if daemon._supervisor else None
+        )
 
 
 class TestSocketPaths:
