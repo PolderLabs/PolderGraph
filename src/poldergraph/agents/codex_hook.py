@@ -13,6 +13,15 @@ CONTEXT_BUDGET = 1800
 MAX_PROMPT_CHARS = 24_000
 
 
+def _project_root(cwd: Path) -> Path:
+    """Use the enclosing Git worktree/repository root for nested agent CWDs."""
+    root = cwd.resolve()
+    for candidate in (root, *root.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return root
+
+
 def _run(root: Path, args: list[str], timeout: float) -> dict[str, Any] | None:
     executable = shutil.which("poldergraph")
     command = (
@@ -40,9 +49,10 @@ def _context_for(event: dict[str, Any]) -> str | None:
         return None
     if not isinstance(cwd, str):
         return None
-    root = Path(cwd).resolve()
-    if not root.is_dir():
+    cwd_path = Path(cwd).resolve()
+    if not cwd_path.is_dir():
         return None
+    root = _project_root(cwd_path)
 
     status = _run(root, ["status", "--json"], timeout=15)
     if status is None:

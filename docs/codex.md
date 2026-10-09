@@ -2,7 +2,8 @@
 
 PolderGraph can add repository context to Codex automatically with Codex's
 `UserPromptSubmit` lifecycle hook. The hook receives the user prompt and
-workspace path from Codex, refreshes the local index when needed, and returns
+workspace path from Codex, resolves nested working directories to their
+enclosing Git repository or worktree, refreshes the local index when needed, and returns
 context through Codex's documented `hookSpecificOutput.additionalContext`
 field. It does not need the model to call an MCP tool first.
 
