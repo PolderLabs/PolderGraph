@@ -58,6 +58,7 @@ function splitCommandLine(input: string): string[] {
 export default function polderGraphExtension(pi: ExtensionAPI) {
 	const z = pi.zod;
 	const indexing = new Map<string, Promise<void>>();
+	const readyRoots = new Set<string>();
 	const workspaceRoots = new Map<string, string>();
 	const evidenceCursors = new Map<string, string>();
 	let cliPath: string | undefined;
@@ -132,14 +133,15 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 		}
 	}
 
-	async function ensureIndex(cwd: string): Promise<void> {
+	async function ensureIndex(cwd: string, force = false): Promise<void> {
 		const root = await resolveWorkspaceRoot(cwd);
 		const active = indexing.get(root);
 		if (active) return active;
+		if (!force && readyRoots.has(root)) return;
 		const work = (async () => {
 			const ready = await runJson(["agent-ready", "--quiet"], root);
 			if (!ready.ok) throw new Error(formatResult(ready));
-			if ((ready.data as { state?: string } | undefined)?.state === "unavailable") return;
+			readyRoots.add(root);
 		})();
 		indexing.set(root, work);
 		try {
@@ -171,14 +173,17 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 	// Start indexing without blocking session startup. The first task joins this
 	// job before receiving context, and later turns refresh stale data.
 	pi.on("session_start", (_event, ctx) => {
-		void resolveWorkspaceRoot(ctx.cwd).then((root) => evidenceCursors.delete(root));
-		void ensureIndex(ctx.cwd).catch((error) => {
+		void resolveWorkspaceRoot(ctx.cwd).then(async (root) => {
+			readyRoots.delete(root);
+			evidenceCursors.delete(root);
+			await ensureIndex(root, true);
+		}).catch((error) => {
 			pi.logger.warn(`PolderGraph automatic setup failed: ${error instanceof Error ? error.message : String(error)}`);
 		});
 	});
 	pi.on("tool_result", (event, ctx) => {
 		if (event.isError || (event.toolName !== "edit" && event.toolName !== "write")) return;
-		void ensureIndex(ctx.cwd).catch((error) => {
+		void ensureIndex(ctx.cwd, true).catch((error) => {
 			pi.logger.warn(`PolderGraph background refresh failed: ${error instanceof Error ? error.message : String(error)}`);
 		});
 	});
