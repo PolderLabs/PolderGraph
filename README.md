@@ -247,6 +247,18 @@ uv run --extra semantic --extra vectors python scripts/benchmark_memory.py --dev
 
 The test follows the separation of accurate retrieval and abstention emphasized by [LongMemEval](https://arxiv.org/abs/2410.10813) and [MemoryAgentBench](https://arxiv.org/abs/2507.05257). These results are local to the recorded dataset, model, and CPU; rerun on the target machine before comparing performance.
 
+### Context planner benchmark
+
+On the same synthetic repository corpus, we compared task-adaptive context with a fixed 3,000-token context budget. The offline run used 8 repository questions plus greeting and unrelated prompts, repeated 30 times each, with semantic embeddings disabled. The planner matched the baseline's **87.5% expected-entity case recall** while using **520 vs 1,026 estimated content tokens per request** (49% fewer). Expected-entity precision was **23.7% vs 10.4%**, and the planner skipped retrieval on the two unrelated prompts. Mean latency was **4.0 ms vs 3.1 ms**; p95 was **7.2 ms vs 5.5 ms**. The extra planning/packing work adds a few milliseconds in this small local run, while reducing context and irrelevant evidence.
+
+This is an evidence-coverage proxy, not model-judged grounding or task success. It uses a synthetic corpus, lexical/structural retrieval, and one machine; it does not establish that an agent solves coding tasks better. Reproduce it with:
+
+```bash
+uv run python tests/benchmarks/benchmark_context_planner.py --repeats 30
+```
+
+See [benchmark methodology](docs/benchmark-methodology.md#context-planner-benchmark) for metric definitions and limitations.
+
 ## Typed decisions API
 
 PolderGraph includes a provider-neutral typed decisions engine for asking structured questions about code and state. It supports three backends:
