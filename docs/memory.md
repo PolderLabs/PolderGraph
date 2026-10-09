@@ -115,12 +115,16 @@ the agent wants to inspect additional preferences or older decisions.
 ## OMP and Codex
 
 The OMP extension injects budgeted `context` (including memory) before each
-agent task and exposes memory search, save, update, and forget tools. Its
+agent task and exposes memory search, save, update, and forget tools. Its cursor
+prevents unchanged evidence from being injected again in the same session. Its
 instructions say to persist stable preferences and durable repository
 knowledge as the task progresses.
 
-Codex uses the same project-scoped MCP server. `pg_context` automatically
-recalls memory and the generated PolderGraph skill explains when to call
+Codex uses the same project-scoped MCP server. Its `UserPromptSubmit` hook
+automatically refreshes the shared context cursor for the current session and
+skips repeated evidence while the index stays fresh; cursor files contain hashes
+only and expire after seven days. `pg_context` automatically recalls memory and
+the generated PolderGraph skill explains when to call
 `pg_memory_search`, `pg_memory_add`, `pg_memory_update`, and
 `pg_memory_forget`. Run `poldergraph setup --agent codex` to refresh the skill
 and MCP configuration after upgrading.

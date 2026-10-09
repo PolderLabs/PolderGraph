@@ -94,6 +94,59 @@ def test_codex_hook_uses_offline_context_and_skips_social_plan(tmp_path, monkeyp
     assert calls[1][0] == "context"
 
 
+def test_codex_hook_reuses_per_session_context_cursor(tmp_path, monkeypatch):
+    cursor_path = tmp_path / "session-context.json"
+    calls = []
+    context_calls = 0
+
+    def fake_run(root, args, timeout):
+        nonlocal context_calls
+        calls.append(args)
+        if args[0] == "agent-ready":
+            return {"ok": True}
+        context_calls += 1
+        if context_calls == 1:
+            return {
+                "ok": True,
+                "data": {
+                    "plan": {"skipped": False},
+                    "index": {"fresh": True},
+                    "entities": [{"id": "entity-a"}],
+                    "evidence_cursor": "opaque-cursor-1",
+                    "new_evidence_count": 1,
+                },
+            }
+        return {
+            "ok": True,
+            "data": {
+                "plan": {"skipped": False},
+                "index": {"fresh": True},
+                "entities": [],
+                "evidence_cursor": "opaque-cursor-1",
+                "new_evidence_count": 0,
+            },
+        }
+
+    monkeypatch.setattr(codex_hook, "_run", fake_run)
+    monkeypatch.setattr(codex_hook, "_context_cursor_path", lambda _event, _root: cursor_path)
+    event = {
+        "prompt": "explain the authentication entry point",
+        "cwd": str(tmp_path),
+        "session_id": "codex-session-1",
+    }
+
+    assert codex_hook._context_for(event) is not None
+    assert json.loads(cursor_path.read_text())["cursor"] == "opaque-cursor-1"
+    assert event["prompt"] not in cursor_path.read_text()
+
+    assert codex_hook._context_for(event) is None
+    context_calls_made = [call for call in calls if call[0] == "context"]
+    assert "--new-evidence-since" not in context_calls_made[0]
+    assert context_calls_made[1][
+        context_calls_made[1].index("--new-evidence-since") + 1
+    ] == "opaque-cursor-1"
+
+
 def test_codex_hook_refreshes_stale_index_without_model(tmp_path, monkeypatch):
     calls = []
 

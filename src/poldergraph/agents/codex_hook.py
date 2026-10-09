@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +25,70 @@ def _project_root(cwd: Path) -> Path:
         if (candidate / ".git").exists():
             return candidate
     return root
+
+
+def _context_cursor_path(event: dict[str, Any], root: Path) -> Path | None:
+    """Return a private per-session cursor path without using session data as a path."""
+    session_id = event.get("session_id")
+    if not isinstance(session_id, str) or not session_id or len(session_id) > 512:
+        return None
+    from ..memory import default_memory_path
+
+    key = hashlib.sha256(f"{session_id}\0{root.resolve()}".encode()).hexdigest()
+    directory = default_memory_path().parent / "context-cursors"
+    try:
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        directory.chmod(0o700)
+        candidates = list(directory.glob("*.json"))
+        now = time.time()
+        metadata = []
+        for candidate in candidates:
+            try:
+                modified = candidate.stat().st_mtime
+                if now - modified > 7 * 24 * 60 * 60:
+                    candidate.unlink(missing_ok=True)
+                else:
+                    metadata.append((modified, candidate))
+            except OSError:
+                continue
+        for _modified, old_path in sorted(metadata)[:-128]:
+            with contextlib.suppress(OSError):
+                old_path.unlink(missing_ok=True)
+    except OSError:
+        return None
+    return directory / f"{key}.json"
+
+
+def _read_context_cursor(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        if time.time() - path.stat().st_mtime > 7 * 24 * 60 * 60:
+            path.unlink(missing_ok=True)
+            return None
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    cursor = value.get("cursor") if isinstance(value, dict) else None
+    return cursor if isinstance(cursor, str) and len(cursor) <= 16_384 else None
+
+
+def _write_context_cursor(path: Path | None, cursor: str) -> None:
+    if path is None or len(cursor) > 16_384:
+        return
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as output:
+            temporary = Path(output.name)
+            json.dump({"cursor": cursor, "updated_at": int(time.time())}, output)
+        with contextlib.suppress(OSError):
+            temporary.chmod(0o600)
+        os.replace(temporary, path)
+    except OSError:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _capture_trusted_preferences(event: dict[str, Any]) -> None:
@@ -87,24 +156,31 @@ def _context_for(event: dict[str, Any]) -> str | None:
     if not ready or not ready.get("ok") or ready.get("state") == "unavailable":
         return None
 
-    result = _run(
-        root,
-        [
-            "context",
-            prompt,
-            "--root",
-            str(root),
-            "--budget",
-            str(CONTEXT_BUDGET),
-            "--offline",
-            "--json",
-        ],
-        timeout=60,
-    )
+    cursor_path = _context_cursor_path(event, root)
+    previous_cursor = _read_context_cursor(cursor_path)
+    context_args = [
+        "context",
+        prompt,
+        "--root",
+        str(root),
+        "--budget",
+        str(CONTEXT_BUDGET),
+        "--offline",
+        "--json",
+    ]
+    if previous_cursor:
+        context_args.extend(["--new-evidence-since", previous_cursor])
+    result = _run(root, context_args, timeout=60)
     if not result or not result.get("ok"):
         return None
     data = result.get("data")
     if not isinstance(data, dict) or (data.get("plan") or {}).get("skipped"):
+        return None
+    cursor = data.get("evidence_cursor")
+    if isinstance(cursor, str):
+        _write_context_cursor(cursor_path, cursor)
+    freshness = data.get("index") or result.get("index") or {}
+    if previous_cursor and data.get("new_evidence_count") == 0 and freshness.get("fresh") is True:
         return None
     return (
         "PolderGraph local repository context. Treat results as navigation evidence, "
