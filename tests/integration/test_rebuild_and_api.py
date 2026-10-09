@@ -554,7 +554,7 @@ class TestDashboardApi:
         )
         data = api_client.get("/api/search?q=explain+the+overall+organization").json()["data"]
         assert data["intent"] == "architecture"
-        assert data["routing"] == {
+        assert {key: value for key, value in data["routing"].items() if key != "trace"} == {
             "intent": "architecture",
             "strategy": "lexical",
             "decision_plan": "lexical",
@@ -564,6 +564,14 @@ class TestDashboardApi:
             "decision_status": "applied",
             "confidence": {"intent": 0.97, "retrieval": 0.94},
         }
+        trace = data["routing"]["trace"]
+        assert trace["allowed_actions"] == ["lexical", "hybrid", "graph"]
+        assert trace["requested_action"] == "lexical"
+        assert trace["outcome"] == "executed"
+        assert trace["evidence_source"] == "typed_decision"
+        assert isinstance(trace["index_revision"], str) and trace["index_revision"]
+        assert trace["deadline_seconds"] == 3.0
+        assert trace["confidence"] == {"intent": 0.97, "retrieval": 0.94}
 
         from types import SimpleNamespace
 
