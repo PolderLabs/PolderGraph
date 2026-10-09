@@ -157,6 +157,20 @@ def agent_auto_index(
         typer.echo(f"Automatic PolderGraph indexing {state} for {root}.")
 
 
+@app.command("decision-worker-status")
+def decision_worker_status(
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Report local decision-worker health without loading a model."""
+    from .decision_worker import local_decision_worker
+
+    data = local_decision_worker.status()
+    if json_output:
+        emit_json(envelope(command="decision-worker-status", data=data))
+    else:
+        typer.echo(f"local decision worker: {data['state']}")
+
+
 @app.command()
 def init(
     path: Optional[Path] = typer.Argument(None, help="Repository or workspace root."),

@@ -30,6 +30,10 @@ Laya runs in a supervised child process. The default `timeout` covers model
 startup and inference; a timed-out worker is terminated and the decision caller
 falls back to deterministic behavior. A warm worker reuses its model and is
 evicted after five idle minutes or when explicitly closed at process shutdown.
+Inspect worker health without starting it with
+`poldergraph decision-worker-status --json`. The status reports only lifecycle
+state, process ID, offline policy, and idle time; it never includes submitted
+decision state.
 Set `offline_only=True` on `decide()` or set `[privacy].allow_model_downloads =
 false` for PolderGraph's integrated decision path to prohibit model downloads.
 Use `model=` to select a Laya checkpoint; the default is

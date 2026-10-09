@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from typer.testing import CliRunner
 
+from poldergraph.cli import app
 from poldergraph.decision_worker import LocalDecisionWorker
 from poldergraph.decisions import DecisionError
 
@@ -27,7 +30,13 @@ def _hung_worker(connection, _offline_only: bool) -> None:
 def test_worker_reuses_child_and_respects_offline_mode() -> None:
     worker = LocalDecisionWorker(worker_main=_echo_worker)
     try:
+        assert worker.status()["state"] == "stopped"
         first = worker.decide("state", {}, model=None, timeout=2)
+        status = worker.status()
+        assert status["state"] == "warm"
+        assert status["model_loaded"] is True
+        assert status["offline_only"] is False
+        assert status["pid"] == worker._process.pid
         first_pid = worker._process.pid
         second = worker.decide("state", {}, model=None, timeout=2)
         assert first == second == {"offline_only": False}
@@ -37,6 +46,7 @@ def test_worker_reuses_child_and_respects_offline_mode() -> None:
         assert worker._process.pid != first_pid
     finally:
         worker.close()
+    assert worker.status()["state"] == "stopped"
 
 
 def test_hung_worker_is_killed_at_deadline() -> None:
@@ -64,3 +74,22 @@ def test_queued_call_deadline_includes_waiting_for_worker_lock() -> None:
             first.result(timeout=2)
     assert worker._process is None
     worker.close()
+
+
+def test_decision_worker_status_command_is_machine_readable(monkeypatch) -> None:
+    from poldergraph.decision_worker import local_decision_worker
+
+    expected = {
+        "state": "stopped",
+        "pid": None,
+        "model_loaded": False,
+        "offline_only": None,
+        "idle_seconds": None,
+        "idle_timeout_seconds": 300.0,
+    }
+    monkeypatch.setattr(local_decision_worker, "status", lambda: expected)
+
+    result = CliRunner().invoke(app, ["decision-worker-status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["data"] == expected

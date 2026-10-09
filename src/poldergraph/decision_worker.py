@@ -58,6 +58,7 @@ class LocalDecisionWorker:
         self._offline_only = False
         self._timer: threading.Timer | None = None
         self._last_used = 0.0
+        self._model_loaded = False
 
     def _start(self, offline_only: bool) -> None:
         parent, child = self._context.Pipe(duplex=True)
@@ -66,6 +67,7 @@ class LocalDecisionWorker:
         child.close()
         self._process, self._connection = process, parent
         self._offline_only = offline_only
+        self._model_loaded = False
 
     def _stop_locked(self, *, force: bool = False) -> None:
         if self._timer:
@@ -74,6 +76,7 @@ class LocalDecisionWorker:
         connection, process = self._connection, self._process
         self._connection = None
         self._process = None
+        self._model_loaded = False
         if connection is not None:
             try:
                 connection.send(None)
@@ -137,7 +140,9 @@ class LocalDecisionWorker:
                 raise DecisionError("Local decision worker exited unexpectedly.") from exc
             self._arm_idle_eviction()
             if not ok:
+                self._model_loaded = False
                 raise DecisionError(f"Local decision worker failed ({result}).")
+            self._model_loaded = True
             return result
         finally:
             self._lock.release()
@@ -160,6 +165,39 @@ class LocalDecisionWorker:
     def close(self) -> None:
         with self._lock:
             self._stop_locked()
+
+    def status(self) -> dict[str, Any]:
+        """Return local worker health without exposing prompts or model inputs."""
+        if not self._lock.acquire(blocking=False):
+            process = self._process
+            return {
+                "state": "busy",
+                "pid": process.pid if process and process.is_alive() else None,
+                "model_loaded": None,
+                "offline_only": None,
+                "idle_seconds": None,
+                "idle_timeout_seconds": _IDLE_SECONDS,
+            }
+        try:
+            process = self._process
+            alive = bool(process and process.is_alive())
+            if not alive and process is not None:
+                self._stop_locked(force=True)
+                process = None
+            return {
+                "state": "warm" if alive and self._model_loaded else "running" if alive else "stopped",
+                "pid": process.pid if alive and process else None,
+                "model_loaded": bool(alive and self._model_loaded),
+                "offline_only": self._offline_only if alive else None,
+                "idle_seconds": (
+                    round(max(0.0, time.monotonic() - self._last_used), 3)
+                    if alive and self._last_used
+                    else None
+                ),
+                "idle_timeout_seconds": _IDLE_SECONDS,
+            }
+        finally:
+            self._lock.release()
 
 
 local_decision_worker = LocalDecisionWorker()
