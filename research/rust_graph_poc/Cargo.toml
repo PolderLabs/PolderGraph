@@ -1,0 +1,9 @@
+[package]
+name = "poldergraph-graph-traversal-poc"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "graph-traversal-poc"
+path = "src/main.rs"
