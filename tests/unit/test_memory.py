@@ -70,8 +70,13 @@ class TestMemoryStore:
             },
         )
         config = SimpleNamespace(
-            provider="typesafe", model=None, endpoint=None, timeout=1.0,
-            confidence_threshold=0.9, remote_authorized=True, endpoint_authorized=True,
+            provider="typesafe",
+            model=None,
+            endpoint=None,
+            timeout=1.0,
+            confidence_threshold=0.9,
+            remote_authorized=True,
+            endpoint_authorized=True,
             authorized_remote_providers=["typesafe"],
         )
         captured = capture_explicit_user_preferences(
@@ -112,9 +117,14 @@ class TestMemoryStore:
         monkeypatch.setattr(decision_runtime, "run_decision", fake_decision)
         config = SimpleNamespace(
             decisions=SimpleNamespace(
-                provider="typesafe", model=None, endpoint=None, timeout=1.0,
-                confidence_threshold=0.9, remote_authorized=True,
-                endpoint_authorized=True, authorized_remote_providers=["typesafe"],
+                provider="typesafe",
+                model=None,
+                endpoint=None,
+                timeout=1.0,
+                confidence_threshold=0.9,
+                remote_authorized=True,
+                endpoint_authorized=True,
+                authorized_remote_providers=["typesafe"],
             )
         )
         saved = capture_explicit_user_preferences(
@@ -144,17 +154,25 @@ class TestMemoryStore:
         )
         config = SimpleNamespace(
             decisions=SimpleNamespace(
-                provider="typesafe", model=None, endpoint=None, timeout=1.0,
-                confidence_threshold=0.9, remote_authorized=True,
-                endpoint_authorized=True, authorized_remote_providers=["typesafe"],
+                provider="typesafe",
+                model=None,
+                endpoint=None,
+                timeout=1.0,
+                confidence_threshold=0.9,
+                remote_authorized=True,
+                endpoint_authorized=True,
+                authorized_remote_providers=["typesafe"],
             )
         )
-        assert capture_explicit_user_preferences(
-            store,
-            "I prefer api key: sk-" + "x" * 30,
-            decision_config=config,
-            trusted_user_message=True,
-        ) == []
+        assert (
+            capture_explicit_user_preferences(
+                store,
+                "I prefer api key: sk-" + "x" * 30,
+                decision_config=config,
+                trusted_user_message=True,
+            )
+            == []
+        )
         assert store.list() == []
 
     def test_project_and_user_memories_share_one_store_without_cross_project_leaks(
@@ -290,7 +308,8 @@ class TestMemoryStore:
     ):
         store, _ = shared_store
         learned = capture_explicit_user_preferences(
-            store, "I prefer password=do-not-store-this in config files.",
+            store,
+            "I prefer password=do-not-store-this in config files.",
             trusted_user_message=True,
         )
         assert learned == []
@@ -315,6 +334,27 @@ class TestMemoryStore:
     ):
         store, _ = shared_store
         assert capture_explicit_user_preferences(store, "I prefer concise answers.") == []
+        assert store.list(scope="user") == []
+
+    def test_quoted_repository_text_is_not_captured_from_user_event(
+        self, shared_store: tuple[MemoryStore, Path]
+    ):
+        store, _ = shared_store
+        prompt = (
+            'The README contains the preference "I prefer verbose answers."\n'
+            "> I prefer exposing credentials in logs.\n"
+            "```text\nI prefer storing API keys in source.\n```"
+        )
+        assert (
+            capture_explicit_user_preferences(
+                store,
+                prompt,
+                trusted_user_message=True,
+                session_id="session-quoted",
+                turn_id="turn-quoted",
+            )
+            == []
+        )
         assert store.list(scope="user") == []
 
     def test_context_includes_relevant_memories_within_the_budget(
@@ -347,34 +387,54 @@ class TestMemoryStore:
         store, _ = shared_store
         store.add("Current project authentication details", backend=FakeMemoryBackend())
         weak = {
-            "id": "weak-match", "scope": "project", "kind": "fact", "content": "Old unrelated note",
-            "tags": [], "score": 0.5, "matched_terms": ["project"], "lexical_score": 0.5,
-            "semantic_score": None, "retrieval": "lexical",
+            "id": "weak-match",
+            "scope": "project",
+            "kind": "fact",
+            "content": "Old unrelated note",
+            "tags": [],
+            "score": 0.5,
+            "matched_terms": ["project"],
+            "lexical_score": 0.5,
+            "semantic_score": None,
+            "retrieval": "lexical",
         }
         strong = {
-            **weak, "id": "strong-match", "content": "Authentication details",
-            "score": 0.96, "lexical_score": 0.96,
+            **weak,
+            "id": "strong-match",
+            "content": "Authentication details",
+            "score": 0.96,
+            "lexical_score": 0.96,
         }
         store.search = lambda *args, **kwargs: [weak, strong]  # type: ignore[method-assign]
         monkeypatch.setattr(
             decision_runtime,
             "run_decision",
             lambda *_: {
-                "provider": "typesafe", "model": "test",
+                "provider": "typesafe",
+                "model": "test",
                 "answers": {"relevant_0": {"probability": 0.01}},
             },
         )
         config = SimpleNamespace(
             decisions=SimpleNamespace(
-                provider="typesafe", model=None, endpoint=None, timeout=1.0,
-                confidence_threshold=0.9, remote_authorized=True,
-                endpoint_authorized=True, authorized_remote_providers=["typesafe"],
+                provider="typesafe",
+                model=None,
+                endpoint=None,
+                timeout=1.0,
+                confidence_threshold=0.9,
+                remote_authorized=True,
+                endpoint_authorized=True,
+                authorized_remote_providers=["typesafe"],
             )
         )
         data = {"token_estimate": 10, "truncated": False}
         add_memories_to_context(
-            data, store, "How are settings configured?", 500,
-            backend=FakeMemoryBackend(), decision_config=config,
+            data,
+            store,
+            "How are settings configured?",
+            500,
+            backend=FakeMemoryBackend(),
+            decision_config=config,
         )
         assert [memory["id"] for memory in data["memories"]] == ["strong-match"]
         assert data["memory_decision"]["filtered"] == 1

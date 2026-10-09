@@ -324,6 +324,9 @@ def capture_explicit_user_preferences(
     backend: EmbeddingBackend | None = None,
     decision_config: Any = None,
     trusted_user_message: bool = False,
+    event_source: str = "codex_user_prompt",
+    session_id: str | None = None,
+    turn_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Save explicit preferences only when called from a trusted user-input hook.
 
@@ -381,6 +384,11 @@ def capture_explicit_user_preferences(
                         content=statement,
                         tags=list(dict.fromkeys([*prior["tags"], "explicit-user-statement"])),
                         backend=backend,
+                        provenance={
+                            "source": event_source,
+                            "session_id": session_id,
+                            "turn_id": turn_id,
+                        },
                     )
                 )
                 continue
@@ -391,6 +399,11 @@ def capture_explicit_user_preferences(
                     kind="preference",
                     tags=["explicit-user-statement"],
                     backend=backend,
+                    provenance={
+                        "source": event_source,
+                        "session_id": session_id,
+                        "turn_id": turn_id,
+                    },
                 )
             )
         except UsageError as exc:
@@ -428,6 +441,7 @@ class MemoryStore:
                 content TEXT NOT NULL,
                 content_hash TEXT NOT NULL,
                 tags_json TEXT NOT NULL DEFAULT '[]',
+                provenance_json TEXT NOT NULL DEFAULT '{}',
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 CHECK (
@@ -438,6 +452,11 @@ class MemoryStore:
             )
             """
         )
+        columns = {row[1] for row in con.execute("PRAGMA table_info(memories)")}
+        if "provenance_json" not in columns:
+            con.execute(
+                "ALTER TABLE memories ADD COLUMN provenance_json TEXT NOT NULL DEFAULT '{}'"
+            )
         con.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(id UNINDEXED, searchable)"
         )
@@ -461,6 +480,7 @@ class MemoryStore:
             "kind": row["kind"],
             "content": row["content"],
             "tags": json.loads(row["tags_json"]),
+            "provenance": json.loads(row["provenance_json"]),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -489,6 +509,7 @@ class MemoryStore:
         kind: MemoryKind = "fact",
         tags: list[str] | None = None,
         backend: EmbeddingBackend | None = None,
+        provenance: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         scope = _checked_scope(scope)
         if scope == "all":
@@ -498,6 +519,7 @@ class MemoryStore:
         tags = _checked_tags(tags)
         project_key = self.project_key if scope == "project" else ""
         root_value = str(self.root) if scope == "project" else None
+        provenance_json = json.dumps(provenance or {}, sort_keys=True)
         content_hash = hashlib.sha256(_normalize_content(content).encode("utf-8")).hexdigest()
         now = int(time.time())
         con = self._connect()
@@ -512,8 +534,8 @@ class MemoryStore:
                 needs_index = True
                 memory_id = f"mem_{uuid.uuid4().hex[:20]}"
                 con.execute(
-                    "INSERT INTO memories(id,scope,project_key,project_root,kind,content,content_hash,tags_json,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO memories(id,scope,project_key,project_root,kind,content,content_hash,tags_json,provenance_json,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         memory_id,
                         scope,
@@ -523,6 +545,7 @@ class MemoryStore:
                         content,
                         content_hash,
                         json.dumps(tags),
+                        provenance_json,
                         now,
                         now,
                     ),
@@ -530,6 +553,12 @@ class MemoryStore:
             else:
                 memory_id = row["id"]
                 needs_index = row["kind"] != kind or json.loads(row["tags_json"]) != tags
+                stored_provenance = json.loads(row["provenance_json"])
+                if provenance and not stored_provenance:
+                    con.execute(
+                        "UPDATE memories SET provenance_json=? WHERE id=?",
+                        (provenance_json, memory_id),
+                    )
                 if needs_index:
                     con.execute(
                         "UPDATE memories SET kind=?, tags_json=?, updated_at=? WHERE id=?",
@@ -822,8 +851,10 @@ class MemoryStore:
                 if not self._has_vector_in(con, store, row["id"])
             ]
             if not stranded:
-                return {"repaired": 0, "total": con.execute(
-                    "SELECT COUNT(*) FROM memories").fetchone()[0]}
+                return {
+                    "repaired": 0,
+                    "total": con.execute("SELECT COUNT(*) FROM memories").fetchone()[0],
+                }
 
             placeholders = ",".join("?" for _ in stranded)
             rows = con.execute(
@@ -968,6 +999,7 @@ class MemoryStore:
         kind: str | None = None,
         tags: list[str] | None = None,
         backend: EmbeddingBackend | None = None,
+        provenance: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if content is None and kind is None and tags is None:
             raise UsageError("Provide at least one of content, kind, or tags to update.")
@@ -982,10 +1014,24 @@ class MemoryStore:
         content_hash = hashlib.sha256(_normalize_content(content).encode("utf-8")).hexdigest()
         con = self._connect()
         try:
-            con.execute(
-                "UPDATE memories SET content=?, content_hash=?, kind=?, tags_json=?, updated_at=? WHERE id=?",
-                (content, content_hash, kind, json.dumps(tags), int(time.time()), memory_id),
-            )
+            if provenance:
+                con.execute(
+                    "UPDATE memories SET content=?, content_hash=?, kind=?, tags_json=?, provenance_json=?, updated_at=? WHERE id=?",
+                    (
+                        content,
+                        content_hash,
+                        kind,
+                        json.dumps(tags),
+                        json.dumps(provenance, sort_keys=True),
+                        int(time.time()),
+                        memory_id,
+                    ),
+                )
+            else:
+                con.execute(
+                    "UPDATE memories SET content=?, content_hash=?, kind=?, tags_json=?, updated_at=? WHERE id=?",
+                    (content, content_hash, kind, json.dumps(tags), int(time.time()), memory_id),
+                )
             con.execute("DELETE FROM memory_fts WHERE id = ?", (memory_id,))
             con.execute(
                 "INSERT INTO memory_fts(id, searchable) VALUES(?, ?)",

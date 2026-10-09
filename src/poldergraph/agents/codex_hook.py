@@ -36,6 +36,11 @@ def _capture_trusted_preferences(event: dict[str, Any]) -> None:
             MemoryStore(root),
             prompt,
             trusted_user_message=True,
+            event_source="codex.UserPromptSubmit",
+            session_id=event.get("session_id")
+            if isinstance(event.get("session_id"), str)
+            else None,
+            turn_id=event.get("turn_id") if isinstance(event.get("turn_id"), str) else None,
         )
     except Exception as exc:
         # Memory capture must not prevent Codex from handling its user prompt.
@@ -51,8 +56,12 @@ def _run(root: Path, args: list[str], timeout: float) -> dict[str, Any] | None:
     )
     try:
         result = subprocess.run(
-            command, cwd=root,
-            capture_output=True, text=True, timeout=timeout, check=False,
+            command,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
         )
         if not result.stdout.strip():
             return None
@@ -91,7 +100,16 @@ def _context_for(event: dict[str, Any]) -> str | None:
 
     result = _run(
         root,
-        ["context", prompt, "--root", str(root), "--budget", str(CONTEXT_BUDGET), "--offline", "--json"],
+        [
+            "context",
+            prompt,
+            "--root",
+            str(root),
+            "--budget",
+            str(CONTEXT_BUDGET),
+            "--offline",
+            "--json",
+        ],
         timeout=60,
     )
     if not result or not result.get("ok"):

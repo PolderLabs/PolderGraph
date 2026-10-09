@@ -49,7 +49,16 @@ def test_codex_user_event_captures_explicit_preference_only(tmp_path, monkeypatc
     assert codex_hook.run_hook(io.StringIO(json.dumps(event)), output) == 0
     saved = memory.MemoryStore(tmp_path).list(scope="user")
     assert [item["content"] for item in saved] == ["I prefer concise explanations."]
+    assert saved[0]["provenance"] == {
+        "source": "codex.UserPromptSubmit",
+        "session_id": "session-2",
+        "turn_id": "turn-2",
+    }
     assert "I prefer concise explanations." not in output.getvalue()
+
+    # Hook retries/re-entry are idempotent for the same durable preference.
+    assert codex_hook.run_hook(io.StringIO(json.dumps(event)), io.StringIO()) == 0
+    assert len(memory.MemoryStore(tmp_path).list(scope="user")) == 1
 
 
 def test_codex_non_user_event_cannot_capture_memory(tmp_path, monkeypatch):
@@ -124,9 +133,16 @@ def test_codex_hook_uses_enclosing_git_root_from_nested_folder(tmp_path, monkeyp
 def test_codex_hook_setup_preserves_existing_handlers_and_is_idempotent(tmp_path):
     path = tmp_path / ".codex" / "hooks.json"
     path.parent.mkdir()
-    path.write_text(json.dumps({"description": "existing", "hooks": {
-        "SessionStart": [{"hooks": [{"type": "command", "command": "existing"}]}],
-    }}))
+    path.write_text(
+        json.dumps(
+            {
+                "description": "existing",
+                "hooks": {
+                    "SessionStart": [{"hooks": [{"type": "command", "command": "existing"}]}],
+                },
+            }
+        )
+    )
 
     changed, _ = write_codex_hooks_config(tmp_path)
     assert changed
@@ -153,20 +169,26 @@ def test_codex_hook_setup_fallback_command_is_idempotent(tmp_path, monkeypatch):
 
 def test_codex_hook_setup_writes_windows_command(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_setup.sys, "platform", "win32")
-    monkeypatch.setattr(agent_setup.shutil, "which", lambda _: r"C:\Program Files\PolderGraph\poldergraph.exe")
+    monkeypatch.setattr(
+        agent_setup.shutil, "which", lambda _: r"C:\Program Files\PolderGraph\poldergraph.exe"
+    )
 
     changed, _ = write_codex_hooks_config(tmp_path)
 
     assert changed
-    handler = json.loads((tmp_path / ".codex" / "hooks.json").read_text())[
-        "hooks"]["UserPromptSubmit"][0]["hooks"][0]
+    handler = json.loads((tmp_path / ".codex" / "hooks.json").read_text())["hooks"][
+        "UserPromptSubmit"
+    ][0]["hooks"][0]
     assert handler["commandWindows"] == handler["command"]
     assert "Program Files" in handler["commandWindows"]
 
 
 def test_setup_agent_reports_explicit_codex_hook_installation(tmp_path):
     result = setup_agent_guidance(
-        tmp_path, Config(), targets=["codex"], hooks=True,
+        tmp_path,
+        Config(),
+        targets=["codex"],
+        hooks=True,
     )
     assert result["hooks_requested"] is True
     assert result["hooks_installed"] is True
