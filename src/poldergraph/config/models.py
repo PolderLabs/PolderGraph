@@ -30,12 +30,36 @@ class IndexConfig(BaseModel):
     follow_symlinks: bool = False
     max_file_bytes: int = 5_000_000
     max_roots: int = 64
+    watch_debounce_seconds: float = 0.4
+    watch_poll_interval_seconds: float = 1.0
+    watch_poll_max_interval_seconds: float = 10.0
+    watch_reconcile_interval_seconds: float = 30.0
 
     @field_validator("dimensions")
     @classmethod
     def _check_dimensions(cls, value: int) -> int:
         if not 1 <= value <= MAX_API_DIMENSIONS:
             raise ValueError(f"dimensions must be between 1 and {MAX_API_DIMENSIONS}, got {value}")
+        return value
+
+    @field_validator(
+        "watch_debounce_seconds",
+        "watch_poll_interval_seconds",
+        "watch_poll_max_interval_seconds",
+        "watch_reconcile_interval_seconds",
+    )
+    @classmethod
+    def _check_watch_intervals(cls, value: float) -> float:
+        if not 0.05 <= value <= 3600:
+            raise ValueError("watch intervals must be between 0.05 and 3600 seconds")
+        return value
+
+    @field_validator("watch_poll_max_interval_seconds")
+    @classmethod
+    def _poll_max_at_least_min(cls, value: float, info) -> float:
+        minimum = info.data.get("watch_poll_interval_seconds", 1.0)
+        if value < minimum:
+            raise ValueError("watch_poll_max_interval_seconds must be >= watch_poll_interval_seconds")
         return value
 
 

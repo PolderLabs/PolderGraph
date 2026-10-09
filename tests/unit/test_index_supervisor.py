@@ -11,6 +11,33 @@ def test_watch_filter_uses_watchfiles_change_and_path_signature() -> None:
     assert watcher._should_watch("added", ".git/HEAD") is False
 
 
+def test_poll_backoff_is_bounded_and_resets_on_change() -> None:
+    interval = 1.0
+    observed = []
+    for _ in range(8):
+        interval = watcher._next_poll_interval(
+            interval, minimum=1.0, maximum=8.0, changed=False
+        )
+        observed.append(interval)
+    assert observed == [1.5, 2.25, 3.375, 5.0625, 7.59375, 8.0, 8.0, 8.0]
+    assert watcher._next_poll_interval(
+        interval, minimum=1.0, maximum=8.0, changed=True
+    ) == 1.0
+
+
+def test_watch_intervals_are_configurable_and_validated() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from poldergraph.config.models import IndexConfig
+
+    config = IndexConfig(watch_poll_interval_seconds=2, watch_poll_max_interval_seconds=12)
+    assert config.watch_poll_interval_seconds == 2
+    assert config.watch_poll_max_interval_seconds == 12
+    with pytest.raises(ValidationError):
+        IndexConfig(watch_poll_interval_seconds=5, watch_poll_max_interval_seconds=2)
+
+
 def test_supervisor_starts_and_stops_background_watcher(tmp_path: Path, monkeypatch) -> None:
     def fake_watch(root, *, stop_event, on_started, **_kwargs):
         assert root == tmp_path.resolve()

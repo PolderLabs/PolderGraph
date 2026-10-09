@@ -22,7 +22,14 @@ from ..workspace import open_workspace
 #: Events arriving within this window are coalesced into one update.
 DEBOUNCE_SECONDS = 0.4
 RECONCILE_SECONDS = 30.0
-POLL_SECONDS = 5.0
+POLL_SECONDS = 1.0
+
+
+def _next_poll_interval(current: float, *, minimum: float, maximum: float, changed: bool) -> float:
+    """Back off idle fallback scans while keeping change detection bounded."""
+    if changed:
+        return minimum
+    return min(maximum, max(minimum, current * 1.5))
 
 
 def _changed_paths(raw: set[Any]) -> set[str]:
@@ -36,10 +43,10 @@ def _changed_paths(raw: set[Any]) -> set[str]:
 def run_watch(
     path: Path | None = None,
     *,
-    debounce: float = DEBOUNCE_SECONDS,
+    debounce: float | None = None,
     on_update: Callable[[Any], None] | None = None,
     max_iterations: int | None = None,
-    reconcile_interval: float = RECONCILE_SECONDS,
+    reconcile_interval: float | None = None,
     stop_event: threading.Event | None = None,
     backend_provider: Callable[[], Any] | None = None,
     on_started: Callable[[], None] | None = None,
@@ -51,6 +58,12 @@ def run_watch(
         watch = None
 
     workspace = open_workspace(path)
+    debounce = debounce if debounce is not None else workspace.config.index.watch_debounce_seconds
+    reconcile_interval = (
+        reconcile_interval
+        if reconcile_interval is not None
+        else workspace.config.index.watch_reconcile_interval_seconds
+    )
     # This lock prevents duplicate supervisors for this workspace. The writer
     # lock below is held only while applying a batch, so readers and idle
     # command-line clients are not blocked for the lifetime of watch mode.
@@ -101,6 +114,8 @@ def run_watch(
                 on_started=on_started,
                 max_iterations=max_iterations,
                 stats=stats,
+                poll_interval=workspace.config.index.watch_poll_interval_seconds,
+                max_poll_interval=workspace.config.index.watch_poll_max_interval_seconds,
             )
         else:
             roots = [str(workspace.root)]
@@ -169,6 +184,8 @@ def _poll_changes(
     on_started: Callable[[], None] | None,
     max_iterations: int | None,
     stats: dict[str, int],
+    poll_interval: float = POLL_SECONDS,
+    max_poll_interval: float = 10.0,
 ) -> None:
     """Polling fallback when the native watchfiles backend is unavailable."""
     from .pipeline import Indexer
@@ -184,13 +201,21 @@ def _poll_changes(
         on_started()
     next_reconcile = time.monotonic() + reconcile_interval
     last_change = 0.0
-    while not stop.wait(POLL_SECONDS):
+    interval = poll_interval
+    while not stop.wait(interval):
         now = time.monotonic()
         current = fingerprint()
-        if current != previous:
+        changed = current != previous
+        if changed:
             pending.add("poll-detected-change")
             previous = current
             last_change = now
+        interval = _next_poll_interval(
+            interval,
+            minimum=poll_interval,
+            maximum=max_poll_interval,
+            changed=changed,
+        )
         if pending and now - last_change < debounce:
             continue
         if not pending and now < next_reconcile:
