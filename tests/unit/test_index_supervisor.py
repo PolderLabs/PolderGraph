@@ -197,6 +197,63 @@ def test_supervisor_indexes_a_live_edit_without_model_download(tmp_path: Path) -
         workspace.close()
 
 
+def test_supervisor_propagates_rename_and_delete_without_manual_update(tmp_path: Path) -> None:
+    import time
+
+    from poldergraph.config.models import Config
+    from poldergraph.indexing.pipeline import Indexer
+    from poldergraph.workspace import create_index, open_workspace
+
+    source = tmp_path / "before.py"
+    source.write_text("class BeforeRename:\n    pass\n", encoding="utf-8")
+    create_index(tmp_path, Config(embedding={"backend": "none"}))
+    workspace = open_workspace(tmp_path)
+    indexer = Indexer(workspace, backend=None)
+    indexer.ensure_root()
+    indexer.run(indexer.discover())
+    workspace.close()
+
+    supervisor = IndexSupervisor(tmp_path, reconcile_interval=1.0)
+    assert supervisor.start(wait_seconds=3)["state"] in {"running", "supervised_elsewhere"}
+    renamed = tmp_path / "after.py"
+    try:
+        source.rename(renamed)
+        renamed.write_text("class AfterRename:\n    pass\n", encoding="utf-8")
+
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            workspace = open_workspace(tmp_path)
+            try:
+                new_indexed = indexer_entity_exists(workspace, "AfterRename")
+                old_path_gone = workspace.con.execute(
+                    "SELECT 1 FROM files WHERE path='before.py'"
+                ).fetchone() is None
+            finally:
+                workspace.close()
+            if new_indexed and old_path_gone:
+                break
+            time.sleep(0.1)
+        assert new_indexed and old_path_gone
+
+        renamed.unlink()
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            workspace = open_workspace(tmp_path)
+            try:
+                removed = workspace.con.execute(
+                    "SELECT 1 FROM files WHERE path='after.py'"
+                ).fetchone() is None
+                entity_removed = not indexer_entity_exists(workspace, "AfterRename")
+            finally:
+                workspace.close()
+            if removed and entity_removed:
+                break
+            time.sleep(0.1)
+        assert removed and entity_removed
+    finally:
+        supervisor.stop()
+
+
 def indexer_entity_exists(workspace, name: str) -> bool:
     return (
         workspace.con.execute(
