@@ -211,8 +211,14 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 			if (!context.ok || !context.data) return;
 			const evidenceCursor = (context.data as { evidence_cursor?: unknown }).evidence_cursor;
 			if (typeof evidenceCursor === "string") evidenceCursors.set(root, evidenceCursor);
-			const contextData = context.data as { plan?: { skipped?: boolean } };
+			const contextData = context.data as {
+				plan?: { skipped?: boolean };
+				new_evidence_count?: number;
+				index?: { fresh?: boolean };
+			};
 			if (contextData.plan?.skipped) return;
+			const freshness = contextData.index ?? context.index ?? {};
+			if (cursor && contextData.new_evidence_count === 0 && freshness.fresh === true) return;
 			return {
 				systemPrompt: [
 					...event.systemPrompt,
