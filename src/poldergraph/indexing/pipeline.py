@@ -263,13 +263,18 @@ class Indexer:
         with writer_transaction(con):
             existing = self.repo.entities_owned_by_path(result.path, root_id=self.workspace.root_id())
             if existing:
-                removed_ids = [e.id for e in existing]
-                self.repo.delete_edges_touching(removed_ids)
+                existing_ids = [entity.id for entity in existing]
+                new_ids = {entity.id for entity in result.entities}
+                removed_ids = [entity_id for entity_id in existing_ids if entity_id not in new_ids]
+                self.repo.delete_edges_touching(existing_ids)
+                # Keep stable entity rows in place so their content-addressed
+                # vectors remain reusable across model/provider switches.
+                # Changed representations are invalidated by input_hash in
+                # _embed; genuinely removed entities still cascade metadata.
                 self.repo.delete_entities(removed_ids)
 
             self.repo.upsert_entities(result.entities)
             self.repo.upsert_edges(result.edges)
-            self.repo.delete_embeddings_for([e.id for e in result.entities])
 
             for entity in result.entities:
                 self.repo.fts.index_entity(
@@ -394,20 +399,22 @@ class Indexer:
         info = self.backend.model_info()
         # Reuse vectors whose semantic input did not change.
         to_embed: list[str] = []
+        stale_embedding_ids: list[str] = []
         for position, (entity_id, text) in enumerate(representations):
             existing = self.repo.embedding_info(entity_id)
             digest = semantic_hash(text)
-            if any(
-                record["input_hash"] == digest
-                and record["model_id"] == info.model_id
+            matching_space = [
+                record for record in existing
+                if record["model_id"] == info.model_id
                 and record["model_revision"] == info.revision
                 and record["dimensions"] == info.dimensions
                 and record["task_type"] == DOCUMENT_TASK
                 and record["modality"] == "text"
-                for record in existing
-            ):
+            ]
+            if any(record["input_hash"] == digest for record in matching_space):
                 stats.embeddings_reused += 1
                 continue
+            stale_embedding_ids.extend(record["embedding_id"] for record in matching_space)
             to_embed.append(entity_id)
             if progress and (position % 100 == 0 or position == len(representations) - 1):
                 progress(
@@ -453,6 +460,12 @@ class Indexer:
         )
         records: list[VectorRecord] = []
         with writer_transaction(self.workspace.con):
+            if stale_embedding_ids:
+                store.delete(stale_embedding_ids)
+                self.workspace.con.executemany(
+                    "DELETE FROM embeddings WHERE embedding_id=?",
+                    [(embedding_id,) for embedding_id in stale_embedding_ids],
+                )
             for entity_id, vector in zip(to_embed, vectors, strict=False):
                 text = by_id[entity_id]
                 digest = semantic_hash(text)

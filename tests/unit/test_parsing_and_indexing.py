@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from parser_samples import SAMPLES
 
 from poldergraph.parsing.engine import ParseEngine
@@ -319,6 +318,125 @@ class TestIncrementalUpdate:
         assert plan.embedding_space_changed
         assert len(plan.to_index) == len(discovered)
         assert not plan.unchanged
+
+    def test_switching_embedding_spaces_rebuilds_and_preserves_vectors(self, sample_repo, monkeypatch):
+        from poldergraph.config.models import Config
+        from poldergraph.embedding.protocol import ModelInfo
+        from poldergraph.indexing.incremental import embedding_space_fingerprint, plan_update
+        from poldergraph.indexing.pipeline import Indexer
+        from poldergraph.storage.repository import Repository
+        from poldergraph.storage.vectors import create_vector_store, get_entity_vector
+        from poldergraph.workspace import create_index, open_workspace
+
+        # The cross-platform lifecycle job installs core dependencies only,
+        # so exercise the supported no-sqlite-vec storage fallback here.
+        monkeypatch.setattr(
+            "poldergraph.storage.vectors.load_vec_extension", lambda _connection: False
+        )
+
+        class FakeBackend:
+            def __init__(self, model_id, vector):
+                self._info = ModelInfo(
+                    model_id=model_id, revision="revision-1", dimensions=256, backend="api"
+                )
+                self.vector = vector
+                self.calls = 0
+
+            def capabilities(self):
+                return {"text"}
+
+            def model_info(self):
+                return self._info
+
+            def embed_texts(self, items, *, task, dimensions, on_batch=None):
+                self.calls += len(items)
+                if on_batch:
+                    on_batch(len(items), len(items))
+                return [self.vector for _ in items]
+
+        create_index(sample_repo, Config(embedding={"backend": "none"}))
+        workspace = open_workspace(sample_repo)
+        first = FakeBackend("api:first-model:provider-a", [1.0, *([0.0] * 255)])
+        second = FakeBackend("api:second-model:provider-b", [0.0, 1.0, *([0.0] * 254)])
+        try:
+            indexer = Indexer(workspace, backend=first)
+            indexer.ensure_root()
+            files = indexer.discover()
+            initial = indexer.run(
+                files, embedding_space_id=embedding_space_fingerprint(first)
+            )
+            assert initial.embeddings_written > 0
+
+            repo = Repository(workspace.con)
+            second_plan = plan_update(
+                repo, files, root_id=workspace.root_id(),
+                embedding_space_id=embedding_space_fingerprint(second),
+            )
+            assert second_plan.embedding_space_changed
+            assert len(second_plan.to_index) == len(files)
+            changed = Indexer(workspace, backend=second).run(
+                files,
+                changed=second_plan.to_index,
+                removed_paths=second_plan.removed,
+                embedding_space_id=embedding_space_fingerprint(second),
+            )
+            assert changed.embeddings_written > 0
+            entity_id = workspace.con.execute(
+                "SELECT id FROM entities WHERE name='AuthService' LIMIT 1"
+            ).fetchone()[0]
+            first_store = create_vector_store(
+                workspace.con, dimensions=256, model_id=first.model_info().model_id
+            )
+            second_store = create_vector_store(
+                workspace.con, dimensions=256, model_id=second.model_info().model_id
+            )
+            assert get_entity_vector(first_store, entity_id) == pytest.approx(first.vector)
+            assert get_entity_vector(second_store, entity_id) == pytest.approx(second.vector)
+
+            first_plan = plan_update(
+                repo, files, root_id=workspace.root_id(),
+                embedding_space_id=embedding_space_fingerprint(first),
+            )
+            restored = Indexer(workspace, backend=first).run(
+                files,
+                changed=first_plan.to_index,
+                removed_paths=first_plan.removed,
+                embedding_space_id=embedding_space_fingerprint(first),
+            )
+            assert restored.embeddings_written == 0
+            assert restored.embeddings_reused > 0
+            assert get_entity_vector(first_store, entity_id) == pytest.approx(first.vector)
+
+            # A changed representation invalidates only that entity's vectors
+            # in the active space, rather than leaving duplicate stale hits.
+            source = sample_repo / "pkg" / "auth.py"
+            source.write_text(
+                source.read_text(encoding="utf-8").replace(
+                    "Validate session tokens.", "Validate API session tokens."
+                ),
+                encoding="utf-8",
+            )
+            first.vector = [0.0, 0.0, 1.0, *([0.0] * 253)]
+            changed_files = indexer.discover()
+            changed_plan = plan_update(
+                repo, changed_files, root_id=workspace.root_id(),
+                embedding_space_id=embedding_space_fingerprint(first),
+            )
+            changed_content = Indexer(workspace, backend=first).run(
+                changed_files,
+                changed=changed_plan.to_index,
+                removed_paths=changed_plan.removed,
+                embedding_space_id=embedding_space_fingerprint(first),
+            )
+            assert changed_content.embeddings_written > 0
+            current_records = [
+                record for record in repo.embedding_info(entity_id)
+                if record["model_id"] == first.model_info().model_id
+            ]
+            assert len(current_records) == 1
+            assert get_entity_vector(first_store, entity_id) == pytest.approx(first.vector)
+        finally:
+            workspace.close()
 
     def test_unchanged_files_are_skipped(self, indexed_workspace):
         from poldergraph.indexing.incremental import plan_update
