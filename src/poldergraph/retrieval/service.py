@@ -370,6 +370,21 @@ class QueryService:
             "model": (route or {}).get("model"),
             "decision_status": decision_status,
             "confidence": route_confidence,
+            "trace": {
+                "allowed_actions": ["lexical", "hybrid", "graph"],
+                "requested_action": retrieval_plan,
+                "outcome": {
+                    "applied": "executed",
+                    "abstained": "skipped",
+                    "fallback": "degraded",
+                }.get(decision_status, "skipped"),
+                "evidence_source": "typed_decision"
+                if decision_status == "applied"
+                else "deterministic",
+                "index_revision": self._index_generation(),
+                "deadline_seconds": self.config.decisions.timeout if decision_eligible else None,
+                "confidence": route_confidence,
+            },
         }
         # Semantic channel.
         semantic_degraded = None

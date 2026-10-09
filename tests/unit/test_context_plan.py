@@ -152,6 +152,47 @@ def test_change_context_surfaces_unindexed_source_drift(indexed_workspace):
     assert "changed_files" in context["plan"]["lanes"]
 
 
+def test_typed_decision_trace_is_bounded_and_explains_execution(indexed_workspace, monkeypatch):
+    import poldergraph.retrieval.service as retrieval_service
+
+    monkeypatch.setattr(retrieval_service, "provider_enabled", lambda _config: True)
+    monkeypatch.setattr(retrieval_service, "exact_matches", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(retrieval_service, "lexical_candidates", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        retrieval_service,
+        "decide_query_route",
+        lambda *_args: {
+            "status": "applied",
+            "provider": "laya",
+            "model": "fixture",
+            "intent": {"value": "how_reaches", "confidence": 0.97},
+            "retrieval": {"value": "graph", "confidence": 0.96},
+        },
+    )
+    service = QueryService(
+        Repository(indexed_workspace.con),
+        indexed_workspace.config,
+        root_id=indexed_workspace.root_id(),
+        workspace=indexed_workspace,
+    )
+
+    result = service.search(
+        "why does privacy handling interact with custom semantic concepts?",
+        include_semantic=False,
+    )
+
+    trace = result.routing["trace"]
+    assert trace["allowed_actions"] == ["lexical", "hybrid", "graph"]
+    assert trace["requested_action"] == "graph"
+    assert trace["outcome"] == "executed"
+    assert trace["evidence_source"] == "typed_decision"
+    assert trace["index_revision"] == indexed_workspace.con.execute(
+        "SELECT value FROM meta WHERE key='index_generation'"
+    ).fetchone()[0]
+    assert trace["deadline_seconds"] == indexed_workspace.config.decisions.timeout
+    assert trace["confidence"]["retrieval"] == 0.96
+
+
 def test_change_context_keeps_active_diff_focus_after_reindex(indexed_workspace):
     root = indexed_workspace.root
     subprocess.run(["git", "init", "-q", str(root)], check=True)

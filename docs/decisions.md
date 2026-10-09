@@ -142,6 +142,12 @@ enabled:
   supplies verifiable user-message provenance.
 - CLI, MCP, and dashboard search use the shared routing and memory logic.
 
+Search responses expose a bounded `routing.trace` explaining the selected action,
+the allowed retrieval actions (`lexical`, `hybrid`, `graph`), whether a typed
+decision executed, was skipped, or degraded to deterministic behavior, the
+index generation used, the decision deadline, and accepted confidence values.
+The trace contains no raw query text.
+
 Uncertain results, missing credentials, timeouts, refusals, and provider errors
 fall back to deterministic retrieval and memory behavior. Decisions are cached
 for five minutes by content hash; raw prompts and memory text are not retained
