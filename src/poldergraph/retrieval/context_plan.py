@@ -56,7 +56,7 @@ def plan_context(query: str, budget: int) -> ContextPlan:
     if _NARROW.search(text) and len(text.split()) <= 12 and not _BROAD.search(text):
         return ContextPlan(
             intent="locate",
-            budget=min(normalized_budget, 1200),
+            budget=min(normalized_budget, 1000),
             skipped=False,
             reason="Narrow lookup: use compact exact and lexical evidence.",
             lanes=("exact", "lexical"),
@@ -73,10 +73,23 @@ def plan_context(query: str, budget: int) -> ContextPlan:
     lanes = ("exact", "lexical", "semantic")
     if intent in {"modify", "debug", "test", "architecture"}:
         lanes = (*lanes, "structural", "tests")
+    recommended_budget = {
+        "explain": 1800,
+        "test": 2400,
+        "modify": 3000,
+        "debug": 3200,
+        "architecture": 4200,
+    }[intent]
+    if len(text.split()) > 30:
+        recommended_budget = min(6000, recommended_budget + 600)
+    effective_budget = min(normalized_budget, recommended_budget)
     return ContextPlan(
         intent=intent,
-        budget=normalized_budget,
+        budget=effective_budget,
         skipped=False,
-        reason="Repository task: retrieve bounded evidence for the task intent.",
+        reason=(
+            f"{intent.title()} task: use a {effective_budget}-token budget and "
+            "retrieve bounded evidence for the selected lanes."
+        ),
         lanes=lanes,
     )
