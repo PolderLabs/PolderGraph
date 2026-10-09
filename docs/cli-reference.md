@@ -166,6 +166,10 @@ the repository-scoped MCP server config at `.codex/config.toml`.
 
 Verify index integrity: SQLite integrity, schema/version, orphan edges/embeddings, acyclic parent chains, line spans, FTS namespace, vector dimensions/norms, path safety.
 
+Run `poldergraph doctor integrations` to inspect detected coding-agent
+integrations and the lifecycle events PolderGraph actually supports. Clients
+without verified native hooks are reported as MCP-only or guidance-only.
+
 Options:
 - `--json` — machine-readable output
 - `--fix` — attempt to repair recoverable problems
