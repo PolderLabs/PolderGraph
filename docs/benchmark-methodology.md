@@ -140,9 +140,13 @@ uv run python tests/benchmarks/benchmark_watcher_contention.py --repeats 5
 
 In the Linux/Python 3.12.14 run on 2026-10-09, all five runs indexed the final
 revision and completed all 120 reads without errors. Median burst+reconcile
-wall time was 1.095 s, process CPU time was 0.451 s (0.41 CPU cores average),
-read p50/p95 were 4.5/14.7 ms, and the worst single read across runs was 57.3
-ms. This supplies a local contention observation, not a cross-platform CPU or
-starvation guarantee; the harness intentionally reports measurements instead
-of imposing machine-dependent latency thresholds. CI separately runs the
-functional 100-write/three-reader scenario on supported operating systems.
+wall time was 1.050 s, process CPU time was 0.293 s (0.29 CPU cores average),
+read p50/p95 were 3.6/9.9 ms, and the worst single read across runs was 23.7
+ms. During each 2-second idle observation, median process CPU use was 0.0011 s
+(0.0006 CPU cores average). This supplies a local contention observation, not
+a cross-platform CPU or starvation guarantee; the harness intentionally
+reports measurements instead of imposing machine-dependent latency thresholds.
+CI separately runs the functional 100-write/three-reader scenario on supported
+operating systems. A separate live supervisor test switches between two Git
+branches and verifies that each checked-out symbol appears while the other is
+removed from the index; rename and delete propagation are covered as well.

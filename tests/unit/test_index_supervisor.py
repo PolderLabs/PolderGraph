@@ -254,6 +254,81 @@ def test_supervisor_propagates_rename_and_delete_without_manual_update(tmp_path:
         supervisor.stop()
 
 
+def test_supervisor_propagates_git_branch_checkout(tmp_path: Path) -> None:
+    import shutil
+    import subprocess
+    import time
+
+    import pytest
+
+    if shutil.which("git") is None:
+        pytest.skip("git is required to exercise branch checkout events")
+
+    def git(*args: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(tmp_path), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+
+    from poldergraph.config.models import Config
+    from poldergraph.indexing.pipeline import Indexer
+    from poldergraph.workspace import create_index, open_workspace
+
+    tmp_path.mkdir(exist_ok=True)
+    source = tmp_path / "branch.py"
+    source.write_text("class MainBranchFeature:\n    pass\n", encoding="utf-8")
+    git("init", "--quiet")
+    git("add", "branch.py")
+    git(
+        "-c", "user.name=PolderGraph Tests", "-c", "user.email=test@example.invalid",
+        "commit", "--quiet", "-m", "main branch",
+    )
+    base_branch = git("branch", "--show-current")
+    git("checkout", "--quiet", "-b", "alternate")
+    source.write_text("class AlternateBranchFeature:\n    pass\n", encoding="utf-8")
+    git("add", "branch.py")
+    git(
+        "-c", "user.name=PolderGraph Tests", "-c", "user.email=test@example.invalid",
+        "commit", "--quiet", "-m", "alternate branch",
+    )
+    git("checkout", "--quiet", base_branch)
+
+    create_index(tmp_path, Config(embedding={"backend": "none"}))
+    workspace = open_workspace(tmp_path)
+    indexer = Indexer(workspace, backend=None)
+    indexer.ensure_root()
+    indexer.run(indexer.discover())
+    workspace.close()
+
+    supervisor = IndexSupervisor(tmp_path, reconcile_interval=1.0)
+    assert supervisor.start(wait_seconds=3)["state"] in {"running", "supervised_elsewhere"}
+
+    def wait_for(expected: str, missing: str) -> bool:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            workspace = open_workspace(tmp_path)
+            try:
+                found = indexer_entity_exists(workspace, expected)
+                absent = not indexer_entity_exists(workspace, missing)
+            finally:
+                workspace.close()
+            if found and absent:
+                return True
+            time.sleep(0.1)
+        return False
+
+    try:
+        git("checkout", "--quiet", "alternate")
+        assert wait_for("AlternateBranchFeature", "MainBranchFeature")
+        git("checkout", "--quiet", base_branch)
+        assert wait_for("MainBranchFeature", "AlternateBranchFeature")
+    finally:
+        supervisor.stop()
+
+
 def indexer_entity_exists(workspace, name: str) -> bool:
     return (
         workspace.con.execute(
