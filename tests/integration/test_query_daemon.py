@@ -17,6 +17,7 @@ from poldergraph.query_daemon import (
     _named,
     _without,
     resolve_index_dir,
+    send_request,
     socket_path,
 )
 
@@ -57,7 +58,7 @@ def daemon(tmp_path_factory):
     yield instance
     if instance._supervisor:
         instance._supervisor.stop()
-    instance._workspace.close() if instance._workspace else None
+    instance.close()
 
 
 class TestArgumentMapping:
@@ -172,6 +173,63 @@ class TestDaemonResults:
                 break
             time.sleep(0.1)
         assert daemon._service.resolve_entity(expected) is not None
+
+    def test_bounded_context_discloses_an_edit_before_watcher_catches_up(self, daemon):
+        if daemon._supervisor:
+            daemon._supervisor.stop()
+        source = daemon.root / "auth.py"
+        source.write_text(source.read_text() + "\n# race barrier probe\n")
+
+        result = daemon._service.context(
+            "Explain AuthService", consistency="bounded"
+        ).to_dict()
+
+        report = result["consistency_report"]
+        assert report["status"] == "stale"
+        assert report["stale_files"] == ["auth.py"]
+        assert report["source_read_required"] is True
+        assert report["generation_start"] == report["generation_end"]
+
+
+def test_socket_server_serves_three_clients_concurrently(tmp_path):
+    import threading
+
+    from poldergraph.config.models import Config
+    from poldergraph.indexing.pipeline import Indexer
+    from poldergraph.workspace import create_index, open_workspace
+
+    (tmp_path / "auth.py").write_text("class AuthService:\n    pass\n", encoding="utf-8")
+    create_index(tmp_path, Config(embedding={"backend": "none"}))
+    workspace = open_workspace(tmp_path)
+    indexer = Indexer(workspace, backend=None)
+    indexer.ensure_root()
+    indexer.run(indexer.discover())
+    workspace.close()
+
+    daemon = Daemon(tmp_path)
+    server = threading.Thread(target=daemon.serve, daemon=True)
+    server.start()
+    index_dir = tmp_path / ".poldergraph"
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not socket_path(index_dir).exists():
+        time.sleep(0.05)
+
+    assert socket_path(index_dir).exists()
+    with ThreadPoolExecutor(max_workers=3) as clients:
+        responses = list(
+            clients.map(
+                lambda _client: send_request(
+                    index_dir, "search", {"query": "AuthService", "limit": 3}
+                ),
+                range(3),
+            )
+        )
+
+    assert all(response and response.get("ok", True) for response in responses)
+    shutdown = send_request(index_dir, "__shutdown__", {})
+    assert shutdown and shutdown["ok"] is True
+    server.join(timeout=10)
+    assert not server.is_alive()
 
 
 class TestSocketPaths:

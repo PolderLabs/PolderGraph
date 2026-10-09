@@ -18,6 +18,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -189,6 +190,12 @@ class Daemon:
         self._service = None
         self._server: socket.socket | None = None
         self._supervisor = None
+        self._request_local = threading.local()
+        self._read_connections: list[Any] = []
+        self._read_connections_lock = threading.Lock()
+        self._handlers: set[threading.Thread] = set()
+        self._handlers_lock = threading.Lock()
+        self._shutdown = threading.Event()
 
     def _ensure_loaded(self) -> Any:
         if self._service is not None:
@@ -212,9 +219,56 @@ class Daemon:
         self._supervisor.start()
         return service
 
+    def _service_for_thread(self) -> Any:
+        """Give each concurrent client a SQLite connection and read snapshot."""
+        base = self._ensure_loaded()
+        service = getattr(self._request_local, "service", None)
+        if service is not None:
+            return service
+        from .retrieval.service import QueryService
+        from .storage.repository import Repository
+        from .storage.sqlite import connect
+
+        connection = connect(base.workspace_index() / "index.sqlite3", read_only=True)
+        service = QueryService(
+            Repository(connection),
+            base.config,
+            base.backend,
+            root_id=base.root_id,
+            workspace=base.workspace,
+        )
+        self._request_local.service = service
+        with self._read_connections_lock:
+            self._read_connections.append(connection)
+        return service
+
+    def close(self) -> None:
+        """Close request-local readers and the resident workspace connection."""
+        with self._read_connections_lock:
+            connections, self._read_connections = self._read_connections, []
+        for connection in connections:
+            with suppress(Exception):
+                connection.close()
+        if self._workspace is not None:
+            self._workspace.close()
+            self._workspace = None
+
+    def _release_thread_service(self) -> None:
+        """Close the read connection owned by the current socket request."""
+        service = getattr(self._request_local, "service", None)
+        if service is None:
+            return
+        connection = service.repo.con
+        with self._read_connections_lock:
+            if connection in self._read_connections:
+                self._read_connections.remove(connection)
+        with suppress(Exception):
+            connection.close()
+        del self._request_local.service
+
     def handle(self, command: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Execute one retrieval command against the resident service."""
-        service = self._ensure_loaded()
+        service = self._service_for_thread()
         from .errors import PolderGraphError
 
         try:
@@ -320,8 +374,10 @@ class Daemon:
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(str(path))
         server.listen(16)
+        server.settimeout(0.5)
         os.chmod(path, 0o600)
         self._server = server
+        self._shutdown.clear()
 
         # Load the model before accepting connections. The socket is bound but
         # the client connect() would succeed, so readiness is signalled by the
@@ -331,16 +387,41 @@ class Daemon:
             while True:
                 try:
                     conn, _ = server.accept()
+                except TimeoutError:
+                    if self._shutdown.is_set():
+                        break
+                    continue
                 except OSError:
                     break
-                with conn:
-                    self._serve_one(conn)
+                handler = threading.Thread(
+                    target=self._serve_connection,
+                    args=(conn,),
+                    name="poldergraph-query-client",
+                    daemon=True,
+                )
+                with self._handlers_lock:
+                    self._handlers.add(handler)
+                handler.start()
         finally:
             server.close()
+            with self._handlers_lock:
+                handlers = list(self._handlers)
+            for handler in handlers:
+                handler.join(timeout=REQUEST_TIMEOUT)
             if self._supervisor is not None:
                 self._supervisor.stop()
+            self.close()
             if path.exists():
                 path.unlink()
+
+    def _serve_connection(self, conn: socket.socket) -> None:
+        try:
+            with conn:
+                self._serve_one(conn)
+        finally:
+            self._release_thread_service()
+            with self._handlers_lock:
+                self._handlers.discard(threading.current_thread())
 
     def _handle_memory(
         self, action: str, arguments: dict[str, Any], service: Any
@@ -414,8 +495,7 @@ class Daemon:
             elif request.get("command") == "__shutdown__":
                 payload = json.dumps({"ok": True}).encode("utf-8")
                 conn.sendall(len(payload).to_bytes(4, "big") + payload)
-                if self._server is not None:
-                    self._server.close()
+                self._shutdown.set()
                 return
             else:
                 result = self.handle(request["command"], request.get("arguments", {}))
