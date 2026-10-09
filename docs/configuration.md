@@ -190,11 +190,15 @@ when switching back to an exact prior configuration.
 | `remote_providers` | string[] | `[]` | Trusted user-level allowlist of hosted providers (`typesafe`, `openai`) that may receive decision data |
 | `model` | string | empty | Optional model override |
 | `endpoint` | string | empty | Optional compatible API endpoint override; custom hosted endpoints must come from trusted user config or the environment |
-| `timeout` | float | 3.0 | Hosted request timeout in seconds |
+| `timeout` | float | 3.0 | Hosted request timeout or local Laya process deadline in seconds |
 | `confidence_threshold` | float | 0.9 | Minimum probability for model decisions; uncertain answers keep the deterministic result |
 
 Hosted providers read credentials from `TYPESAFE_API_KEY` or `OPENAI_API_KEY`.
-`laya` uses the optional `poldergraph[decision-laya]` extra and runs locally.
+`laya` uses the optional `poldergraph[decision-laya]` extra and runs locally in
+a supervised process with a hard deadline. Its model stays warm for up to five
+idle minutes and is shut down when the host process exits. Disable model
+downloads with `[privacy].allow_model_downloads = false`; this also configures
+the worker's Hugging Face clients for offline mode.
 No provider is enabled by default. When enabled, PolderGraph sends only the
 query or candidate memory text needed for a decision; hosted requests can
 contain repository queries and excerpts from private memories. Search routing

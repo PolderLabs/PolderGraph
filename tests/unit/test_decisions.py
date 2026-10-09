@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from poldergraph import decisions
+from poldergraph.decision_worker import local_decision_worker
 from poldergraph.decisions import DecisionError, choice, decide, predicate, score
 
 
@@ -92,6 +93,12 @@ def test_laya_is_explicit_and_runs_locally(monkeypatch):
 
     fake_module = SimpleNamespace(load=lambda model: (calls.update(model=model) or FakeLayaAgent()))
     monkeypatch.setitem(sys.modules, "laya", fake_module)
+    monkeypatch.setattr(
+        local_decision_worker,
+        "decide",
+        lambda state, questions, *, model, timeout, offline_only=False:
+            decisions._decide_laya(state, questions, model=model),
+    )
     decisions._laya_models.pop("test-local", None)
 
     result = decide("state", {"action": choice("action", "What?", {"store": "yes", "reject": "no"})}, provider="laya", model="test-local")
@@ -116,6 +123,12 @@ def test_laya_batch_preserves_candidate_alignment(monkeypatch):
 
     fake_module = SimpleNamespace(load=lambda model: FakeLayaAgent())
     monkeypatch.setitem(sys.modules, "laya", fake_module)
+    monkeypatch.setattr(
+        local_decision_worker,
+        "decide_batch",
+        lambda states, questions, *, model, batch_size, timeout, offline_only=False:
+            decisions._decide_laya_batch(states, questions, model=model, batch_size=batch_size),
+    )
     decisions._laya_models.pop("test-batch", None)
     states = [{"id": index} for index in range(20)]
     results = decisions.decide_batch(

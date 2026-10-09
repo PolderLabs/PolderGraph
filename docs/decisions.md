@@ -26,9 +26,14 @@ Laya runs locally and has a separate optional dependency:
 pip install 'poldergraph[decision-laya]'
 ```
 
-The first local Laya call loads/downloads the checkpoint and can take time and
-memory. The loaded model is cached in-process for later calls. Use `model=` to
-select a Laya checkpoint; the default is `convaiinnovations/laya`.
+Laya runs in a supervised child process. The default `timeout` covers model
+startup and inference; a timed-out worker is terminated and the decision caller
+falls back to deterministic behavior. A warm worker reuses its model and is
+evicted after five idle minutes or when explicitly closed at process shutdown.
+Set `offline_only=True` on `decide()` or set `[privacy].allow_model_downloads =
+false` for PolderGraph's integrated decision path to prohibit model downloads.
+Use `model=` to select a Laya checkpoint; the default is
+`convaiinnovations/laya`.
 
 ## Example
 

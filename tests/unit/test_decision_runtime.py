@@ -72,6 +72,21 @@ def test_decision_cache_keeps_only_digest_and_reuses_result(monkeypatch):
     assert all(len(key) == 64 and "private query" not in key for key in decision_runtime._CACHE)
 
 
+def test_local_decision_uses_worker_deadline_and_download_policy(monkeypatch):
+    seen = {}
+
+    def fake_worker(state, questions, **kwargs):
+        seen.update(kwargs)
+        return {"provider": "laya", "model": "local", "answers": {}}
+
+    monkeypatch.setattr(decision_runtime.local_decision_worker, "decide", fake_worker)
+    config = _config("laya")
+    config.privacy = SimpleNamespace(allow_model_downloads=False)
+    result = decision_runtime.run_decision("small query", {}, config)
+    assert result["provider"] == "laya"
+    assert seen == {"model": None, "timeout": 0.1, "offline_only": True}
+
+
 def test_query_route_requires_confident_valid_typed_answers(monkeypatch):
     monkeypatch.setattr(
         decision_runtime,
@@ -247,7 +262,7 @@ def test_local_batch_keeps_aligned_results_and_uses_cache(monkeypatch):
             for i, _state in enumerate(states)
         ]
 
-    monkeypatch.setattr(decision_runtime, "decide_batch", fake_batch)
+    monkeypatch.setattr(decision_runtime.local_decision_worker, "decide_batch", fake_batch)
     question = DecisionQuestion("ok", "predicate", "Is this item useful?")
     states = [{"id": index} for index in range(20)]
     first = decision_runtime.run_local_decision_batch(states, {"ok": question}, _config("laya"))

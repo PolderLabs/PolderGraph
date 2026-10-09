@@ -86,7 +86,9 @@ def test_supervisor_indexes_a_live_edit_without_model_download(tmp_path: Path) -
     indexer.run(indexer.discover())
     workspace.close()
 
-    supervisor = IndexSupervisor(tmp_path)
+    # Exercise bounded reconciliation as a fallback for missed native events;
+    # keep the interval short so the cross-platform smoke test is practical.
+    supervisor = IndexSupervisor(tmp_path, reconcile_interval=1.0)
     assert supervisor.start(wait_seconds=3)["state"] in {"running", "supervised_elsewhere"}
     source.write_text("def live_supervisor_probe():\n    return True\n", encoding="utf-8")
     deadline = time.monotonic() + 15
