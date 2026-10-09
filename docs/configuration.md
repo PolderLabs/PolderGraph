@@ -22,6 +22,10 @@ include_media = true
 include_generated = false
 follow_symlinks = false
 max_file_bytes = 5000000
+watch_debounce_seconds = 0.4
+watch_poll_interval_seconds = 1.0
+watch_poll_max_interval_seconds = 10.0
+watch_reconcile_interval_seconds = 30.0
 
 [embedding]
 backend = "native"
@@ -100,6 +104,10 @@ POLDERGRAPH_DECISIONS__PROVIDER=typesafe
 | `include_generated` | bool | false | Index generated/vendor files |
 | `follow_symlinks` | bool | false | Follow symbolic links during discovery |
 | `max_file_bytes` | int | 5000000 | Maximum file size to index |
+| `watch_debounce_seconds` | float | 0.4 | Quiet period used to combine file changes into one update (0.05–3600) |
+| `watch_poll_interval_seconds` | float | 1.0 | Initial fallback scan interval when native file events are unavailable |
+| `watch_poll_max_interval_seconds` | float | 10.0 | Maximum idle fallback scan interval; must be at least the initial interval |
+| `watch_reconcile_interval_seconds` | float | 30.0 | Maximum time between full watcher reconciliations |
 
 ### `[embedding]`
 

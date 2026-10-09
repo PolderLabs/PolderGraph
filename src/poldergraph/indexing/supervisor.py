@@ -12,9 +12,9 @@ class IndexSupervisor:
     """Start and stop one debounced watcher without blocking its host process."""
 
     def __init__(
-        self, root: Path, *, backend_provider: Any = None, reconcile_interval: float = 30.0
+        self, root: Path, *, backend_provider: Any = None, reconcile_interval: float | None = None
     ) -> None:
-        if reconcile_interval <= 0:
+        if reconcile_interval is not None and reconcile_interval <= 0:
             raise ValueError("reconcile_interval must be greater than zero")
         self.root = root.resolve()
         self.backend_provider = backend_provider

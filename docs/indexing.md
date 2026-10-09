@@ -208,7 +208,10 @@ MCP stdio and the query daemon start this supervisor automatically for an indexe
 workspace. Its singleton lock prevents duplicate watcher processes, and it reuses the
 host's resident embedding backend lazily when an update needs one. Set
 `POLDERGRAPH_NO_WATCHER=1` to opt out. If `watchfiles` is unavailable, it falls back to
-five-second polling; `pg_status` reports watcher state. The index writer lock uses
+configurable polling that backs off while idle and resets to its configured base interval
+after a change. The default detection interval grows from one to at most ten seconds;
+`watch_reconcile_interval_seconds` bounds full reconciliations. `pg_status` reports
+watcher state. The index writer lock uses
 OS-level advisory locking on Linux/macOS and Windows.
 
 ## Git awareness
