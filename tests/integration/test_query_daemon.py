@@ -8,6 +8,7 @@ execution, correct invalidation after an index update, and safe fallback.
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -140,6 +141,37 @@ class TestDaemonResults:
         assert daemon._service.resolve_entity("automatic_watch_probe") is not None, (
             daemon._supervisor.status() if daemon._supervisor else None
         )
+
+    def test_supervisor_coalesces_rapid_edits_with_three_readers(self, daemon):
+        source = daemon.root / "auth.py"
+        baseline = source.read_text()
+
+        def read_client(_client):
+            results = []
+            for _ in range(12):
+                result = daemon.handle("search", {"query": "AuthService", "limit": 3})
+                results.append(result.get("ok", True))
+                time.sleep(0.01)
+            return results
+
+        with ThreadPoolExecutor(max_workers=3) as clients:
+            reads = [clients.submit(read_client, client) for client in range(3)]
+            for revision in range(100):
+                source.write_text(
+                    baseline + f"\n\ndef burst_probe_{revision}():\n    return {revision}\n"
+                )
+                time.sleep(0.003)
+
+            results = [future.result(timeout=15) for future in reads]
+
+        assert all(all(client_results) for client_results in results)
+        expected = "burst_probe_99"
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if daemon._service.resolve_entity(expected) is not None:
+                break
+            time.sleep(0.1)
+        assert daemon._service.resolve_entity(expected) is not None
 
 
 class TestSocketPaths:
