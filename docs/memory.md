@@ -63,8 +63,10 @@ retrieval is read-only: it never writes shared memory from query text. This
 prevents quoted repository text or agent-authored tool arguments from being
 treated as user-authored preferences. When explicitly installed, Codex's
 documented `UserPromptSubmit` hook provides trusted user-message provenance and
-may save only preferences accepted by deterministic, secret-filtered rules. It
-does not save raw prompts or load an embedding model. OMP currently retrieves
+may save only preferences accepted by deterministic, secret-filtered rules. Saved
+preferences retain the hook source and available session/turn IDs; replayed identical
+preferences remain a single memory. It does not save raw prompts or load an embedding
+model. OMP currently retrieves
 memories but does not auto-capture them. Users can save preferences and project
 decisions through explicit memory tools. Agents must not write speculative
 facts or one-time task data.
