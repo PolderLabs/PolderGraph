@@ -20,9 +20,13 @@ and MCP configuration.
 
 Automatic context uses offline CLI calls. On the first user task it creates a
 structural index without downloading an embedding model. It retrieves compact
-context for relevant tasks and skips social prompts. No user prompt is saved
-to PolderGraph memory. To use semantic context, warm an already selected local
-model explicitly with `poldergraph update`.
+context for relevant tasks and skips social prompts. Raw prompts are not saved.
+The trusted user-input event can save only explicit, durable first-person
+preferences through PolderGraph's deterministic, secret-filtered capture rules;
+agent-authored tool arguments and repository context are not trusted memory
+sources. Preference capture is local and does not load an embedding model. To
+use semantic context, warm an already selected local model explicitly with
+`poldergraph update`.
 
 The hook can be disabled by removing the PolderGraph `UserPromptSubmit`
 handler from `.codex/hooks.json`; MCP and skill guidance continue to work.
