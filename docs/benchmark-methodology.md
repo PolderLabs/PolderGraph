@@ -150,3 +150,31 @@ CI separately runs the functional 100-write/three-reader scenario on supported
 operating systems. A separate live supervisor test switches between two Git
 branches and verifies that each checked-out symbol appears while the other is
 removed from the index; rename and delete propagation are covered as well.
+
+## Rust graph traversal proof of concept
+
+`research/rust_graph_poc/` contains a dependency-free Rust CSR breadth-first
+traversal and an equivalent Python list-of-lists baseline. Both generate the
+same deterministic graph and compare traversal checksums at 100, 10,000, and
+100,000 nodes; the harness exits if results differ. Reproduce on Linux with
+Rust/Cargo installed:
+
+```bash
+python research/rust_graph_poc/benchmark.py --repeats 7
+```
+
+On Linux x86_64, Python 3.12.14 / Rust 1.99.0, seven samples per size agreed
+exactly. At 100,000 nodes and 800,000 edges, Rust CSR reached the same results
+with 19.5 ms traversal p50 vs 424.0 ms for Python (21.8x), 36.2 ms vs 465.6 ms
+p95 (12.9x), and 8.7 MiB vs 47.5 MiB peak RSS (5.5x lower). Process wall p50,
+including startup and graph construction, was 28.8 ms vs 611.7 ms. The release
+binary built offline with no external crates in 0.631 seconds after a clean
+target.
+
+This is only one traversal primitive on synthetic regular graphs. It does not
+include parsing, indexing, SQLite, Python/Rust FFI, or EmbeddingGemma, and the
+Python baseline is idiomatic rather than an optimized PolderGraph hot path.
+It shows that Rust is promising for this isolated kernel; it does not establish
+end-to-end product gains or justify a full rewrite. The next useful check is to
+profile real workloads, then compare one representative production path with
+golden output and database parity.

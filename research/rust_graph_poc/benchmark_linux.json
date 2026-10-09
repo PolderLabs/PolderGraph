@@ -1,0 +1,98 @@
+{
+  "method": {
+    "environment": {
+      "architecture": "x86_64",
+      "cpu_count": 5,
+      "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+      "processor": "",
+      "python": "3.12.14",
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)"
+    },
+    "graph_generation": "same 8-edge deterministic formula in both implementations",
+    "limitations": [
+      "This isolates one structural graph traversal primitive; it does not index files, parse source, use SQLite, or embed vectors.",
+      "Synthetic regular graphs are not representative of every repository topology.",
+      "The Rust result is a disposable POC, not drop-in PolderGraph feature parity.",
+      "Linux RSS and wall-time measurements are local to this machine."
+    ],
+    "operation": "depth-limited outgoing BFS from deterministic seed nodes",
+    "repeats": 7,
+    "rss": "peak resident set from /proc/self/status VmHWM on Linux",
+    "rust_build_seconds_excluded_from_runtime": 0.631,
+    "timing": "internal timer covers traversal only; process wall includes startup and graph construction"
+  },
+  "sizes": [
+    {
+      "checksum": 259528,
+      "depth_limit": 4,
+      "edges": 800,
+      "nodes": 100,
+      "python": {
+        "implementation": "python_list_of_lists",
+        "peak_rss_p50_kb": 8632,
+        "process_wall_p50_ms": 44.926,
+        "process_wall_p95_ms": 55.936,
+        "traversal_p50_ms": 0.668,
+        "traversal_p95_ms": 1.939
+      },
+      "queries_per_process": 32,
+      "rust": {
+        "implementation": "rust_csr",
+        "peak_rss_p50_kb": 1092,
+        "process_wall_p50_ms": 2.155,
+        "process_wall_p95_ms": 5.674,
+        "traversal_p50_ms": 0.023,
+        "traversal_p95_ms": 0.024
+      },
+      "same_answers": true
+    },
+    {
+      "checksum": 478277648,
+      "depth_limit": 4,
+      "edges": 80000,
+      "nodes": 10000,
+      "python": {
+        "implementation": "python_list_of_lists",
+        "peak_rss_p50_kb": 12600,
+        "process_wall_p50_ms": 80.919,
+        "process_wall_p95_ms": 112.436,
+        "traversal_p50_ms": 30.83,
+        "traversal_p95_ms": 42.313
+      },
+      "queries_per_process": 64,
+      "rust": {
+        "implementation": "rust_csr",
+        "peak_rss_p50_kb": 1868,
+        "process_wall_p50_ms": 4.276,
+        "process_wall_p95_ms": 10.646,
+        "traversal_p50_ms": 1.37,
+        "traversal_p95_ms": 2.34
+      },
+      "same_answers": true
+    },
+    {
+      "checksum": 9506198848,
+      "depth_limit": 4,
+      "edges": 800000,
+      "nodes": 100000,
+      "python": {
+        "implementation": "python_list_of_lists",
+        "peak_rss_p50_kb": 48640,
+        "process_wall_p50_ms": 611.729,
+        "process_wall_p95_ms": 708.587,
+        "traversal_p50_ms": 424.026,
+        "traversal_p95_ms": 465.584
+      },
+      "queries_per_process": 128,
+      "rust": {
+        "implementation": "rust_csr",
+        "peak_rss_p50_kb": 8908,
+        "process_wall_p50_ms": 28.84,
+        "process_wall_p95_ms": 49.071,
+        "traversal_p50_ms": 19.48,
+        "traversal_p95_ms": 36.23
+      },
+      "same_answers": true
+    }
+  ]
+}
