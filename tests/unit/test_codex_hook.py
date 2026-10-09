@@ -82,15 +82,15 @@ def test_codex_hook_uses_offline_context_and_skips_social_plan(tmp_path, monkeyp
 
     def fake_run(root, args, timeout):
         calls.append(args)
-        if args[0] == "status":
-            return {"ok": True, "index": {"fresh": True}}
+        if args[0] == "agent-ready":
+            return {"ok": True}
         assert "--offline" in args
         return {"ok": True, "data": {"plan": {"skipped": True}}}
 
     monkeypatch.setattr(codex_hook, "_run", fake_run)
     event = {"prompt": "thanks", "cwd": str(tmp_path)}
     assert codex_hook._context_for(event) is None
-    assert calls[0][0] == "status"
+    assert calls[0][0] == "agent-ready"
     assert calls[1][0] == "context"
 
 
@@ -99,16 +99,13 @@ def test_codex_hook_refreshes_stale_index_without_model(tmp_path, monkeypatch):
 
     def fake_run(root, args, timeout):
         calls.append(args)
-        if args[0] == "status":
-            return {"ok": True, "index": {"fresh": False}}
-        if args[0] == "update":
-            assert "--no-embed" in args
+        if args[0] == "agent-ready":
             return {"ok": True}
         return {"ok": True, "data": {"plan": {"skipped": True}}}
 
     monkeypatch.setattr(codex_hook, "_run", fake_run)
     assert codex_hook._context_for({"prompt": "fix the parser", "cwd": str(tmp_path)}) is None
-    assert [call[0] for call in calls] == ["status", "update", "context"]
+    assert [call[0] for call in calls] == ["agent-ready", "context"]
 
 
 def test_codex_hook_uses_enclosing_git_root_from_nested_folder(tmp_path, monkeypatch):
@@ -120,8 +117,8 @@ def test_codex_hook_uses_enclosing_git_root_from_nested_folder(tmp_path, monkeyp
 
     def fake_run(root, args, timeout):
         roots.append(root)
-        if args[0] == "status":
-            return {"ok": True, "index": {"fresh": True}}
+        if args[0] == "agent-ready":
+            return {"ok": True}
         return {"ok": True, "data": {"plan": {"skipped": True}}}
 
     monkeypatch.setattr(codex_hook, "_run", fake_run)

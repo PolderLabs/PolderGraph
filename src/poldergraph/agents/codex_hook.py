@@ -83,20 +83,9 @@ def _context_for(event: dict[str, Any]) -> str | None:
         return None
     root = _project_root(cwd_path)
 
-    status = _run(root, ["status", "--json"], timeout=15)
-    if status is None:
+    ready = _run(root, ["agent-ready", "--quiet", "--json"], timeout=300)
+    if not ready or not ready.get("ok"):
         return None
-    code = (status.get("error") or {}).get("code")
-    if code == "INDEX_MISSING":
-        initialized = _run(root, ["init", "--no-embed", "--quiet", "--json"], timeout=300)
-        if not initialized or not initialized.get("ok"):
-            return None
-    elif not status.get("ok"):
-        return None
-    elif (status.get("index") or {}).get("fresh") is False:
-        updated = _run(root, ["update", "--no-embed", "--quiet", "--json"], timeout=180)
-        if not updated or not updated.get("ok"):
-            return None
 
     result = _run(
         root,

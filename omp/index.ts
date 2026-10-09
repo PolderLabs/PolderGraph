@@ -136,17 +136,8 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 		const active = indexing.get(root);
 		if (active) return active;
 		const work = (async () => {
-			const status = await runJson(["status"], root);
-			if (!status.ok && status.error?.code === "INDEX_MISSING") {
-				const initialized = await runJson(["init", "--no-embed"], root);
-				if (!initialized.ok) throw new Error(formatResult(initialized));
-				return;
-			}
-			if (!status.ok) throw new Error(formatResult(status));
-			if (status.index?.fresh === false) {
-				const updated = await runJson(["update", "--no-embed"], root);
-				if (!updated.ok) throw new Error(formatResult(updated));
-			}
+			const ready = await runJson(["agent-ready", "--quiet"], root);
+			if (!ready.ok) throw new Error(formatResult(ready));
 		})();
 		indexing.set(root, work);
 		try {
