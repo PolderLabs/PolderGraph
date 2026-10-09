@@ -67,7 +67,7 @@ class LocalDecisionWorker:
         self._process, self._connection = process, parent
         self._offline_only = offline_only
 
-    def _stop_locked(self) -> None:
+    def _stop_locked(self, *, force: bool = False) -> None:
         if self._timer:
             self._timer.cancel()
             self._timer = None
@@ -81,10 +81,17 @@ class LocalDecisionWorker:
             except (BrokenPipeError, OSError):
                 pass
         if process is not None:
-            process.join(timeout=0.2)
-            if process.is_alive():
+            if force and process.is_alive():
                 process.terminate()
-                process.join(timeout=1.0)
+                process.join(timeout=0.05)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=0.05)
+            else:
+                process.join(timeout=0.2)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=1.0)
 
     def _evict_if_idle(self, expected: multiprocessing.Process, scheduled_at: float) -> None:
         with self._lock:
@@ -107,7 +114,10 @@ class LocalDecisionWorker:
         if timeout <= 0:
             raise DecisionError("timeout must be greater than zero.")
         deadline = time.monotonic() + timeout
-        with self._lock:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not self._lock.acquire(timeout=remaining):
+            raise DecisionError("Local decision deadline exceeded while waiting for the worker.")
+        try:
             if self._process is None or not self._process.is_alive() or self._offline_only != offline_only:
                 self._stop_locked()
                 self._start(offline_only)
@@ -119,16 +129,18 @@ class LocalDecisionWorker:
                 connection.send((operation, payload))
                 remaining = deadline - time.monotonic()
                 if remaining <= 0 or not connection.poll(remaining):
-                    self._stop_locked()
+                    self._stop_locked(force=True)
                     raise DecisionError("Local decision deadline exceeded.")
                 ok, result = connection.recv()
             except (EOFError, BrokenPipeError, OSError) as exc:
-                self._stop_locked()
+                self._stop_locked(force=True)
                 raise DecisionError("Local decision worker exited unexpectedly.") from exc
             self._arm_idle_eviction()
             if not ok:
                 raise DecisionError(f"Local decision worker failed ({result}).")
             return result
+        finally:
+            self._lock.release()
 
     def decide(
         self, state: Any, questions: dict[str, DecisionQuestion], *, model: str | None,
