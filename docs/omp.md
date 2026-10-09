@@ -18,12 +18,11 @@ omp install github:PolderLabs/PolderGraph
 ```
 
 That's the only setup command. The extension bootstraps the PolderGraph CLI
-with `uv` when it is first needed, then initializes the repository index and
-downloads the local embedding model. The first task waits for this background
-work to finish so it can include graph context. Later sessions reuse the
-installation and index. `uv` must be installed; indexing requires network
-access for initial package/model downloads and several gigabytes of free disk
-space. After setup, indexing and retrieval run locally.
+with `uv` when it is first needed, then creates or structurally refreshes the
+repository index without loading an embedding model. The first task waits for
+index setup before retrieving graph context. Later sessions reuse the
+installation and index. `uv` must be installed; the initial package install
+requires network access. After setup, indexing and retrieval run locally.
 
 You can prewarm a repository before starting OMP by running:
 
@@ -45,12 +44,12 @@ installed, it reuses the executable on `PATH`.
 
 ## Behavior
 
-On session start, the extension bootstraps the CLI if needed and initializes a
-missing index or updates a stale one in the background. Before each user task,
-it ensures indexing is current and uses a cheap local context plan. Social
+On session start, the extension bootstraps the CLI if needed. Before each user
+task, it initializes a missing index or structurally refreshes a stale one
+without downloading a model, then uses a cheap local context plan. Social
 messages skip repository retrieval and add no PolderGraph context; narrow symbol
 lookups use a compact lexical pack; broader coding tasks use the configured
-token budget and hybrid evidence. Successful OMP edit/write operations trigger
+token budget with offline lexical and structural evidence. Successful OMP edit/write operations trigger
 a background incremental refresh. If automatic setup fails, the agent receives
 the error and continues with normal repository inspection; it retries
 PolderGraph on a later task.

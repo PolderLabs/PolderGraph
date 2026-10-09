@@ -392,6 +392,8 @@ Override with environment variables: `POLDERGRAPH_EMBEDDING__DEVICE=cuda`
 - [docs/retrieval.md](docs/retrieval.md) — semantic/lexical/graph retrieval, ranking, context packing
 - [docs/dashboard.md](docs/dashboard.md) — interactive graph explorer
 - [docs/agents.md](docs/agents.md) — MCP, CLI, AGENTS.md generation
+- [docs/codex.md](docs/codex.md) — automatic Codex prompt context
+- [docs/omp.md](docs/omp.md) — Oh My Pi plugin setup and behavior
 - [docs/cli-reference.md](docs/cli-reference.md) — CLI command reference
 - [docs/mcp-reference.md](docs/mcp-reference.md) — MCP tool reference
 - [docs/configuration.md](docs/configuration.md) — configuration reference

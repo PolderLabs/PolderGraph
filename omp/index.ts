@@ -121,7 +121,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 			}
 			if (!status.ok) throw new Error(formatResult(status));
 			if (status.index?.fresh === false) {
-				const updated = await runJson(["update", "--offline"], cwd);
+				const updated = await runJson(["update", "--no-embed"], cwd);
 				if (!updated.ok) throw new Error(formatResult(updated));
 			}
 		})();
