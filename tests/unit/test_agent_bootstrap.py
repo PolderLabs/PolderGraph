@@ -1,5 +1,6 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -32,6 +33,64 @@ def test_workspace_root_reuses_outer_index_for_ordinary_nested_directory(tmp_pat
     (index_dir / "index.sqlite3").touch()
 
     assert workspace_root(nested) == project
+
+
+def test_agent_bootstrap_from_monorepo_package_indexes_all_sibling_packages(tmp_path):
+    project = tmp_path / "monorepo"
+    package_a = project / "packages" / "api"
+    package_b = project / "packages" / "worker"
+    package_a.mkdir(parents=True)
+    package_b.mkdir(parents=True)
+    (project / ".git").mkdir()
+    (package_a / "api.py").write_text("class ApiEntrypoint:\n    pass\n", encoding="utf-8")
+    (package_b / "worker.py").write_text("class WorkerEntrypoint:\n    pass\n", encoding="utf-8")
+
+    result = ensure_workspace_ready(package_a)
+
+    assert result["root"] == str(project)
+    workspace = open_workspace(project)
+    try:
+        paths = {
+            row["path"]
+            for row in workspace.con.execute("SELECT path FROM files").fetchall()
+        }
+        assert "packages/api/api.py" in paths
+        assert "packages/worker/worker.py" in paths
+    finally:
+        workspace.close()
+
+
+def test_agent_bootstrap_keeps_simultaneous_repository_roots_isolated(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    roots = [tmp_path / "project-a", tmp_path / "project-b"]
+    for root, symbol in zip(roots, ("OnlyInA", "OnlyInB"), strict=True):
+        root.mkdir()
+        (root / ".git").mkdir()
+        (root / "shared.py").write_text(f"class {symbol}:\n    pass\n", encoding="utf-8")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(ensure_workspace_ready, roots))
+
+    assert [Path(result["root"]) for result in results] == roots
+    workspaces = [open_workspace(root) for root in roots]
+    try:
+        root_ids = [workspace.root_id() for workspace in workspaces]
+        assert len(set(root_ids)) == 2
+        names_by_root = [
+            {
+                row[0]
+                for row in workspace.con.execute("SELECT name FROM entities").fetchall()
+            }
+            for workspace in workspaces
+        ]
+        assert "OnlyInA" in names_by_root[0]
+        assert "OnlyInB" not in names_by_root[0]
+        assert "OnlyInB" in names_by_root[1]
+        assert "OnlyInA" not in names_by_root[1]
+    finally:
+        for workspace in workspaces:
+            workspace.close()
 
 
 def test_agent_bootstrap_creates_structural_index_without_embedding(tmp_path):
