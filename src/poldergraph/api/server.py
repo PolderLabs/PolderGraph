@@ -368,6 +368,16 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
         except (AttributeError, TypeError, ValueError) as exc:
             return fail("memory.update", UsageError(f"Invalid memory request: {exc}"))
 
+    @app.get("/api/memory/{memory_id}/history")
+    def memory_history(memory_id: str) -> Any:
+        try:
+            return ok(
+                "memory.history",
+                {"memory_id": memory_id, "versions": MemoryStore(workspace.root).history(memory_id)},
+            )
+        except PolderGraphError as exc:
+            return fail("memory.history", exc)
+
     @app.post("/api/memory/{memory_id}/forget")
     def memory_forget(memory_id: str) -> Any:
         try:

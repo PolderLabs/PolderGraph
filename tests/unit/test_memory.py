@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from poldergraph.cli import app
 from poldergraph.embedding.protocol import ModelInfo
 from poldergraph.errors import UsageError
 from poldergraph.memory import (
@@ -47,6 +50,73 @@ def shared_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Memor
 
 
 class TestMemoryStore:
+    def test_cli_history_is_machine_readable(self, shared_store):
+        store, _db_path = shared_store
+        item = store.add("The CLI history command is available")
+        store.update(item["id"], content="The CLI history command is integrated")
+
+        result = CliRunner().invoke(
+            app,
+            ["memory", "history", item["id"], "--root", str(store.root), "--json"],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert [version["content"] for version in payload["data"]["versions"]] == [
+            "The CLI history command is available",
+            "The CLI history command is integrated",
+        ]
+
+    def test_updates_preserve_auditable_temporal_revisions(
+        self, shared_store: tuple[MemoryStore, Path]
+    ):
+        store, db_path = shared_store
+        item = store.add(
+            "The service uses Python 3.11",
+            kind="fact",
+            provenance={"source": "user-explicit", "evidence": "setup conversation"},
+        )
+        original_version = item["version_id"]
+
+        idempotent = store.add(
+            "The service uses Python 3.11",
+            kind="decision",
+            tags=["runtime"],
+            provenance={"source": "agent-decision", "evidence": "pytest"},
+        )
+        assert idempotent["id"] == item["id"]
+        assert idempotent["version_id"] != original_version
+        assert len(store.history(item["id"])) == 2
+        latest_version = idempotent["version_id"]
+
+        updated = store.update(
+            item["id"],
+            content="The service uses Python 3.12",
+            provenance={"source": "user-correction", "evidence": "pyproject.toml"},
+        )
+        history = store.history(item["id"])
+
+        assert updated["content"] == "The service uses Python 3.12"
+        assert updated["version_id"] != latest_version
+        assert len(history) == 3
+        assert history[0]["content"] == "The service uses Python 3.11"
+        assert history[0]["version_id"] == original_version
+        assert history[0]["provenance"]["source"] == "user-explicit"
+        assert history[0]["valid_to"] == history[1]["valid_from"]
+        assert history[0]["superseded_by_version"] == history[1]["version_id"]
+        assert history[1]["provenance"]["source"] == "user-explicit"
+        assert history[1]["valid_to"] == history[2]["valid_from"]
+        assert history[1]["superseded_by_version"] == history[2]["version_id"]
+        assert history[2]["provenance"]["source"] == "user-correction"
+        assert history[2]["current"] is True
+
+        other_root = Path(db_path).parent / "other-project"
+        other_root.mkdir()
+        other = MemoryStore(other_root, db_path)
+        assert other.history(item["id"]) == []
+        store.forget(item["id"])
+        assert store.history(item["id"]) == []
+
     def test_typed_decision_can_veto_only_existing_explicit_auto_capture(
         self, shared_store: tuple[MemoryStore, Path], monkeypatch: pytest.MonkeyPatch
     ):

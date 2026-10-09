@@ -24,6 +24,7 @@ REQUIRED_TOOLS: dict[str, list[str]] = {
     "pg_memory_search": ["query"],
     "pg_memory_list": [],
     "pg_memory_add": ["content"],
+    "pg_memory_history": ["memory_id"],
     "pg_memory_update": ["memory_id"],
     "pg_memory_forget": ["memory_id"],
 }
@@ -344,6 +345,12 @@ class TestToolResponses:
         updated = _call(server, "pg_memory_update", {"memory_id": memory_id, "kind": "fact"})
         self._assert_envelope(updated, "pg_memory_update")
         assert updated["data"]["kind"] == "fact"
+
+        history = _call(server, "pg_memory_history", {"memory_id": memory_id})
+        self._assert_envelope(history, "pg_memory_history")
+        assert len(history["data"]["versions"]) == 2
+        assert history["data"]["versions"][0]["kind"] == "decision"
+        assert history["data"]["versions"][1]["current"] is True
 
         forgotten = _call(server, "pg_memory_forget", {"memory_id": memory_id})
         self._assert_envelope(forgotten, "pg_memory_forget")

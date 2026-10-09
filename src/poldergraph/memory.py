@@ -442,6 +442,8 @@ class MemoryStore:
                 content_hash TEXT NOT NULL,
                 tags_json TEXT NOT NULL DEFAULT '[]',
                 provenance_json TEXT NOT NULL DEFAULT '{}',
+                version_id TEXT NOT NULL DEFAULT '',
+                valid_from INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 CHECK (
@@ -457,6 +459,33 @@ class MemoryStore:
             con.execute(
                 "ALTER TABLE memories ADD COLUMN provenance_json TEXT NOT NULL DEFAULT '{}'"
             )
+        if "version_id" not in columns:
+            con.execute("ALTER TABLE memories ADD COLUMN version_id TEXT NOT NULL DEFAULT ''")
+        if "valid_from" not in columns:
+            con.execute("ALTER TABLE memories ADD COLUMN valid_from INTEGER NOT NULL DEFAULT 0")
+        con.execute(
+            "UPDATE memories SET version_id='memver_' || id WHERE version_id=''"
+        )
+        con.execute("UPDATE memories SET valid_from=created_at WHERE valid_from=0")
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_revisions (
+                version_id TEXT PRIMARY KEY,
+                memory_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                tags_json TEXT NOT NULL,
+                provenance_json TEXT NOT NULL,
+                valid_from INTEGER NOT NULL,
+                valid_to INTEGER NOT NULL,
+                superseded_by_version TEXT NOT NULL
+            )
+            """
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS memory_revisions_memory_id "
+            "ON memory_revisions(memory_id, valid_from)"
+        )
         con.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(id UNINDEXED, searchable)"
         )
@@ -481,6 +510,10 @@ class MemoryStore:
             "content": row["content"],
             "tags": json.loads(row["tags_json"]),
             "provenance": json.loads(row["provenance_json"]),
+            "version_id": row["version_id"],
+            "valid_from": row["valid_from"],
+            "valid_to": None,
+            "superseded_by_version": None,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -533,9 +566,10 @@ class MemoryStore:
             if row is None:
                 needs_index = True
                 memory_id = f"mem_{uuid.uuid4().hex[:20]}"
+                version_id = f"memver_{uuid.uuid4().hex[:20]}"
                 con.execute(
-                    "INSERT INTO memories(id,scope,project_key,project_root,kind,content,content_hash,tags_json,provenance_json,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO memories(id,scope,project_key,project_root,kind,content,content_hash,tags_json,provenance_json,version_id,valid_from,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         memory_id,
                         scope,
@@ -546,6 +580,8 @@ class MemoryStore:
                         content_hash,
                         json.dumps(tags),
                         provenance_json,
+                        version_id,
+                        now,
                         now,
                         now,
                     ),
@@ -554,10 +590,41 @@ class MemoryStore:
                 memory_id = row["id"]
                 needs_index = row["kind"] != kind or json.loads(row["tags_json"]) != tags
                 stored_provenance = json.loads(row["provenance_json"])
-                if provenance and not stored_provenance:
+                next_provenance = provenance if provenance and not stored_provenance else stored_provenance
+                revision_changed = needs_index or next_provenance != stored_provenance
+                next_version_id = (
+                    f"memver_{uuid.uuid4().hex[:20]}" if revision_changed else row["version_id"]
+                )
+                valid_from = max(now, int(row["valid_from"]) + 1) if revision_changed else row["valid_from"]
+                if revision_changed:
                     con.execute(
-                        "UPDATE memories SET provenance_json=? WHERE id=?",
-                        (provenance_json, memory_id),
+                        "INSERT INTO memory_revisions(version_id,memory_id,content,kind,tags_json,"
+                        "provenance_json,valid_from,valid_to,superseded_by_version) "
+                        "VALUES(?,?,?,?,?,?,?,?,?)",
+                        (
+                            row["version_id"],
+                            memory_id,
+                            row["content"],
+                            row["kind"],
+                            row["tags_json"],
+                            row["provenance_json"],
+                            row["valid_from"],
+                            valid_from,
+                            next_version_id,
+                        ),
+                    )
+                    con.execute(
+                        "UPDATE memories SET kind=?,tags_json=?,provenance_json=?,version_id=?,"
+                        "valid_from=?,updated_at=? WHERE id=?",
+                        (
+                            kind,
+                            json.dumps(tags),
+                            json.dumps(next_provenance, sort_keys=True),
+                            next_version_id,
+                            valid_from,
+                            valid_from,
+                            memory_id,
+                        ),
                     )
                 if needs_index:
                     con.execute(
@@ -729,6 +796,45 @@ class MemoryStore:
                 f"SELECT * FROM memories WHERE id = ? AND {where}", (memory_id, *params)
             ).fetchone()
             return self._decode(row) if row else None
+        finally:
+            con.close()
+
+    def history(self, memory_id: str) -> list[dict[str, Any]]:
+        """Return visible prior versions and the current version, oldest first."""
+        current = self.get(memory_id)
+        if current is None:
+            return []
+        where, params = self._visible_sql("all", alias="m")
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT r.* FROM memory_revisions r "
+                "JOIN memories m ON m.id=r.memory_id "
+                f"WHERE r.memory_id=? AND {where} ORDER BY r.valid_from, r.version_id",
+                (memory_id, *params),
+            ).fetchall()
+            versions = [
+                {
+                    "id": memory_id,
+                    "version_id": row["version_id"],
+                    "content": row["content"],
+                    "kind": row["kind"],
+                    "tags": json.loads(row["tags_json"]),
+                    "provenance": json.loads(row["provenance_json"]),
+                    "valid_from": row["valid_from"],
+                    "valid_to": row["valid_to"],
+                    "superseded_by_version": row["superseded_by_version"],
+                    "current": False,
+                }
+                for row in rows
+            ]
+            versions.append(
+                {
+                    **current,
+                    "current": True,
+                }
+            )
+            return versions
         finally:
             con.close()
 
@@ -1012,26 +1118,52 @@ class MemoryStore:
         kind = _checked_kind(kind) if kind is not None else current["kind"]
         tags = _checked_tags(tags) if tags is not None else current["tags"]
         content_hash = hashlib.sha256(_normalize_content(content).encode("utf-8")).hexdigest()
+        provenance_value = provenance or current["provenance"]
+        revision_changed = any(
+            (
+                content != current["content"],
+                kind != current["kind"],
+                tags != current["tags"],
+                provenance_value != current["provenance"],
+            )
+        )
+        now = max(int(time.time()), int(current["valid_from"]) + 1)
+        next_version_id = f"memver_{uuid.uuid4().hex[:20]}" if revision_changed else current["version_id"]
         con = self._connect()
         try:
-            if provenance:
+            if revision_changed:
+                row = con.execute("SELECT * FROM memories WHERE id=?", (memory_id,)).fetchone()
                 con.execute(
-                    "UPDATE memories SET content=?, content_hash=?, kind=?, tags_json=?, provenance_json=?, updated_at=? WHERE id=?",
+                    "INSERT INTO memory_revisions(version_id,memory_id,content,kind,tags_json,"
+                    "provenance_json,valid_from,valid_to,superseded_by_version) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
                     (
-                        content,
-                        content_hash,
-                        kind,
-                        json.dumps(tags),
-                        json.dumps(provenance, sort_keys=True),
-                        int(time.time()),
+                        row["version_id"],
                         memory_id,
+                        row["content"],
+                        row["kind"],
+                        row["tags_json"],
+                        row["provenance_json"],
+                        row["valid_from"],
+                        now,
+                        next_version_id,
                     ),
                 )
-            else:
-                con.execute(
-                    "UPDATE memories SET content=?, content_hash=?, kind=?, tags_json=?, updated_at=? WHERE id=?",
-                    (content, content_hash, kind, json.dumps(tags), int(time.time()), memory_id),
-                )
+            con.execute(
+                "UPDATE memories SET content=?,content_hash=?,kind=?,tags_json=?,provenance_json=?,"
+                "version_id=?,valid_from=?,updated_at=? WHERE id=?",
+                (
+                    content,
+                    content_hash,
+                    kind,
+                    json.dumps(tags),
+                    json.dumps(provenance_value, sort_keys=True),
+                    next_version_id,
+                    now if revision_changed else current["valid_from"],
+                    now if revision_changed else current["updated_at"],
+                    memory_id,
+                ),
+            )
             con.execute("DELETE FROM memory_fts WHERE id = ?", (memory_id,))
             con.execute(
                 "INSERT INTO memory_fts(id, searchable) VALUES(?, ?)",
@@ -1059,6 +1191,7 @@ class MemoryStore:
         con = self._connect()
         try:
             con.execute("DELETE FROM memory_fts WHERE id = ?", (memory_id,))
+            con.execute("DELETE FROM memory_revisions WHERE memory_id = ?", (memory_id,))
             con.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
             self._delete_vector(con, memory_id)
             con.commit()
