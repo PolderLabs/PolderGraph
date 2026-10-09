@@ -6,9 +6,11 @@ transactional batch so rapid saves do not thrash the index.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Callable
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -84,8 +86,6 @@ def run_watch(
         next_reconcile = time.monotonic() + reconcile_interval
 
     try:
-        if on_started:
-            on_started()
         if watch is None:
             _poll_changes(
                 workspace,
@@ -95,20 +95,34 @@ def run_watch(
                 pending=pending,
                 apply=apply_pending,
                 on_error=lambda exc: _record_watch_error(stats, exc),
+                on_started=on_started,
                 max_iterations=max_iterations,
                 stats=stats,
             )
         else:
             roots = [str(workspace.root)]
-            for raw in watch(
+            events = iter(watch(
                 *roots,
                 stop_event=stop,
                 watch_filter=_should_watch,
                 debounce=int(debounce * 1000),
-                step=int(debounce * 1000),
-                rust_timeout=1000,
+                step=min(250, int(debounce * 1000)),
+                rust_timeout=250,
                 yield_on_timeout=True,
-            ):
+                # Windows editor/antivirus combinations can silently lose
+                # native notifications. The polling backend preserves the
+                # same debounced queue while making change delivery reliable.
+                force_polling=os.name == "nt",
+            ))
+            # watchfiles is lazy: constructing its generator does not register
+            # the OS watcher. Pulling the first batch establishes the watch and
+            # keeps any edits made during setup in that batch before reporting
+            # the supervisor as ready.
+            first_batch = next(events, None)
+            if on_started:
+                on_started()
+            batches = chain((first_batch,), events) if first_batch is not None else events
+            for raw in batches:
                 changes = _changed_paths(raw)
                 pending |= changes
                 now = time.monotonic()
@@ -149,6 +163,7 @@ def _poll_changes(
     pending: set[str],
     apply: Callable[[], None],
     on_error: Callable[[Exception], None],
+    on_started: Callable[[], None] | None,
     max_iterations: int | None,
     stats: dict[str, int],
 ) -> None:
@@ -162,6 +177,8 @@ def _poll_changes(
         }
 
     previous = fingerprint()
+    if on_started:
+        on_started()
     next_reconcile = time.monotonic() + reconcile_interval
     last_change = 0.0
     while not stop.wait(POLL_SECONDS):

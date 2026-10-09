@@ -7,6 +7,7 @@ execution, correct invalidation after an index update, and safe fallback.
 
 from __future__ import annotations
 
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -45,7 +46,9 @@ def daemon(tmp_path_factory):
     from poldergraph.storage.repository import Repository
     from poldergraph.workspace import create_index, open_workspace
 
-    create_index(workspace, Config())
+    # Keep this cross-platform lifecycle fixture fully offline and avoid an
+    # optional semantic model dependency; the tests exercise graph/FTS queries.
+    create_index(workspace, Config(embedding={"backend": "none"}))
     ws = open_workspace(workspace)
     indexer = Indexer(ws, backend=None)
     indexer.ensure_root()
@@ -232,12 +235,131 @@ def test_socket_server_serves_three_clients_concurrently(tmp_path):
     assert not server.is_alive()
 
 
+def test_daemon_pins_query_generation_and_marks_post_commit_change(tmp_path, monkeypatch):
+    from poldergraph.config.models import Config
+    from poldergraph.indexing.pipeline import Indexer
+    from poldergraph.storage.sqlite import connect, set_meta, writer_transaction
+    from poldergraph.workspace import create_index, open_workspace
+
+    (tmp_path / "auth.py").write_text("class AuthService:\n    pass\n", encoding="utf-8")
+    create_index(tmp_path, Config(embedding={"backend": "none"}))
+    workspace = open_workspace(tmp_path)
+    indexer = Indexer(workspace, backend=None)
+    indexer.ensure_root()
+    indexer.run(indexer.discover())
+    workspace.close()
+
+    daemon = Daemon(tmp_path)
+    daemon._ensure_loaded()
+    original_dispatch = daemon._dispatch
+    revisions = iter(("generation-during-query-1", "generation-during-query-2"))
+
+    def dispatch_and_commit_change(command, arguments, service):
+        result = original_dispatch(command, arguments, service)
+        writer = connect(tmp_path / ".poldergraph" / "index.sqlite3")
+        try:
+            with writer_transaction(writer):
+                set_meta(writer, "index_generation", next(revisions))
+        finally:
+            writer.close()
+        return result
+
+    monkeypatch.setattr(daemon, "_dispatch", dispatch_and_commit_change)
+    try:
+        bounded = daemon.handle(
+            "search",
+            {"query": "AuthService", "include_semantic": False, "consistency": "bounded"},
+        )
+        assert bounded["consistency_report"]["status"] == "generation_changed"
+        assert bounded["consistency_report"]["generation_changed"] is True
+        assert bounded["consistency_report"]["source_read_required"] is True
+
+        strict = daemon.handle(
+            "search",
+            {"query": "AuthService", "include_semantic": False, "consistency": "strict"},
+        )
+        assert strict["ok"] is False
+        assert strict["error"]["code"] == "INDEX_STALE"
+    finally:
+        if daemon._supervisor:
+            daemon._supervisor.stop()
+        daemon.close()
+
+
+def test_daemon_detects_graph_database_commit_without_generation_change(tmp_path, monkeypatch):
+    from poldergraph.config.models import Config
+    from poldergraph.indexing.pipeline import Indexer
+    from poldergraph.storage.sqlite import connect, set_meta, writer_transaction
+    from poldergraph.workspace import create_index, open_workspace
+
+    (tmp_path / "auth.py").write_text("class AuthService:\n    pass\n", encoding="utf-8")
+    create_index(tmp_path, Config(embedding={"backend": "none"}))
+    workspace = open_workspace(tmp_path)
+    indexer = Indexer(workspace, backend=None)
+    indexer.ensure_root()
+    indexer.run(indexer.discover())
+    workspace.close()
+
+    daemon = Daemon(tmp_path)
+    daemon._ensure_loaded()
+    original_dispatch = daemon._dispatch
+    commits = iter(("graph-revision-1", "graph-revision-2"))
+
+    def dispatch_with_graph_commit(command, arguments, service):
+        result = original_dispatch(command, arguments, service)
+        writer = connect(tmp_path / ".poldergraph" / "index.sqlite3")
+        try:
+            with writer_transaction(writer):
+                set_meta(writer, "graph_computed_at", next(commits))
+        finally:
+            writer.close()
+        return result
+
+    monkeypatch.setattr(daemon, "_dispatch", dispatch_with_graph_commit)
+    try:
+        bounded = daemon.handle(
+            "search",
+            {"query": "AuthService", "include_semantic": False, "consistency": "bounded"},
+        )
+        assert bounded["consistency_report"]["generation_changed"] is False
+        assert bounded["consistency_report"]["database_changed"] is True
+        assert bounded["consistency_report"]["status"] == "database_changed"
+        assert bounded["consistency_report"]["source_read_required"] is True
+
+        strict = daemon.handle(
+            "search",
+            {"query": "AuthService", "include_semantic": False, "consistency": "strict"},
+        )
+        assert strict["ok"] is False
+        assert strict["error"]["code"] == "INDEX_STALE"
+    finally:
+        if daemon._supervisor:
+            daemon._supervisor.stop()
+        daemon.close()
+
+
 class TestSocketPaths:
     def test_socket_lives_inside_index_dir(self, indexed_workspace):
         index_dir = indexed_workspace.index_dir
         path = socket_path(index_dir)
-        # A nested ".poldergraph/.poldergraph" path would never resolve.
-        assert path.parent == index_dir
+        canonical_path = index_dir / "query.sock"
+        if len(os.fsencode(canonical_path)) < 100:
+            # A nested ".poldergraph/.poldergraph" path would never resolve.
+            assert path == canonical_path
+        else:
+            assert path.parent != index_dir
+            assert len(os.fsencode(path)) < 100
+
+    def test_long_macos_socket_path_uses_short_per_workspace_runtime_path(self):
+        from pathlib import Path
+
+        from poldergraph import query_daemon
+
+        long_index_dir = Path("/tmp") / ("deep-" * 18) / ".poldergraph"
+        path = query_daemon.socket_path(long_index_dir)
+        assert path != long_index_dir / query_daemon.SOCKET_NAME
+        assert len(os.fsencode(path)) < 100
+        assert path != query_daemon.socket_path(long_index_dir / "other")
 
     def test_resolve_finds_index_dir(self, indexed_workspace):
         resolved = resolve_index_dir(indexed_workspace.root)

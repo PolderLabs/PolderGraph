@@ -13,11 +13,13 @@ demand.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from contextlib import suppress
@@ -51,11 +53,24 @@ def resolve_index_dir(root: Path | None) -> Path | None:
 
 
 def socket_path(index_dir: Path) -> Path:
-    return Path(index_dir) / SOCKET_NAME
+    index_dir = Path(index_dir)
+    path = index_dir / SOCKET_NAME
+    # macOS and Windows impose short local-socket path limits. Deep worktrees
+    # can exceed them, so use a stable runtime path when the canonical path is
+    # too long. The hash keeps each workspace on its own socket.
+    if len(os.fsencode(path)) >= 100:
+        runtime_dir = Path("/tmp") if Path("/tmp").is_dir() else Path(tempfile.gettempdir())
+        user_id = getattr(os, "getuid", lambda: os.environ.get("USERNAME", "user"))()
+        workspace_id = hashlib.sha256(os.fsencode(index_dir.resolve())).hexdigest()[:20]
+        user_key = hashlib.sha256(str(user_id).encode()).hexdigest()[:8]
+        path = runtime_dir / f"pg-{user_key}" / f"{workspace_id}.sock"
+    return path
 
 
 def is_running(index_dir: Path) -> bool:
     """True when a daemon is bound, has loaded its model, and answers."""
+    if not hasattr(socket, "AF_UNIX"):
+        return False
     path = socket_path(index_dir)
     if not path.exists():
         return False
@@ -77,6 +92,8 @@ def is_running(index_dir: Path) -> bool:
 
 
 def _connect(index_dir: Path, timeout: float) -> socket.socket | None:
+    if not hasattr(socket, "AF_UNIX"):
+        return None
     path = socket_path(index_dir)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(timeout)
@@ -131,6 +148,10 @@ def _recv_exactly(sock: socket.socket, count: int) -> bytes | None:
 
 def ensure_daemon(root: Path, *, autostart: bool = True) -> bool:
     """Start the daemon for a workspace if it is not already running."""
+    # Platforms without Unix domain sockets use the caller's in-process query
+    # service; never spawn a daemon that cannot bind its transport.
+    if not hasattr(socket, "AF_UNIX"):
+        return False
     index_dir = resolve_index_dir(root)
     if index_dir is None:
         return False
@@ -140,7 +161,9 @@ def ensure_daemon(root: Path, *, autostart: bool = True) -> bool:
         return False
 
     path = socket_path(index_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with suppress(OSError):
+        path.parent.chmod(0o700)
     if path.exists():
         # A stale socket from a crashed daemon would block bind().
         with suppress(OSError):
@@ -151,7 +174,7 @@ def ensure_daemon(root: Path, *, autostart: bool = True) -> bool:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
-        start_new_session=True,
+        start_new_session=os.name != "nt",
         env={**os.environ, "POLDERGRAPH_DAEMON": "1"},
     )
     deadline = time.monotonic() + START_TIMEOUT
@@ -267,8 +290,67 @@ class Daemon:
         del self._request_local.service
 
     def handle(self, command: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Execute one retrieval command against the resident service."""
+        """Execute one request in a single committed SQLite read generation."""
         service = self._service_for_thread()
+        connection = service.repo.con
+        data_version_start = int(connection.execute("PRAGMA data_version").fetchone()[0])
+        connection.execute("BEGIN")
+        generation_start = service._index_generation()
+        try:
+            result = self._dispatch(command, arguments, service)
+        except BaseException:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        else:
+            if connection.in_transaction:
+                connection.execute("COMMIT")
+
+        freshness = service.freshness()
+        report = result.get("consistency_report") if isinstance(result, dict) else None
+        if isinstance(report, dict):
+            generation_end = freshness["generation"]
+            changed = generation_start != generation_end
+            database_changed = (
+                int(connection.execute("PRAGMA data_version").fetchone()[0])
+                != data_version_start
+            )
+            report["generation_start"] = generation_start
+            report["generation_end"] = generation_end
+            report["generation_changed"] = changed
+            report["database_changed"] = database_changed
+            report["structural_freshness"] = freshness["structural"]
+            report["pending_changes"] = freshness["pending_changes"]
+            report["stale_files"] = freshness["stale_files"]
+            report["stale_files_truncated"] = freshness["stale_files_truncated"]
+            report["stale_since"] = freshness["stale_since"]
+            stale = not freshness["fresh"]
+            if stale or changed or database_changed:
+                report["status"] = (
+                    "stale"
+                    if stale
+                    else "generation_changed"
+                    if changed
+                    else "database_changed"
+                )
+                report["source_read_required"] = True
+                report["verified"] = False
+            if report.get("mode") == "strict" and (stale or changed or database_changed):
+                from .errors import IndexStaleError
+
+                error = IndexStaleError(
+                    "The index changed during this query.",
+                    details={"freshness": freshness},
+                )
+                return {"ok": False, "error": error.to_dict()}
+        if isinstance(result, dict) and isinstance(result.get("index"), dict):
+            result["index"].update(freshness)
+        return result
+
+    def _dispatch(
+        self, command: str, arguments: dict[str, Any], service: Any
+    ) -> dict[str, Any]:
+        """Dispatch a request while its read transaction is active."""
         from .errors import PolderGraphError
 
         try:
@@ -363,11 +445,19 @@ class Daemon:
 
     def serve(self) -> None:
         """Accept connections until shutdown."""
+        if not hasattr(socket, "AF_UNIX"):
+            raise RuntimeError(
+                "The query daemon requires Unix domain sockets on this platform; "
+                "use the in-process query service instead."
+            )
         from .workspace import index_dir_for
 
         index_dir = resolve_index_dir(self.root) or index_dir_for(self.root)
         index_dir.mkdir(parents=True, exist_ok=True)
         path = socket_path(index_dir)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with suppress(OSError):
+            path.parent.chmod(0o700)
         if path.exists():
             path.unlink()
 
