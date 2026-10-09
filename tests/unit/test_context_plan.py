@@ -43,3 +43,24 @@ def test_skipped_context_does_not_run_retrieval(indexed_workspace, monkeypatch):
     assert context["plan"]["skipped"] is True
     assert context["entities"] == []
     assert context["snippets"] == []
+
+
+def test_change_context_includes_bounded_linked_test_evidence(indexed_workspace):
+    service = QueryService(
+        Repository(indexed_workspace.con),
+        indexed_workspace.config,
+        root_id=indexed_workspace.root_id(),
+        workspace=indexed_workspace,
+    )
+
+    context = service.context(
+        "Refactor AuthService and update the tests", token_budget=3000
+    ).to_dict()
+
+    assert "tests" in context["plan"]["lanes"]
+    assert context["relevant_tests"]
+    assert any("test_auth.py" in item["path"] for item in context["relevant_tests"])
+    assert all(item["evidence"] in {
+        "structural_test_edge", "lexical_test_file_match"
+    } for item in context["relevant_tests"])
+    assert context["token_estimate"] <= 3000

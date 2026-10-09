@@ -45,6 +45,7 @@ class ContextResult:
     relationships: list[dict[str, Any]] = field(default_factory=list)
     snippets: list[dict[str, Any]] = field(default_factory=list)
     paths: list[dict[str, Any]] = field(default_factory=list)
+    relevant_tests: list[dict[str, Any]] = field(default_factory=list)
     communities: list[dict[str, Any]] = field(default_factory=list)
     unresolved: list[dict[str, Any]] = field(default_factory=list)
     retrieval: dict[str, bool] = field(default_factory=dict)
@@ -64,6 +65,7 @@ class ContextResult:
             "relationships": self.relationships,
             "snippets": self.snippets,
             "paths": self.paths,
+            "relevant_tests": self.relevant_tests,
             "communities": self.communities,
             "unresolved": self.unresolved,
             "retrieval": self.retrieval,
