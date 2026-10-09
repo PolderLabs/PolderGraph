@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { spawn } from "node:child_process";
-import { join } from "node:path";
+import { stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 
 const CONTEXT_BUDGET = 3000;
 const COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
@@ -57,8 +58,28 @@ function splitCommandLine(input: string): string[] {
 export default function polderGraphExtension(pi: ExtensionAPI) {
 	const z = pi.zod;
 	const indexing = new Map<string, Promise<void>>();
+	const workspaceRoots = new Map<string, string>();
 	let cliPath: string | undefined;
 	let cliSetup: Promise<string> | undefined;
+
+	async function resolveWorkspaceRoot(cwd: string): Promise<string> {
+		const original = resolve(cwd);
+		const cached = workspaceRoots.get(original);
+		if (cached) return cached;
+		let candidate = original;
+		while (true) {
+			try {
+				await stat(join(candidate, ".git"));
+				workspaceRoots.set(original, candidate);
+				return candidate;
+			} catch {
+				const parent = dirname(candidate);
+				if (parent === candidate) break;
+				candidate = parent;
+			}
+		}
+		return original;
+	}
 
 	async function resolveCli(cwd: string): Promise<string> {
 		if (cliPath) return cliPath;
@@ -93,7 +114,8 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 		cwd: string,
 		signal?: AbortSignal,
 	): Promise<{ code: number; stdout: string; stderr: string; killed: boolean }> {
-		return pi.exec(await resolveCli(cwd), args, { cwd, signal, timeout: COMMAND_TIMEOUT_MS });
+		const root = await resolveWorkspaceRoot(cwd);
+		return pi.exec(await resolveCli(root), args, { cwd: root, signal, timeout: COMMAND_TIMEOUT_MS });
 	}
 
 	async function runJson(args: string[], cwd: string, signal?: AbortSignal): Promise<JsonEnvelope> {
@@ -110,26 +132,27 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 	}
 
 	async function ensureIndex(cwd: string): Promise<void> {
-		const active = indexing.get(cwd);
+		const root = await resolveWorkspaceRoot(cwd);
+		const active = indexing.get(root);
 		if (active) return active;
 		const work = (async () => {
-			const status = await runJson(["status"], cwd);
+			const status = await runJson(["status"], root);
 			if (!status.ok && status.error?.code === "INDEX_MISSING") {
-				const initialized = await runJson(["init", "--no-embed"], cwd);
+				const initialized = await runJson(["init", "--no-embed"], root);
 				if (!initialized.ok) throw new Error(formatResult(initialized));
 				return;
 			}
 			if (!status.ok) throw new Error(formatResult(status));
 			if (status.index?.fresh === false) {
-				const updated = await runJson(["update", "--no-embed"], cwd);
+				const updated = await runJson(["update", "--no-embed"], root);
 				if (!updated.ok) throw new Error(formatResult(updated));
 			}
 		})();
-		indexing.set(cwd, work);
+		indexing.set(root, work);
 		try {
 			await work;
 		} finally {
-			indexing.delete(cwd);
+			indexing.delete(root);
 		}
 	}
 
@@ -364,8 +387,9 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 			if (subcommand === "ui" || subcommand === "dashboard") {
 				try {
 					await ensureIndex(ctx.cwd);
-					const child = spawn(await resolveCli(ctx.cwd), ["ui"], {
-						cwd: ctx.cwd,
+					const root = await resolveWorkspaceRoot(ctx.cwd);
+					const child = spawn(await resolveCli(root), ["ui"], {
+						cwd: root,
 						detached: true,
 						stdio: "ignore",
 						windowsHide: true,
