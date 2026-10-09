@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import math
 import multiprocessing
 import threading
 import time
@@ -49,9 +50,14 @@ def _worker_main(connection: Connection, offline_only: bool) -> None:
 class LocalDecisionWorker:
     """Serialize Laya inference in a reusable process with killable deadlines."""
 
-    def __init__(self, *, worker_main: Any = _worker_main) -> None:
+    def __init__(
+        self, *, worker_main: Any = _worker_main, idle_seconds: float = _IDLE_SECONDS
+    ) -> None:
+        if not math.isfinite(idle_seconds) or idle_seconds <= 0:
+            raise ValueError("idle_seconds must be greater than zero")
         self._context = multiprocessing.get_context("spawn")
         self._worker_main = worker_main
+        self._idle_seconds = float(idle_seconds)
         self._lock = threading.RLock()
         self._process: multiprocessing.Process | None = None
         self._connection: Connection | None = None
@@ -108,7 +114,7 @@ class LocalDecisionWorker:
         if process is not None:
             self._last_used = time.monotonic()
             self._timer = threading.Timer(
-                _IDLE_SECONDS, self._evict_if_idle, (process, self._last_used)
+                self._idle_seconds, self._evict_if_idle, (process, self._last_used)
             )
             self._timer.daemon = True
             self._timer.start()
@@ -176,7 +182,7 @@ class LocalDecisionWorker:
                 "model_loaded": None,
                 "offline_only": None,
                 "idle_seconds": None,
-                "idle_timeout_seconds": _IDLE_SECONDS,
+                "idle_timeout_seconds": self._idle_seconds,
             }
         try:
             process = self._process
@@ -194,7 +200,7 @@ class LocalDecisionWorker:
                     if alive and self._last_used
                     else None
                 ),
-                "idle_timeout_seconds": _IDLE_SECONDS,
+                "idle_timeout_seconds": self._idle_seconds,
             }
         finally:
             self._lock.release()
