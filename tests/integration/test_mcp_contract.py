@@ -163,6 +163,39 @@ class TestToolResponses:
         assert payload["index"]["fresh"] is True
         assert payload["data"]["consistency"] == "strict"
 
+    def test_path_strict_consistency_is_available_through_mcp(self, server):
+        payload = _call(
+            server,
+            "pg_path",
+            {
+                "source": "AuthService",
+                "target": "validate_session",
+                "consistency": "strict",
+            },
+        )
+        assert payload["ok"] is True
+        assert payload["data"]["consistency_report"]["verified"] is True
+
+    def test_path_reports_post_query_source_edit(self, server, monkeypatch):
+        service = server.poldergraph_session.service()
+        original_path = service.path
+        source = service.root / "pkg" / "auth.py"
+
+        def edit_during_query(*args, **kwargs):
+            result = original_path(*args, **kwargs)
+            source.write_text(source.read_text() + "\n# edited during query\n")
+            return result
+
+        monkeypatch.setattr(service, "path", edit_during_query)
+        payload = _call(
+            server,
+            "pg_path",
+            {"source": "AuthService", "target": "validate_session"},
+        )
+        assert payload["ok"] is True
+        assert payload["index"]["fresh"] is False
+        assert "pkg/auth.py" in payload["index"]["stale_files"]
+
     def test_pg_status(self, server):
         payload = _call(server, "pg_status", {})
         self._assert_envelope(payload, "pg_status")

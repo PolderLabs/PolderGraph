@@ -235,12 +235,14 @@ def build_server(root: Path | None = None) -> Any:
     # ------------------------------------------------------------ pg_entity
 
     @server.tool()
-    def pg_entity(entity: str) -> dict[str, Any]:
+    def pg_entity(entity: str, consistency: str = "bounded") -> dict[str, Any]:
         """Return entity details and a bounded neighborhood."""
-        return _guard(
-            "pg_entity",
-            lambda: _envelope("pg_entity") | {"data": session.service().explain(entity)},
-        )
+
+        def run():
+            data = session.service().explain(entity, consistency=consistency)
+            return _envelope("pg_entity") | {"data": data}
+
+        return _guard("pg_entity", run)
 
     # -------------------------------------------------------------- pg_path
 
@@ -251,37 +253,38 @@ def build_server(root: Path | None = None) -> Any:
         structural_only: bool = True,
         include_semantic: bool = False,
         max_hops: int = 12,
+        consistency: str = "bounded",
     ) -> dict[str, Any]:
         """Find the relationship path between two entities."""
         service = session.service()
-        return _guard(
-            "pg_path",
-            lambda: (
-                _envelope("pg_path")
-                | {
-                    "data": service.path(
-                        source,
-                        target,
-                        structural_only=structural_only,
-                        include_semantic=include_semantic,
-                        max_hops=max_hops,
-                    )
-                }
-            ),
-        )
+
+        def run():
+            data = service.path(
+                source,
+                target,
+                structural_only=structural_only,
+                include_semantic=include_semantic,
+                max_hops=max_hops,
+                consistency=consistency,
+            )
+            return _envelope("pg_path") | {"data": data}
+
+        return _guard("pg_path", run)
 
     # ----------------------------------------------------------- pg_related
 
     @server.tool()
-    def pg_related(entity: str, limit: int = 10) -> dict[str, Any]:
+    def pg_related(
+        entity: str, limit: int = 10, consistency: str = "bounded"
+    ) -> dict[str, Any]:
         """Return semantic neighbours with structural linkage made explicit."""
         service = session.service()
-        return _guard(
-            "pg_related",
-            lambda: (
-                _envelope("pg_related") | {"data": service.related(entity, limit=_clamp(limit, 10))}
-            ),
-        )
+
+        def run():
+            data = service.related(entity, limit=_clamp(limit, 10), consistency=consistency)
+            return _envelope("pg_related") | {"data": data}
+
+        return _guard("pg_related", run)
 
     # ------------------------------------------------------------ pg_impact
 
@@ -290,16 +293,18 @@ def build_server(root: Path | None = None) -> Any:
         entity: str,
         max_depth: int = 3,
         edge_types: list[str] | None = None,
+        consistency: str = "bounded",
     ) -> dict[str, Any]:
         """Show what may be affected if this entity changes."""
         service = session.service()
-        return _guard(
-            "pg_impact",
-            lambda: (
-                _envelope("pg_impact")
-                | {"data": service.impact(entity, max_depth=max_depth, edge_types=edge_types)}
-            ),
-        )
+
+        def run():
+            data = service.impact(
+                entity, max_depth=max_depth, edge_types=edge_types, consistency=consistency
+            )
+            return _envelope("pg_impact") | {"data": data}
+
+        return _guard("pg_impact", run)
 
     # ---------------------------------------------------------- pg_update
 
@@ -330,17 +335,19 @@ def build_server(root: Path | None = None) -> Any:
 
     @server.tool()
     def pg_find_tests(
-        entity: str | None = None, query: str | None = None, limit: int = 25
+        entity: str | None = None, query: str | None = None, limit: int = 25,
+        consistency: str = "bounded",
     ) -> dict[str, Any]:
         """Return structurally or lexically linked tests for a symbol or file."""
         service = session.service()
-        return _guard(
-            "pg_find_tests",
-            lambda: (
-                _envelope("pg_find_tests")
-                | {"data": service.find_tests(entity, query=query, limit=_clamp(limit, 25))}
-            ),
-        )
+
+        def run():
+            data = service.find_tests(
+                entity, query=query, limit=_clamp(limit, 25), consistency=consistency
+            )
+            return _envelope("pg_find_tests") | {"data": data}
+
+        return _guard("pg_find_tests", run)
 
     # ------------------------------------------------------------- pg_memory
 
