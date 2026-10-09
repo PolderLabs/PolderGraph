@@ -36,5 +36,4 @@ jobs:
       - name: Test bootstrap, locking, and generation consistency
         run: pytest -q --basetemp=.pytest-tmp tests/unit/test_agent_bootstrap.py tests/unit/test_index_supervisor.py tests/unit/test_query_generation.py
       - name: Test daemon watcher and concurrent socket clients
-        if: runner.os != 'Windows'
         run: pytest -q --basetemp=.pytest-tmp tests/integration/test_query_daemon.py

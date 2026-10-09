@@ -55,14 +55,15 @@ def resolve_index_dir(root: Path | None) -> Path | None:
 def socket_path(index_dir: Path) -> Path:
     index_dir = Path(index_dir)
     path = index_dir / SOCKET_NAME
-    # macOS has a shorter sockaddr_un path limit than Linux. Deep temporary
-    # worktrees can exceed it, so use a stable, per-user runtime socket path
-    # when the canonical in-index path cannot fit.
-    if os.name != "nt" and len(os.fsencode(path)) >= 100:
+    # macOS and Windows impose short local-socket path limits. Deep worktrees
+    # can exceed them, so use a stable runtime path when the canonical path is
+    # too long. The hash keeps each workspace on its own socket.
+    if len(os.fsencode(path)) >= 100:
         runtime_dir = Path("/tmp") if Path("/tmp").is_dir() else Path(tempfile.gettempdir())
         user_id = getattr(os, "getuid", lambda: os.environ.get("USERNAME", "user"))()
         workspace_id = hashlib.sha256(os.fsencode(index_dir.resolve())).hexdigest()[:20]
-        path = runtime_dir / f"pg-{user_id}" / f"{workspace_id}.sock"
+        user_key = hashlib.sha256(str(user_id).encode()).hexdigest()[:8]
+        path = runtime_dir / f"pg-{user_key}" / f"{workspace_id}.sock"
     return path
 
 
@@ -163,7 +164,7 @@ def ensure_daemon(root: Path, *, autostart: bool = True) -> bool:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
-        start_new_session=True,
+        start_new_session=os.name != "nt",
         env={**os.environ, "POLDERGRAPH_DAEMON": "1"},
     )
     deadline = time.monotonic() + START_TIMEOUT
