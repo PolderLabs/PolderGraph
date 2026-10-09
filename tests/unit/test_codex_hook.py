@@ -31,6 +31,33 @@ def test_codex_hook_emits_user_prompt_submit_context_json(tmp_path, monkeypatch)
     }
 
 
+def test_codex_hook_bootstraps_fresh_repo_and_injects_real_context(tmp_path, monkeypatch):
+    root = tmp_path / "fresh-repository"
+    root.mkdir()
+    (root / "auth.py").write_text(
+        "class AuthService:\n    def validate(self, token):\n        return token\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("POLDERGRAPH_MEMORY_DB", str(tmp_path / "memory" / "memory.sqlite3"))
+    monkeypatch.setenv("POLDERGRAPH_NO_DAEMON", "1")
+    event = {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "Find the AuthService validation entry point",
+        "cwd": str(root),
+        "session_id": "fresh-repo-session",
+        "turn_id": "turn-1",
+    }
+    output = io.StringIO()
+
+    assert codex_hook.run_hook(io.StringIO(json.dumps(event)), output) == 0
+    payload = json.loads(output.getvalue())
+    context = payload["hookSpecificOutput"]["additionalContext"]
+
+    assert "AuthService" in context
+    assert "auth.py" in context
+    assert (root / ".poldergraph" / "index.sqlite3").is_file()
+
+
 def test_codex_user_event_captures_explicit_preference_only(tmp_path, monkeypatch):
     from poldergraph import memory
 
