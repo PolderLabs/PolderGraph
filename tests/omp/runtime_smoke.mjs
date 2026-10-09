@@ -66,12 +66,17 @@ try {
 	const [code] = await once(child, "close");
 	const cliCalls = (await readFile(callLog, "utf8")).trim().split("\n").filter(Boolean).map(JSON.parse);
 	assert.equal(code, 0, Buffer.concat(stderr).toString("utf8"));
-	assert(cliCalls.some((args) => args[0] === "agent-ready"), "session start did not bootstrap PolderGraph");
-	assert(cliCalls.some((args) => args[0] === "context" && args.includes("--offline")), "task start did not request offline context");
+	assert.equal(cliCalls.filter((args) => args[0] === "agent-ready").length, 1, "session bootstrap should be coalesced");
+	const contextCalls = cliCalls.filter((args) => args[0] === "context");
+	assert.equal(contextCalls.length, 1, "one task should make one bounded context request");
+	assert(contextCalls[0].includes("--offline"), "task start must request offline context");
 	const systemMessages = modelRequests.flatMap((request) => request.messages ?? []).filter((message) => message.role === "system");
-	assert(systemMessages.some((message) => JSON.stringify(message.content).includes("class AuthService: pass")), "grounded PolderGraph context was not sent to the model");
+	const injectedContext = systemMessages.find((message) => JSON.stringify(message.content).includes("class AuthService: pass"));
+	assert(injectedContext, "grounded PolderGraph context was not sent to the model");
+	assert.equal(modelRequests.length, 1, "the fixture task should require one model request");
 	assert(Buffer.concat(stdout).toString("utf8").includes("runtime smoke passed"));
-	console.log("OMP 18 runtime loaded the extension, auto-bootstrapped PolderGraph, and sent grounded context to the model.");
+	const approximateContextTokens = Math.ceil(JSON.stringify(injectedContext.content).length / 4);
+	console.log(`OMP 18 runtime smoke passed: PolderGraph CLI calls=${cliCalls.length}, context calls=${contextCalls.length}, model requests=${modelRequests.length}, injected context≈${approximateContextTokens} tokens.`);
 } finally {
 	child?.kill();
 	server.close();
