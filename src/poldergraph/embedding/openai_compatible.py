@@ -1,4 +1,4 @@
-"""OpenAI-compatible remote text embeddings with explicit privacy gating."""
+"""Remote text embedding APIs with explicit privacy gating."""
 
 from __future__ import annotations
 
@@ -18,19 +18,20 @@ from .protocol import DOCUMENT_TASK, EmbeddingBackend, MediaRequest, ModelInfo
 
 
 class OpenAICompatibleBackend(EmbeddingBackend):
-    """Small OpenAI embeddings API client; compatible endpoints can be configured."""
+    """Provider adapters for OpenAI-compatible APIs and Cohere's native v2 API."""
 
     def __init__(self, *, provider: str = "openai", endpoint: str | None = None,
                  model: str | None = None, dimensions: int, normalize: bool = True,
                  timeout: float = 30.0, offline: bool = False, authorized: bool = False,
                  endpoint_authorized: bool = False, retries: int = 2,
                  batch_size: int = 64) -> None:
-        if provider not in {"openai", "voyage"}:
+        if provider not in {"openai", "voyage", "cohere"}:
             raise ValueError(f"Unsupported API embedding provider: {provider}")
         self.provider = provider
         self.endpoint = (endpoint or {
             "openai": "https://api.openai.com/v1",
             "voyage": "https://api.voyageai.com/v1",
+            "cohere": "https://api.cohere.com/v2",
         }[provider]).rstrip("/")
         parsed_endpoint = urlsplit(self.endpoint)
         local_http = parsed_endpoint.hostname in {"localhost", "127.0.0.1", "::1"}
@@ -45,7 +46,13 @@ class OpenAICompatibleBackend(EmbeddingBackend):
             raise BackendUnavailableError(
                 "Embedding API endpoint must use HTTPS (HTTP is allowed only for loopback endpoints)."
             )
-        self.model = model or {"openai": "text-embedding-3-small", "voyage": "voyage-3.5"}[provider]
+        self.model = model or {
+            "openai": "text-embedding-3-small",
+            "voyage": "voyage-3.5",
+            "cohere": "embed-v4.0",
+        }[provider]
+        if provider == "cohere" and dimensions not in {256, 512, 1024, 1536}:
+            raise ValueError("Cohere embed-v4.0 supports output dimensions 256, 512, 1024, and 1536.")
         self.dimensions = dimensions
         self.normalize = normalize
         self.timeout = timeout
@@ -72,19 +79,33 @@ class OpenAICompatibleBackend(EmbeddingBackend):
                 "Remote embedding is disabled by the privacy policy.",
                 remediation="Enable privacy.allow_remote_embedding in trusted user config or environment.",
             )
-        key_name = {"openai": "OPENAI_API_KEY", "voyage": "VOYAGE_API_KEY"}[self.provider]
+        key_name = {
+            "openai": "OPENAI_API_KEY",
+            "voyage": "VOYAGE_API_KEY",
+            "cohere": "COHERE_API_KEY",
+        }[self.provider]
         key = os.environ.get(key_name)
         if not key:
             raise BackendUnavailableError(f"{key_name} is required for API embeddings.")
         payload_data: dict[str, Any] = {"model": self.model, "input": texts}
+        request_url = f"{self.endpoint}/embeddings"
         if self.provider == "openai":
             payload_data["dimensions"] = self.dimensions
-        else:
+        elif self.provider == "voyage":
             payload_data["input_type"] = "query" if task == "query" else "document"
             payload_data["output_dimension"] = self.dimensions
+        else:
+            payload_data = {
+                "model": self.model,
+                "texts": texts,
+                "input_type": "search_query" if task == "query" else "search_document",
+                "embedding_types": ["float"],
+                "output_dimension": self.dimensions,
+            }
+            request_url = f"{self.endpoint}/embed"
         payload = json.dumps(payload_data).encode()
         req = urllib.request.Request(
-            f"{self.endpoint}/embeddings", data=payload,
+            request_url, data=payload,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"}, method="POST",
         )
         body = None
@@ -113,15 +134,24 @@ class OpenAICompatibleBackend(EmbeddingBackend):
                 time.sleep(min(8.0, 0.5 * (2 ** attempt) + random.uniform(0, 0.2)))
         if body is None:
             raise BackendUnavailableError("Embedding API request did not produce a response.")
-        data = body.get("data")
-        if not isinstance(data, list) or len(data) != len(texts):
-            raise BackendUnavailableError("Embedding API returned an unexpected number of vectors.")
         try:
-            indexes = [int(item["index"]) for item in data]
-            if sorted(indexes) != list(range(len(texts))):
-                raise BackendUnavailableError("Embedding API returned invalid vector indexes.")
-            data = sorted(data, key=lambda item: int(item["index"]))
-            vectors = [[float(v) for v in item["embedding"]] for item in data]
+            if self.provider == "cohere":
+                embeddings = body.get("embeddings")
+                data = embeddings.get("float") if isinstance(embeddings, dict) else None
+                if not isinstance(data, list) or len(data) != len(texts):
+                    raise BackendUnavailableError(
+                        "Cohere returned an unexpected number of vectors."
+                    )
+                vectors = [[float(value) for value in vector] for vector in data]
+            else:
+                data = body.get("data")
+                if not isinstance(data, list) or len(data) != len(texts):
+                    raise BackendUnavailableError("Embedding API returned an unexpected number of vectors.")
+                indexes = [int(item["index"]) for item in data]
+                if sorted(indexes) != list(range(len(texts))):
+                    raise BackendUnavailableError("Embedding API returned invalid vector indexes.")
+                data = sorted(data, key=lambda item: int(item["index"]))
+                vectors = [[float(v) for v in item["embedding"]] for item in data]
         except (KeyError, TypeError, ValueError) as exc:
             raise BackendUnavailableError("Embedding API returned malformed vectors.") from exc
         for vector in vectors:

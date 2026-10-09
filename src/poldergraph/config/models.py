@@ -48,7 +48,7 @@ class EmbeddingConfig(BaseModel):
     revision: str | None = None
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "embeddinggemma"
-    api_provider: Literal["openai", "voyage"] = "openai"
+    api_provider: Literal["openai", "voyage", "cohere"] = "openai"
     api_endpoint: str | None = None
     api_model: str | None = None
     api_timeout: float = 30.0

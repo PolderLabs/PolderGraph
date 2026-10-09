@@ -1,4 +1,4 @@
-"""OpenAI-compatible provider validation and privacy gates."""
+"""Remote embedding provider contracts and privacy gates."""
 
 import json
 from email.message import Message
@@ -40,6 +40,13 @@ def test_provider_fails_closed_without_consent():
 def test_backend_factory_disables_api_without_trusted_consent():
     config = Config.model_validate({"embedding": {"backend": "api"}})
     assert isinstance(create_backend(config), DisabledBackend)
+
+
+def test_cohere_provider_config_keeps_remote_access_opt_in():
+    config = Config(embedding={"backend": "api", "api_provider": "cohere"})
+    backend = create_backend(config, cache_dir=None)
+    assert config.embedding.api_provider == "cohere"
+    assert isinstance(backend, DisabledBackend)
 
 
 def test_provider_rejects_plain_http_non_loopback_endpoint():
@@ -101,6 +108,36 @@ def test_voyage_uses_provider_specific_auth_and_task_contract(monkeypatch):
     assert sent["output_dimension"] == 2
     assert sent["model"] == "voyage-3.5"
     assert request.call_args.args[0].full_url == "https://api.voyageai.com/v1/embeddings"
+
+
+def test_cohere_native_v2_embed_contract(monkeypatch):
+    monkeypatch.setenv("COHERE_API_KEY", "cohere-test")
+    vector = [1.0, *([0.0] * 255)]
+    response = type("Response", (), {
+        "__enter__": lambda self: self,
+        "__exit__": lambda self, *args: None,
+        "read": lambda self: json.dumps({"embeddings": {"float": [vector]}}).encode(),
+    })()
+    backend = OpenAICompatibleBackend(
+        provider="cohere", dimensions=256, authorized=True, endpoint_authorized=True,
+    )
+    with patch("urllib.request.urlopen", return_value=response) as request:
+        assert backend.embed_texts(["query"], task="query") == [vector]
+    sent = json.loads(request.call_args.args[0].data)
+    assert sent == {
+        "model": "embed-v4.0",
+        "texts": ["query"],
+        "input_type": "search_query",
+        "embedding_types": ["float"],
+        "output_dimension": 256,
+    }
+    assert request.call_args.args[0].full_url == "https://api.cohere.com/v2/embed"
+    assert request.call_args.args[0].headers["Authorization"] == "Bearer cohere-test"
+
+
+def test_cohere_rejects_unsupported_dimensions():
+    with pytest.raises(ValueError, match="supports output dimensions"):
+        OpenAICompatibleBackend(provider="cohere", dimensions=2048)
 
 
 def test_provider_rejects_duplicate_vector_indexes(monkeypatch):
