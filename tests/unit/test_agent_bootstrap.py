@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 from poldergraph.agents.bootstrap import ensure_workspace_ready
 from poldergraph.workspace import find_index_dir, open_workspace
 
@@ -49,3 +51,18 @@ def test_environment_opt_out_prevents_automatic_index_creation(tmp_path, monkeyp
 
     assert result["state"] == "unavailable"
     assert find_index_dir(tmp_path) is None
+
+
+def test_concurrent_first_bootstrap_creates_one_valid_index(tmp_path):
+    (tmp_path / "main.py").write_text("def handler():\n    return 1\n", encoding="utf-8")
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _n: ensure_workspace_ready(tmp_path), range(4)))
+
+    assert all(result["state"] == "ready_structural" for result in results)
+    workspace = open_workspace(tmp_path)
+    try:
+        assert workspace.con.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
+        assert workspace.con.execute("SELECT COUNT(*) FROM entities").fetchone()[0] >= 1
+    finally:
+        workspace.close()
