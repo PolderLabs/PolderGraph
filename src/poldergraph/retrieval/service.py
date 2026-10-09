@@ -29,6 +29,9 @@ from .semantic import neighbors_of, semantic_candidates
 from .structural import PathResult, expand, find_path, find_tests, impact
 
 STRICT_FRESHNESS_HASH_BYTE_LIMIT = 64 * 1024 * 1024
+SOURCE_READ_INSTRUCTION = (
+    "Read the listed source files directly before acting; this index evidence is not authoritative."
+)
 
 
 def _active_diff_paths(root: Path | None) -> list[str]:
@@ -126,6 +129,7 @@ def _read_generation(method: Any) -> Any:
                 if stale or changed:
                     report["status"] = "stale" if stale else "generation_changed"
                     report["source_read_required"] = True
+                    report["source_read_instruction"] = SOURCE_READ_INSTRUCTION
                     report["verified"] = False
             if kwargs.get("consistency", "bounded") == "strict" and (stale or changed):
                 raise IndexStaleError(
@@ -942,6 +946,7 @@ class QueryService:
             "indexed_head": head,
             "stale_since": int(last_scan) if (drift or revision_changed) and last_scan else None,
             "source_read_required": not fresh,
+            "source_read_instruction": SOURCE_READ_INSTRUCTION if not fresh else None,
         }
 
     def _require_fresh(self) -> None:
@@ -1018,6 +1023,9 @@ class QueryService:
                 else "verified" if consistency == "strict" else "fresh"
             ),
             "source_read_required": stale_during_query or changed,
+            "source_read_instruction": (
+                SOURCE_READ_INSTRUCTION if stale_during_query or changed else None
+            ),
         }
 
     @staticmethod
