@@ -13,7 +13,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -68,10 +68,8 @@ def load_vec_extension(con: sqlite3.Connection) -> bool:
     except (sqlite3.DatabaseError, AttributeError):
         return False
     finally:
-        try:
+        with suppress(sqlite3.DatabaseError):
             con.enable_load_extension(False)
-        except sqlite3.DatabaseError:  # pragma: no cover
-            pass
 
 
 def current_schema_version(con: sqlite3.Connection) -> int:
@@ -171,7 +169,11 @@ class IndexLock:
             import msvcrt
 
             if os.fstat(self._fd).st_size == 0:
-                os.write(self._fd, b"\0")
+                # Initialize through append mode. Concurrent first-time
+                # contenders may each append a marker, but they can never
+                # write into byte zero after another contender has locked it.
+                with open(self.path, "ab", buffering=0) as marker:
+                    marker.write(b"\0")
         deadline = time.monotonic() + self.timeout
         while True:
             try:
@@ -247,10 +249,8 @@ def database_size_bytes(index_dir: Path) -> int:
     db, wal = index_paths(index_dir)
     total = 0
     for candidate in (db, wal, db.with_suffix(".sqlite3-shm")):
-        try:
+        with suppress(OSError):
             total += candidate.stat().st_size
-        except OSError:
-            pass
     return total
 
 
