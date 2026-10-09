@@ -57,6 +57,19 @@ def test_hung_worker_is_killed_at_deadline() -> None:
     worker.close()
 
 
+def test_idle_worker_is_evicted_at_configured_interval() -> None:
+    worker = LocalDecisionWorker(worker_main=_echo_worker, idle_seconds=0.05)
+    worker.decide("state", {}, model=None, timeout=2)
+    assert worker.status()["idle_timeout_seconds"] == 0.05
+
+    deadline = time.monotonic() + 2
+    while worker.status()["state"] != "stopped" and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert worker.status()["state"] == "stopped"
+    worker.close()
+
+
 def test_queued_call_deadline_includes_waiting_for_worker_lock() -> None:
     worker = LocalDecisionWorker(worker_main=_hung_worker)
     with ThreadPoolExecutor(max_workers=1) as pool:

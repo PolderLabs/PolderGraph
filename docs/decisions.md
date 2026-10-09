@@ -34,6 +34,9 @@ Inspect worker health without starting it with
 `poldergraph decision-worker-status --json`. The status reports only lifecycle
 state, process ID, offline policy, and idle time; it never includes submitted
 decision state.
+Library embedders can set a different finite positive idle interval with
+`LocalDecisionWorker(idle_seconds=...)`; the application default remains 300
+seconds.
 Set `offline_only=True` on `decide()` or set `[privacy].allow_model_downloads =
 false` for PolderGraph's integrated decision path to prohibit model downloads.
 Use `model=` to select a Laya checkpoint; the default is
