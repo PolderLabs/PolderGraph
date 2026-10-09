@@ -773,6 +773,28 @@ class QueryService:
             include_structural_context="structural" in plan.lanes,
             consistency=consistency,
         )
+        if "changed_files" in plan.lanes and plan.changed_paths:
+            focused_paths = list(plan.changed_paths[:8])
+            focused_filters = SearchFilters(
+                kinds=list(filters.kinds) if filters else [],
+                languages=list(filters.languages) if filters else [],
+                roots=list(filters.roots) if filters else [],
+                path_prefixes=focused_paths,
+                provenances=list(filters.provenances) if filters else [],
+            )
+            changed_response = self.search(
+                " ".join(focused_paths),
+                limit=24,
+                filters=focused_filters,
+                include_semantic=False,
+                consistency=consistency,
+            )
+            merged: dict[str, RankedResult] = {}
+            for candidate in (*changed_response.results, *response.results):
+                merged.setdefault(candidate.entity_id, candidate)
+            response.results = list(merged.values())[:54]
+            response.truncated = response.truncated or changed_response.truncated
+            response.degraded.extend(changed_response.degraded)
         roots = self.repo.list_roots()
         freshness = self.freshness(verify_content=False)
         result = pack_context(

@@ -138,3 +138,7 @@ def test_change_context_keeps_active_diff_focus_after_reindex(indexed_workspace)
     assert "pkg/auth.py" in context["plan"]["changed_paths"]
     assert "changed_files" in context["plan"]["lanes"]
     assert context["plan"]["changed_paths_source_read_required"] is True
+    assert any(
+        item.get("path", "").startswith("pkg/auth.py")
+        for item in [*context["entities"], *context["snippets"]]
+    )
