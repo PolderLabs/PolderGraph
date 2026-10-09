@@ -85,8 +85,12 @@ Arguments:
 - `query`
 - `token_budget`
 - optional filters
+- optional `new_evidence_since` cursor from a previous response
 
 Returns the same canonical context schema as CLI `context --json`.
+The response includes an opaque `evidence_cursor`; pass it on the next task turn
+to suppress already delivered chunks while allowing changed source evidence
+through. The OMP adapter carries this cursor within a session automatically.
 
 This is the preferred first tool for broad repository tasks.
 

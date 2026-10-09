@@ -23,7 +23,7 @@ from ..models.edge import Edge
 from ..models.entity import Entity
 from ..storage.repository import Repository
 from ..storage.sqlite import get_meta
-from .context import ContextResult, estimate_tokens, pack_context
+from .context import ContextResult, apply_evidence_cursor, estimate_tokens, pack_context
 from .context_plan import plan_context
 from .lexical import Candidate, exact_matches, lexical_candidates
 from .rerank import RankedResult, dedupe_results, detect_intent, fuse
@@ -814,6 +814,7 @@ class QueryService:
         token_budget: int | None = None,
         filters: SearchFilters | None = None,
         consistency: Literal["strict", "bounded", "best_effort"] = "bounded",
+        new_evidence_since: str | None = None,
     ) -> ContextResult:
         """Build the canonical agent context pack."""
         snapshot = self._start_consistency(consistency)
@@ -832,6 +833,7 @@ class QueryService:
                 plan=plan,
                 consistency=consistency,
             )
+            apply_evidence_cursor(result, new_evidence_since)
             result.consistency_report = self._finish_consistency(consistency, snapshot)
             return result
         # Feed known source drift into task planning. These paths are disclosed
@@ -889,6 +891,7 @@ class QueryService:
         result.consistency_report = self._finish_consistency(consistency, snapshot)
         if "tests" in plan.lanes and result.entities:
             self._add_relevant_test_evidence(result, budget)
+        apply_evidence_cursor(result, new_evidence_since)
         return result
 
     def _add_relevant_test_evidence(self, result: ContextResult, budget: int) -> None:

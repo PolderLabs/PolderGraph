@@ -214,6 +214,7 @@ def build_server(root: Path | None = None) -> Any:
         kinds: list[str] | None = None,
         languages: list[str] | None = None,
         consistency: str = "bounded",
+        new_evidence_since: str | None = None,
     ) -> dict[str, Any]:
         """Return the canonical repository context pack for a task.
 
@@ -228,15 +229,20 @@ def build_server(root: Path | None = None) -> Any:
             if plan.skipped:
                 service = session.service(need_backend=False)
                 result = service.context(
-                    query, token_budget=budget, consistency=consistency
+                    query, token_budget=budget, consistency=consistency,
+                    new_evidence_since=new_evidence_since,
                 ).to_dict()
                 result["memories"] = []
                 result["memories_learned"] = 0
+                from ..retrieval.context import apply_evidence_cursor
+
+                apply_evidence_cursor(result, new_evidence_since)
                 return _envelope("pg_context") | {"data": result}
             service = session.service(need_backend=True)
             filters = SearchFilters(kinds=kinds or [], languages=languages or [])
             result = service.context(
-                query, token_budget=budget, filters=filters, consistency=consistency
+                query, token_budget=budget, filters=filters, consistency=consistency,
+                new_evidence_since=new_evidence_since,
             ).to_dict()
             from ..memory import (
                 MemoryStore,
@@ -248,6 +254,9 @@ def build_server(root: Path | None = None) -> Any:
                 result, memory_store, query, budget, backend=service.backend,
                 decision_config=service.config.decisions,
             )
+            from ..retrieval.context import apply_evidence_cursor
+
+            apply_evidence_cursor(result, new_evidence_since)
             # Keep the field for older consumers while context remains read-only.
             result["memories_learned"] = 0
             return _envelope("pg_context") | {"data": result}
