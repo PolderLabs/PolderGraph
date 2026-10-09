@@ -6,6 +6,7 @@ transactional batch so rapid saves do not thrash the index.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -108,6 +109,10 @@ def run_watch(
                 step=int(debounce * 1000),
                 rust_timeout=1000,
                 yield_on_timeout=True,
+                # Windows editor/antivirus combinations can silently lose
+                # native notifications. The polling backend preserves the
+                # same debounced queue while making change delivery reliable.
+                force_polling=os.name == "nt",
             ):
                 changes = _changed_paths(raw)
                 pending |= changes
