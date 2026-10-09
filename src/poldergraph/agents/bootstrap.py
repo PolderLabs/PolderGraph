@@ -13,7 +13,19 @@ def workspace_root(start: Path | None = None) -> Path:
     from ..workspace import find_index_dir
 
     current = (start or Path.cwd()).resolve()
+    if current.is_file():
+        current = current.parent
+    git_root = next(
+        (directory for directory in (current, *current.parents) if (directory / ".git").exists()),
+        None,
+    )
     existing = find_index_dir(current)
+    # An outer repository's index must not capture a nested Git repo/worktree.
+    # An index inside the nearest Git root still wins for nested agent CWDs.
+    if git_root is not None:
+        if existing is not None and existing.parent.is_relative_to(git_root):
+            return existing.parent
+        return git_root
     return existing.parent if existing else detect_root(current)
 
 
