@@ -30,3 +30,22 @@ def test_agent_bootstrap_refreshes_existing_index_idempotently(tmp_path):
     assert second["created"] is False
     assert second["plan"]["changed"] == 1
     assert second["index"]["files_indexed"] == 1
+
+
+def test_project_opt_out_prevents_automatic_index_creation(tmp_path):
+    (tmp_path / ".poldergraph-disable").touch()
+
+    result = ensure_workspace_ready(tmp_path)
+
+    assert result["state"] == "unavailable"
+    assert "Remove .poldergraph-disable" in result["recovery"]
+    assert find_index_dir(tmp_path) is None
+
+
+def test_environment_opt_out_prevents_automatic_index_creation(tmp_path, monkeypatch):
+    monkeypatch.setenv("POLDERGRAPH_AUTO_INDEX", "0")
+
+    result = ensure_workspace_ready(tmp_path)
+
+    assert result["state"] == "unavailable"
+    assert find_index_dir(tmp_path) is None

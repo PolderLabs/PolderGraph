@@ -530,6 +530,10 @@ def run_server(root: Path | None = None) -> None:
     from ..agents.bootstrap import ensure_workspace_ready
 
     ready = ensure_workspace_ready(root)
+    if ready.get("state") == "unavailable":
+        from ..errors import BackendUnavailableError
+
+        raise BackendUnavailableError(ready["reason"], remediation=ready["recovery"])
     server = build_server(Path(ready["root"]))
     session = getattr(server, "poldergraph_session", None)
     try:
