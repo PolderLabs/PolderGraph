@@ -202,7 +202,7 @@ def _poll_changes(
     def fingerprint() -> dict[str, tuple[int, int]]:
         return {
             item.path: (item.size, item.mtime_ns)
-            for item in Indexer(workspace, backend=None).discover().files
+            for item in Indexer(workspace, backend=None).discover()
         }
 
     previous = fingerprint()
