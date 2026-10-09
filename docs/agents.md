@@ -231,6 +231,12 @@ using marker comments to keep repeated setup idempotent. Existing
 `mcp_servers.poldergraph` configuration is left untouched; malformed TOML is
 reported without overwriting the file.
 
+Use `poldergraph setup-agent --remove --agent codex` to remove the PolderGraph
+guidance block, marked MCP entry, and PolderGraph `UserPromptSubmit` hook groups
+for that project. Other instruction text, MCP servers, hook groups, and
+user-level configuration remain intact. Invalid hook JSON is reported and left
+untouched. `--remove --all` removes managed project entries for all adapters.
+
 The generated server command must point to the current `poldergraph` executable and current workspace root; it must not contain secrets.
 
 ## Exit codes

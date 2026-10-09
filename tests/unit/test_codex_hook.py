@@ -5,7 +5,13 @@ import json
 
 from poldergraph.agents import codex_hook
 from poldergraph.agents import setup as agent_setup
-from poldergraph.agents.setup import setup_agent_guidance, write_codex_hooks_config
+from poldergraph.agents.setup import (
+    remove_agent_guidance,
+    setup_agent_guidance,
+    write_codex_hooks_config,
+    write_codex_mcp_config,
+    write_codex_skill,
+)
 from poldergraph.config.models import Config
 
 
@@ -259,6 +265,70 @@ def test_codex_hook_setup_writes_windows_command(tmp_path, monkeypatch):
     ][0]["hooks"][0]
     assert handler["commandWindows"] == handler["command"]
     assert "Program Files" in handler["commandWindows"]
+
+
+def test_remove_agent_preserves_unrelated_user_files_and_handlers(tmp_path):
+    agents = tmp_path / "AGENTS.md"
+    agents.write_text(
+        "User guidance\n\n" + agent_setup.AGENTS_BLOCK + "\n\nMore user notes\n"
+    )
+    skill = tmp_path / ".agents" / "skills" / "poldergraph" / "SKILL.md"
+    write_codex_skill(skill)
+    skill.write_text(skill.read_text() + "\nUser-owned skill text\n")
+    write_codex_mcp_config(tmp_path)
+    config = tmp_path / ".codex" / "config.toml"
+    config.write_text(config.read_text() + '\n[mcp_servers.other]\ncommand = "other"\n')
+    hooks = tmp_path / ".codex" / "hooks.json"
+    hooks.write_text(json.dumps({"hooks": {
+        "SessionStart": [{"hooks": [{"type": "command", "command": "keep-session"}]}],
+        "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "keep-prompt"}]}],
+    }}))
+    write_codex_hooks_config(tmp_path)
+
+    result = remove_agent_guidance(tmp_path, targets=["opencode", "codex"])
+
+    assert "AGENTS.md" in result["removed"]
+    assert "User guidance" in agents.read_text()
+    assert "More user notes" in agents.read_text()
+    assert "poldergraph:start" not in agents.read_text()
+    assert "User-owned skill text" in skill.read_text()
+    assert "poldergraph:start" not in skill.read_text()
+    assert "[mcp_servers.other]" in config.read_text()
+    assert "poldergraph:start" not in config.read_text()
+    saved_hooks = json.loads(hooks.read_text())["hooks"]
+    assert saved_hooks["SessionStart"][0]["hooks"][0]["command"] == "keep-session"
+    assert saved_hooks["UserPromptSubmit"][0]["hooks"][0]["command"] == "keep-prompt"
+    assert all("codex-hook" not in json.dumps(group) for group in saved_hooks["UserPromptSubmit"])
+
+    second = remove_agent_guidance(tmp_path, targets=["opencode", "codex"])
+    assert second["removed"] == []
+
+
+def test_remove_agent_leaves_invalid_codex_hook_config_untouched(tmp_path):
+    hooks = tmp_path / ".codex" / "hooks.json"
+    hooks.parent.mkdir(parents=True)
+    hooks.write_text("{invalid json")
+
+    result = remove_agent_guidance(tmp_path, targets=["codex"])
+
+    assert hooks.read_text() == "{invalid json"
+    assert ".codex/hooks.json (invalid JSON; left untouched)" in result["skipped"]
+
+
+def test_setup_agent_remove_cli_command(tmp_path):
+    from typer.testing import CliRunner
+
+    from poldergraph.cli import app
+
+    setup_agent_guidance(tmp_path, Config(), targets=["codex"], hooks=True)
+    result = CliRunner().invoke(
+        app, ["setup-agent", str(tmp_path), "--agent", "codex", "--remove"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Removed:" in result.output
+    skill = tmp_path / ".agents" / "skills" / "poldergraph" / "SKILL.md"
+    assert not skill.exists()
 
 
 def test_setup_agent_reports_explicit_codex_hook_installation(tmp_path):
