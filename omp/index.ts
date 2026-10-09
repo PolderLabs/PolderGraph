@@ -94,7 +94,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 			const candidate = join(bin.stdout.trim(), process.platform === "win32" ? "poldergraph.exe" : "poldergraph");
 			let installed = await pi.exec(candidate, ["--version"], { cwd, timeout: 10_000 });
 			if (installed.code !== 0) {
-				const install = await pi.exec("uv", ["tool", "install", `poldergraph[all] @ ${POLDERGRAPH_SOURCE}`], { cwd, timeout: COMMAND_TIMEOUT_MS });
+				const install = await pi.exec("uv", ["tool", "install", `poldergraph @ ${POLDERGRAPH_SOURCE}`], { cwd, timeout: COMMAND_TIMEOUT_MS });
 				if (install.code !== 0 || install.killed) throw new Error(install.stderr || "Automatic PolderGraph installation failed.");
 				installed = await pi.exec(candidate, ["--version"], { cwd, timeout: 10_000 });
 			}
