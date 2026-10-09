@@ -72,3 +72,22 @@ Tests verify:
 - malicious filenames rejected
 - HTML/script injection prevented in dashboard
 - arbitrary file reads blocked through API
+## Freshness barrier latency (2026-10-09)
+
+Measured on the checked-out 195-file PolderGraph repository on Linux, Python 3.12.14, CPU, with 40 warm lexical queries (`authentication session`). The index was refreshed using `uv run poldergraph update --no-embed`; these measurements exercise structural/lexical retrieval and the filesystem freshness barrier, not semantic embedding latency.
+
+| Freshness check | p50 | p95 |
+|---|---:|---:|
+| Reuse directory snapshot between unchanged queries | 17.41 ms | 27.26 ms |
+| Rediscover directories on every query | 37.44 ms | 69.64 ms |
+
+The unchanged-query path was 2.15x faster at p50 and 2.55x faster at p95 in this run. These are one-machine baseline measurements, not a cross-platform performance guarantee.
+
+Reproduce from the repository root:
+
+```bash
+uv run poldergraph update --no-embed
+uv run python scripts/benchmark_freshness.py . --samples 40
+```
+
+The harness fails if any sample is stale, so it cannot silently record latency for an invalid freshness state.
