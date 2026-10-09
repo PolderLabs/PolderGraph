@@ -46,13 +46,15 @@ installed, it reuses the executable on `PATH`.
 
 On session start, the extension bootstraps the CLI if needed. Before each user
 task, it initializes a missing index or structurally refreshes a stale one
-without downloading a model, then uses a cheap local context plan. Social
+without downloading a model. Nested working directories resolve to the
+enclosing Git repository or worktree root, then the extension uses a cheap
+local context plan. Social
 messages skip repository retrieval and add no PolderGraph context; narrow symbol
 lookups use a compact lexical pack; broader coding tasks use the configured
-token budget with offline lexical and structural evidence. Successful OMP edit/write operations trigger
-a background incremental refresh. If automatic setup fails, the agent receives
-the error and continues with normal repository inspection; it retries
-PolderGraph on a later task.
+token budget with offline lexical and structural evidence. Successful OMP
+edit/write operations trigger a background incremental refresh. If automatic
+setup fails, the agent receives the error and continues with normal repository
+inspection; it retries PolderGraph on a later task.
 
 The model can also call these tools for focused queries:
 
