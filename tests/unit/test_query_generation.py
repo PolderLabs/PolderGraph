@@ -1,11 +1,11 @@
 import subprocess
+import sys
 
 import pytest
 
 from poldergraph.errors import IndexStaleError
 from poldergraph.retrieval.service import QueryService
 from poldergraph.storage.repository import Repository
-from poldergraph.storage.sqlite import connect, set_meta, writer_transaction
 
 
 def test_query_service_pins_generation_and_marks_mid_query_commit(
@@ -22,12 +22,27 @@ def test_query_service_pins_generation_and_marks_mid_query_commit(
 
     def commit_during_query(results, filters):
         output = original(results, filters)
-        writer = connect(indexed_workspace.index_dir / "index.sqlite3")
-        try:
-            with writer_transaction(writer):
-                set_meta(writer, "index_generation", next(counter))
-        finally:
-            writer.close()
+        writer_code = "\n".join(
+            (
+                "import sys",
+                "from pathlib import Path",
+                "from poldergraph.storage.sqlite import connect, set_meta, writer_transaction",
+                "con = connect(Path(sys.argv[1]))",
+                "with writer_transaction(con):",
+                "    set_meta(con, 'index_generation', sys.argv[2])",
+                "con.close()",
+            )
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                writer_code,
+                str(indexed_workspace.index_dir / "index.sqlite3"),
+                next(counter),
+            ],
+            check=True,
+        )
         return output
 
     monkeypatch.setattr(service, "_apply_filters", commit_during_query)
