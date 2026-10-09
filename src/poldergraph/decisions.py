@@ -282,6 +282,7 @@ def decide(
     api_key: str | None = None,
     endpoint: str | None = None,
     timeout: float = 30.0,
+    offline_only: bool = False,
 ) -> dict[str, Any]:
     """Evaluate typed questions using the explicitly selected backend.
 
@@ -299,23 +300,15 @@ def decide(
     normalized_questions = _coerce_questions(questions)
 
     if provider == "laya":
-        try:
-            laya = importlib.import_module("laya")
-        except ImportError as exc:
-            raise DecisionError(
-                "Local Laya is not installed. Install it with: pip install 'poldergraph[decision-laya]'"
-            ) from exc
-        checkpoint = model or "convaiinnovations/laya"
-        with _laya_lock:
-            agent = _laya_models.get(checkpoint)
-            if agent is None:
-                agent = laya.load(checkpoint)
-                _laya_models[checkpoint] = agent
-        result = agent.predict(state, {
-            name: _question_payload(question, "laya")
-            for name, question in normalized_questions.items()
-        })
-        return _normalize_systemone("laya", checkpoint, result, normalized_questions)
+        from .decision_worker import local_decision_worker
+
+        return local_decision_worker.decide(
+            state, normalized_questions, model=model, timeout=timeout,
+            offline_only=offline_only,
+        )
+
+    if offline_only:
+        raise DecisionError("offline_only is supported only by the local Laya provider.")
 
     env_name = "TYPESAFE_API_KEY" if provider == "typesafe" else "OPENAI_API_KEY"
     token = api_key or os.environ.get(env_name)
@@ -352,7 +345,36 @@ def decide(
     return _normalize_openai(response)
 
 
-def decide_batch(
+def _decide_laya(
+    state: str | Mapping[str, Any] | Sequence[Any],
+    questions: Mapping[str, DecisionQuestion | Mapping[str, Any]],
+    *,
+    model: str | None = None,
+) -> dict[str, Any]:
+    normalized_questions = _coerce_questions(questions)
+    try:
+        laya = importlib.import_module("laya")
+    except ImportError as exc:
+        raise DecisionError(
+            "Local Laya is not installed. Install it with: pip install 'poldergraph[decision-laya]'"
+        ) from exc
+    checkpoint = model or "convaiinnovations/laya"
+    with _laya_lock:
+        agent = _laya_models.get(checkpoint)
+        if agent is None:
+            # Keep one checkpoint resident; model changes release the prior
+            # agent before loading another checkpoint in this worker.
+            _laya_models.clear()
+            agent = laya.load(checkpoint)
+            _laya_models[checkpoint] = agent
+    result = agent.predict(state, {
+        name: _question_payload(question, "laya")
+        for name, question in normalized_questions.items()
+    })
+    return _normalize_systemone("laya", checkpoint, result, normalized_questions)
+
+
+def _decide_laya_batch(
     states: Sequence[str | Mapping[str, Any] | Sequence[Any]],
     questions: Mapping[str, DecisionQuestion | Mapping[str, Any]],
     *,
@@ -379,6 +401,7 @@ def decide_batch(
     with _laya_lock:
         agent = _laya_models.get(checkpoint)
         if agent is None:
+            _laya_models.clear()
             agent = laya.load(checkpoint)
             _laya_models[checkpoint] = agent
     payloads = agent.predict_batch(
@@ -392,6 +415,28 @@ def decide_batch(
         _normalize_systemone("laya", checkpoint, payload, normalized_questions)
         for payload in payloads
     ]
+
+
+def decide_batch(
+    states: Sequence[str | Mapping[str, Any] | Sequence[Any]],
+    questions: Mapping[str, DecisionQuestion | Mapping[str, Any]],
+    *,
+    model: str | None = None,
+    batch_size: int = 8,
+    timeout: float = 30.0,
+    offline_only: bool = False,
+) -> list[dict[str, Any]]:
+    """Evaluate aligned Laya candidates in the supervised process worker."""
+    if not states:
+        return []
+    if timeout <= 0:
+        raise DecisionError("timeout must be greater than zero.")
+    from .decision_worker import local_decision_worker
+
+    return local_decision_worker.decide_batch(
+        list(states), _coerce_questions(questions), model=model,
+        batch_size=batch_size, timeout=timeout, offline_only=offline_only,
+    )
 
 
 __all__ = ["DecisionError", "DecisionQuestion", "choice", "decide", "decide_batch", "predicate", "score"]

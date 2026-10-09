@@ -10,7 +10,8 @@ import threading
 import time
 from typing import Any
 
-from .decisions import DecisionQuestion, choice, decide, decide_batch
+from .decision_worker import local_decision_worker
+from .decisions import DecisionQuestion, choice, decide
 
 logger = logging.getLogger(__name__)
 _CACHE_TTL_SECONDS = 300.0
@@ -54,6 +55,15 @@ def _setting(config: Any, key: str, default: Any = None) -> Any:
     if isinstance(section, dict):
         return section.get(key, default)
     return getattr(section, key, default)
+
+
+def _offline_only(config: Any) -> bool:
+    privacy = getattr(config, "privacy", None)
+    if privacy is None:
+        return False
+    if isinstance(privacy, dict):
+        return not bool(privacy.get("allow_model_downloads", True))
+    return not bool(getattr(privacy, "allow_model_downloads", True))
 
 
 def _cache_key(
@@ -127,14 +137,23 @@ def run_decision(
             return None
         _FAILURES.pop(key, None)
     try:
-        result = decide(
-            state,
-            questions,
-            provider=provider,
-            **({"model": model} if model else {}),
-            **({"endpoint": endpoint} if endpoint else {}),
-            timeout=timeout,
-        )
+        if provider == "laya":
+            result = local_decision_worker.decide(
+                state,
+                questions,
+                model=model,
+                timeout=timeout,
+                offline_only=_offline_only(config),
+            )
+        else:
+            result = decide(
+                state,
+                questions,
+                provider=provider,
+                **({"model": model} if model else {}),
+                **({"endpoint": endpoint} if endpoint else {}),
+                timeout=timeout,
+            )
     except Exception as exc:
         # Avoid logging error strings: provider errors can echo submitted state.
         logger.debug(
@@ -183,10 +202,12 @@ def run_local_decision_batch(
         pending.append((index, key))
     if pending:
         try:
-            batch_results = decide_batch(
+            batch_results = local_decision_worker.decide_batch(
                 [states[index] for index, _key in pending],
                 questions,
-                **({"model": model} if model else {}),
+                model=model,
+                timeout=float(_setting(config, "timeout", 3.0)),
+                offline_only=_offline_only(config),
             )
         except Exception as exc:
             logger.debug(
