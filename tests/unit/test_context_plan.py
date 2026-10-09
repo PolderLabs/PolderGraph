@@ -1,3 +1,5 @@
+import subprocess
+
 from poldergraph.retrieval.context_plan import plan_context
 from poldergraph.retrieval.service import QueryService
 from poldergraph.storage.repository import Repository
@@ -103,3 +105,36 @@ def test_change_context_surfaces_unindexed_source_drift(indexed_workspace):
     assert "pkg/auth.py" in context["plan"]["changed_paths"]
     assert context["plan"]["changed_paths_source_read_required"] is True
     assert "changed_files" in context["plan"]["lanes"]
+
+
+def test_change_context_keeps_active_diff_focus_after_reindex(indexed_workspace):
+    root = indexed_workspace.root
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(root), "add", "pkg/auth.py"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-qm", "baseline"], check=True
+    )
+    source = root / "pkg" / "auth.py"
+    source.write_text(source.read_text() + "\n# active work\n")
+
+    from poldergraph.agents.bootstrap import ensure_workspace_ready
+
+    ensure_workspace_ready(root)
+    service = QueryService(
+        Repository(indexed_workspace.con),
+        indexed_workspace.config,
+        root_id=indexed_workspace.root_id(),
+        workspace=indexed_workspace,
+    )
+
+    context = service.context("Refactor AuthService", token_budget=3000).to_dict()
+
+    assert context["index"]["fresh"] is True
+    assert "pkg/auth.py" in context["plan"]["changed_paths"]
+    assert "changed_files" in context["plan"]["lanes"]
+    assert context["plan"]["changed_paths_source_read_required"] is True
