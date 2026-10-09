@@ -45,7 +45,9 @@ def daemon(tmp_path_factory):
     from poldergraph.storage.repository import Repository
     from poldergraph.workspace import create_index, open_workspace
 
-    create_index(workspace, Config())
+    # Keep this cross-platform lifecycle fixture fully offline and avoid an
+    # optional semantic model dependency; the tests exercise graph/FTS queries.
+    create_index(workspace, Config(embedding={"backend": "none"}))
     ws = open_workspace(workspace)
     indexer = Indexer(ws, backend=None)
     indexer.ensure_root()
