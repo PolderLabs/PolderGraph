@@ -53,6 +53,7 @@ class SearchResponse:
     truncated: bool = False
     routing: dict[str, Any] = field(default_factory=dict)
     consistency: str = "bounded"
+    consistency_report: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self, *, explain: bool = False) -> dict[str, Any]:
         return {
@@ -93,6 +94,7 @@ class SearchResponse:
             "truncated": self.truncated,
             "routing": self.routing,
             "consistency": self.consistency,
+            "consistency_report": self.consistency_report,
         }
 
 
@@ -156,10 +158,7 @@ class QueryService:
         consistency: Literal["strict", "bounded", "best_effort"] = "bounded",
     ) -> SearchResponse:
         """Run hybrid retrieval across the independent evidence channels."""
-        if consistency not in {"strict", "bounded", "best_effort"}:
-            raise UsageError("Consistency must be strict, bounded, or best_effort.")
-        if consistency == "strict":
-            self._require_fresh()
+        snapshot = self._start_consistency(consistency)
         filters = filters or SearchFilters()
         baseline_intent = detect_intent(query)
         degraded: list[str] = []
@@ -343,8 +342,7 @@ class QueryService:
             routing=routing,
             consistency=consistency,
         )
-        if consistency == "strict":
-            self._require_fresh()
+        response.consistency_report = self._finish_consistency(consistency, snapshot)
         return response
 
     def _index_generation(self) -> str:
@@ -381,8 +379,15 @@ class QueryService:
 
     # --------------------------------------------------------------- explain
 
-    def explain(self, entity_ref: str, *, semantic_limit: int = 10) -> dict[str, Any]:
+    def explain(
+        self,
+        entity_ref: str,
+        *,
+        semantic_limit: int = 10,
+        consistency: Literal["strict", "bounded", "best_effort"] = "bounded",
+    ) -> dict[str, Any]:
         """Return identity, ownership, relations, neighbors and metrics."""
+        snapshot = self._start_consistency(consistency)
         entity = self.resolve_entity(entity_ref)
         if entity is None:
             raise UsageError(
@@ -404,7 +409,7 @@ class QueryService:
         parent = self.repo.get_entity(entity.parent_id) if entity.parent_id else None
         excerpt = self.source_excerpt(entity)
 
-        return {
+        result = {
             "entity": entity.to_dict(),
             "parent": parent.to_dict() if parent else None,
             "inbound": [self._describe_edge(edge, entity.id) for edge in inbound],
@@ -422,6 +427,8 @@ class QueryService:
             "excerpt": excerpt,
             "unresolved": self.repo.unresolved_for(entity.id),
         }
+        result["consistency_report"] = self._finish_consistency(consistency, snapshot)
+        return result
 
     def _describe_edge(self, edge: Edge, entity_id: str) -> dict[str, Any]:
         """Describe an edge relative to the entity being explained.
@@ -456,8 +463,10 @@ class QueryService:
         structural_only: bool = True,
         include_semantic: bool = False,
         max_hops: int = 12,
+        consistency: Literal["strict", "bounded", "best_effort"] = "bounded",
     ) -> dict[str, Any]:
         """Compute a path between two resolvable entities."""
+        snapshot = self._start_consistency(consistency)
         source = self.resolve_entity(source_ref)
         target = self.resolve_entity(target_ref)
         if source is None:
@@ -480,7 +489,9 @@ class QueryService:
             include_semantic=include_semantic,
             max_hops=max_hops,
         )
-        return self._path_to_dict(result, source, target)
+        payload = self._path_to_dict(result, source, target)
+        payload["consistency_report"] = self._finish_consistency(consistency, snapshot)
+        return payload
 
     def _path_to_dict(self, result: PathResult, source: Entity, target: Entity) -> dict[str, Any]:
         entities = self.repo.get_entities(result.nodes)
@@ -494,8 +505,16 @@ class QueryService:
             "edges": [edge.to_dict() for edge in result.edges],
         }
 
-    def impact(self, entity_ref: str, *, max_depth: int = 3, edge_types: list[str] | None = None) -> dict[str, Any]:
+    def impact(
+        self,
+        entity_ref: str,
+        *,
+        max_depth: int = 3,
+        edge_types: list[str] | None = None,
+        consistency: Literal["strict", "bounded", "best_effort"] = "bounded",
+    ) -> dict[str, Any]:
         """Reverse-dependency impact for an entity or path."""
+        snapshot = self._start_consistency(consistency)
         entity = self.resolve_entity(entity_ref)
         if entity is None:
             raise UsageError(
@@ -511,10 +530,18 @@ class QueryService:
         )
         payload = result.to_dict(self.repo)
         payload["entity"] = entity.to_dict()
+        payload["consistency_report"] = self._finish_consistency(consistency, snapshot)
         return payload
 
-    def related(self, entity_ref: str, *, limit: int = 10) -> dict[str, Any]:
+    def related(
+        self,
+        entity_ref: str,
+        *,
+        limit: int = 10,
+        consistency: Literal["strict", "bounded", "best_effort"] = "bounded",
+    ) -> dict[str, Any]:
         """Semantic neighbours, annotated with structural linkage."""
+        snapshot = self._start_consistency(consistency)
         entity = self.resolve_entity(entity_ref)
         if entity is None:
             raise UsageError(
@@ -537,10 +564,20 @@ class QueryService:
                     ],
                 }
             )
-        return {"entity": entity.to_dict(), "related": out}
+        result = {"entity": entity.to_dict(), "related": out}
+        result["consistency_report"] = self._finish_consistency(consistency, snapshot)
+        return result
 
-    def find_tests(self, entity_ref: str | None = None, *, query: str | None = None, limit: int = 25) -> dict[str, Any]:
+    def find_tests(
+        self,
+        entity_ref: str | None = None,
+        *,
+        query: str | None = None,
+        limit: int = 25,
+        consistency: Literal["strict", "bounded", "best_effort"] = "bounded",
+    ) -> dict[str, Any]:
         """Find structurally or lexically linked tests."""
+        snapshot = self._start_consistency(consistency)
         if entity_ref:
             entity = self.resolve_entity(entity_ref)
             if entity is None:
@@ -551,7 +588,7 @@ class QueryService:
                 )
             ids = [entity.id]
         elif query:
-            response = self.search(query, limit=10)
+            response = self.search(query, limit=10, consistency=consistency)
             ids = [result.entity_id for result in response.results]
         else:
             raise UsageError(
@@ -561,10 +598,12 @@ class QueryService:
             )
         test_ids = find_tests(self.repo, ids, limit=limit)
         entities = self.repo.get_entities(test_ids)
-        return {
+        result = {
             "tests": [entities[test_id].to_dict() for test_id in test_ids if test_id in entities],
             "truncated": len(test_ids) >= limit,
         }
+        result["consistency_report"] = self._finish_consistency(consistency, snapshot)
+        return result
 
     # --------------------------------------------------------------- context
 
@@ -577,18 +616,13 @@ class QueryService:
         consistency: Literal["strict", "bounded", "best_effort"] = "bounded",
     ) -> ContextResult:
         """Build the canonical agent context pack."""
-        if consistency not in {"strict", "bounded", "best_effort"}:
-            raise UsageError("Consistency must be strict, bounded, or best_effort.")
+        snapshot = self._start_consistency(consistency)
         budget = token_budget or self.config.retrieval.default_context_tokens
         plan = plan_context(query, budget)
         if plan.skipped:
-            if consistency == "strict":
-                self._require_fresh()
             roots = self.repo.list_roots()
-            freshness = self.freshness(verify_content=consistency == "strict")
-            if consistency == "strict" and not freshness["fresh"]:
-                self._raise_stale(freshness)
-            return ContextResult(
+            freshness = self.freshness(verify_content=False)
+            result = ContextResult(
                 query=query,
                 index={
                     "root": roots[0]["path"] if roots else ".",
@@ -598,6 +632,8 @@ class QueryService:
                 plan=plan,
                 consistency=consistency,
             )
+            result.consistency_report = self._finish_consistency(consistency, snapshot)
+            return result
         budget = plan.budget
         response = self.search(
             query,
@@ -608,9 +644,7 @@ class QueryService:
             consistency=consistency,
         )
         roots = self.repo.list_roots()
-        freshness = self.freshness(verify_content=consistency == "strict")
-        if consistency == "strict" and not freshness["fresh"]:
-            self._raise_stale(freshness)
+        freshness = self.freshness(verify_content=False)
         result = pack_context(
             self,
             query,
@@ -622,6 +656,7 @@ class QueryService:
         )
         result.plan = plan
         result.consistency = consistency
+        result.consistency_report = self._finish_consistency(consistency, snapshot)
         return result
 
     # ------------------------------------------------------------- utilities
@@ -685,11 +720,20 @@ class QueryService:
             verify_content=verify_content
         )
         head = get_meta(self.repo.con, "indexed_head")
-        fresh = drift == 0 and check_error is None
+        try:
+            from ..indexing.pipeline import git_state
+
+            _branch, current_head = git_state(self.root or Path.cwd())
+        except Exception:
+            current_head = None
+        revision_changed = bool(head and current_head and head != current_head)
+        fresh = drift == 0 and check_error is None and not revision_changed
         return {
             "fresh": fresh,
             "generation": self._index_generation(),
             "revision": head,
+            "current_revision": current_head,
+            "revision_changed": revision_changed,
             "structural": "fresh" if fresh else "stale",
             # The index does not yet track per-file embedding completion as a
             # committed generation, so callers must not infer semantic freshness.
@@ -700,7 +744,7 @@ class QueryService:
             "stale_files_truncated": truncated,
             "freshness_error": check_error,
             "indexed_head": head,
-            "stale_since": int(last_scan) if drift and last_scan else None,
+            "stale_since": int(last_scan) if (drift or revision_changed) and last_scan else None,
             "source_read_required": not fresh,
         }
 
@@ -708,6 +752,77 @@ class QueryService:
         freshness = self.freshness(verify_content=True)
         if not freshness["fresh"]:
             self._raise_stale(freshness)
+
+    def _start_consistency(
+        self, consistency: Literal["strict", "bounded", "best_effort"]
+    ) -> dict[str, Any]:
+        if consistency not in {"strict", "bounded", "best_effort"}:
+            raise UsageError("Consistency must be strict, bounded, or best_effort.")
+        generation = self._index_generation()
+        data_version = int(self.repo.con.execute("PRAGMA data_version").fetchone()[0])
+        connection_changes = int(self.repo.con.total_changes)
+        if consistency == "strict":
+            self._require_fresh()
+        return {
+            "generation": generation,
+            "root_id": self.root_id,
+            "data_version": data_version,
+            "connection_changes": connection_changes,
+        }
+
+    def _finish_consistency(
+        self,
+        consistency: Literal["strict", "bounded", "best_effort"],
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        end_generation = self._index_generation()
+        start_generation = str(snapshot["generation"])
+        generation_changed = start_generation != end_generation
+        end_data_version = int(self.repo.con.execute("PRAGMA data_version").fetchone()[0])
+        database_changed = int(snapshot["data_version"]) != end_data_version
+        connection_changed = int(snapshot["connection_changes"]) != int(self.repo.con.total_changes)
+        # Bounded reads still inspect file revisions after retrieval. This is
+        # the edit-to-index race barrier: a source edit that has not reached
+        # SQLite must be disclosed even when no generation changed.
+        freshness = self.freshness(verify_content=consistency == "strict")
+        stale_during_query = not freshness["fresh"]
+        if consistency == "strict" and (
+            generation_changed or database_changed or connection_changed or stale_during_query
+        ):
+            freshness.update(
+                generation_start=start_generation,
+                generation_end=end_generation,
+                generation_changed=generation_changed,
+                database_changed=database_changed,
+                connection_changed=connection_changed,
+            )
+            self._raise_stale(freshness)
+        changed = generation_changed or database_changed or connection_changed
+        return {
+            "mode": consistency,
+            "root_id": snapshot["root_id"],
+            "generation_start": start_generation,
+            "generation_end": end_generation,
+            "generation_changed": generation_changed,
+            "database_changed": database_changed,
+            "connection_changed": connection_changed,
+            "revision": freshness["revision"],
+            "current_revision": freshness["current_revision"],
+            "revision_changed": freshness["revision_changed"],
+            "structural_freshness": freshness["structural"],
+            "semantic_freshness": freshness["semantic"],
+            "pending_changes": freshness["pending_changes"],
+            "stale_files": freshness["stale_files"],
+            "stale_files_truncated": freshness["stale_files_truncated"],
+            "stale_since": freshness["stale_since"],
+            "verified": consistency == "strict" and not changed and not stale_during_query,
+            "status": (
+                "stale" if stale_during_query
+                else "generation_changed" if changed
+                else "verified" if consistency == "strict" else "fresh"
+            ),
+            "source_read_required": stale_during_query or changed,
+        }
 
     @staticmethod
     def _raise_stale(freshness: dict[str, Any]) -> None:

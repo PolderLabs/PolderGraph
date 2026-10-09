@@ -774,13 +774,14 @@ def search(
 def explain(
     entity: str = typer.Argument(..., help="Entity ID, qualified name or path."),
     root: Path | None = typer.Option(None, "--root", help="Repository root."),
+    consistency: str = typer.Option("bounded", "--consistency", help="strict, bounded, or best_effort."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Show identity, ownership, relations, neighbors and metrics for an entity."""
     command = "explain"
     workspace = None
     try:
-        remote = try_daemon("explain", {"entity": entity}, root)
+        remote = try_daemon("explain", {"entity": entity, "consistency": consistency}, root)
         if isinstance(remote, _DaemonRejection):
             if remote.error.get("code") == "INDEX_STALE":
                 raise IndexStaleError(
@@ -799,7 +800,7 @@ def explain(
                 _print_explain(remote)
             return
         workspace, _repo, service = build_service(root, need_backend=True)
-        data = service.explain(entity)
+        data = service.explain(entity, consistency=consistency)
         payload = envelope(command=command, index=freshness_payload(service), data=data)
         if json_output:
             emit_json(payload)
@@ -868,13 +869,14 @@ def related(
     entity: str = typer.Argument(..., help="Entity ID, qualified name or path."),
     limit: int = typer.Option(10, "--limit", help="Maximum neighbours."),
     root: Optional[Path] = typer.Option(None, "--root", help="Repository root."),
+    consistency: str = typer.Option("bounded", "--consistency", help="strict, bounded, or best_effort."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Semantic neighbours with structural linkage made explicit."""
     command = "related"
     workspace = None
     try:
-        remote = try_daemon("related", {"entity": entity, "limit": limit}, root)
+        remote = try_daemon("related", {"entity": entity, "limit": limit, "consistency": consistency}, root)
         if isinstance(remote, _DaemonRejection):
             emit_json(envelope(command=command, error=UsageError(
                 remote.error.get("message", "invalid request"),
@@ -893,7 +895,7 @@ def related(
                     )
             return
         workspace, repo, service = build_service(root, need_backend=True)
-        data = service.related(entity, limit=limit)
+        data = service.related(entity, limit=limit, consistency=consistency)
         payload = envelope(command=command, index=freshness_payload(service), data=data)
         if json_output:
             emit_json(payload)
@@ -926,6 +928,7 @@ def path(
     ),
     max_hops: int = typer.Option(12, "--max-hops", help="Maximum path length."),
     root: Optional[Path] = typer.Option(None, "--root", help="Repository root."),
+    consistency: str = typer.Option("bounded", "--consistency", help="strict, bounded, or best_effort."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Find the relationship path between two entities."""
@@ -935,7 +938,8 @@ def path(
         remote = try_daemon("path", {
             "source": source, "target": target,
             "structural_only": structural_only,
-            "include_semantic": not structural_only, "max_hops": max_hops}, root)
+            "include_semantic": not structural_only, "max_hops": max_hops,
+            "consistency": consistency}, root)
         if isinstance(remote, _DaemonRejection):
             emit_json(envelope(command=command, error=UsageError(
                 remote.error.get("message", "invalid request"),
@@ -956,6 +960,7 @@ def path(
             structural_only=structural_only,
             include_semantic=not structural_only,
             max_hops=max_hops,
+            consistency=consistency,
         )
         payload = envelope(command=command, index=freshness_payload(service), data=data)
         if json_output:
@@ -984,6 +989,7 @@ def impact(
         [], "--edge-type", help="Restrict edge classes (repeatable)."
     ),
     root: Optional[Path] = typer.Option(None, "--root", help="Repository root."),
+    consistency: str = typer.Option("bounded", "--consistency", help="strict, bounded, or best_effort."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Show what may be affected if this entity changes."""
@@ -991,7 +997,10 @@ def impact(
     workspace = None
     try:
         workspace, repo, service = build_service(root, need_backend=False)
-        data = service.impact(target, max_depth=max_depth, edge_types=list(edge_type) or None)
+        data = service.impact(
+            target, max_depth=max_depth, edge_types=list(edge_type) or None,
+            consistency=consistency,
+        )
         payload = envelope(command=command, index=freshness_payload(service), data=data)
         if json_output:
             emit_json(payload)

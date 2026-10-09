@@ -215,13 +215,19 @@ Do not block normal indexing on quadratic metrics for huge graphs.
 
 ## Freshness
 
-Every query returns index freshness information.
+Every agent-facing query accepts `consistency=strict|bounded|best_effort` and returns a
+`consistency_report` with its workspace root ID, starting/ending index generation,
+indexed/current Git revisions, structural and semantic freshness, and any stale file
+paths. The default `bounded` mode does not wait for indexing: it checks source metadata
+after retrieval and sets `source_read_required` when a source edit, revision change, or
+index write could have raced the query. Consumers must read the listed source files
+before treating that evidence as current. `best_effort` makes the same disclosure while
+allowing callers to opt out of stronger guarantees.
 
-Fresh:
-- tracked source state matches indexed hashes, or watcher has processed all events.
-
-Possibly stale:
-- source metadata changed after last scan.
-- current Git HEAD differs from recorded state.
-
-Agents must see this flag. If stale, recommended behavior is `poldergraph update --quiet` before deep repository questions.
+`strict` checks freshness before and after retrieval, hashes indexed source files within
+a 64 MiB verification budget, and returns a structured `INDEX_STALE` error if the
+workspace or committed generation changes. It never returns stale evidence as verified.
+Freshness currently uses a workspace discovery pass plus file metadata checks; semantic
+embedding completion is reported as `unknown` until embedding state is committed with
+the graph generation. Automatic waiting/reconciliation of dirty files belongs to the
+index lifecycle controller.

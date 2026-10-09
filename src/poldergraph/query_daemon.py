@@ -262,7 +262,10 @@ class Daemon:
                     data.setdefault("warnings", []).append(f"memory step skipped: {exc}")
                 return data
             if command == "explain":
-                return service.explain(_named(arguments, "entity_ref", "entity"))
+                return service.explain(
+                    _named(arguments, "entity_ref", "entity"),
+                    **_without(arguments, "entity", "entity_ref"),
+                )
             if command == "related":
                 return service.related(
                     _named(arguments, "entity_ref", "entity"),

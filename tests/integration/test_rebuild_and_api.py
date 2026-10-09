@@ -259,6 +259,168 @@ class TestDashboardApi:
         with pytest.raises(IndexStaleError):
             service.search("AuthService", include_semantic=False, consistency="strict")
 
+    def test_strict_path_impact_entity_and_test_queries_reject_stale_index(
+        self, indexed_workspace
+    ):
+        from poldergraph.errors import IndexStaleError
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+
+        service = QueryService(
+            Repository(indexed_workspace.con),
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        source = indexed_workspace.root / "pkg" / "auth.py"
+        source.write_text(source.read_text() + "\n# changed\n")
+        operations = (
+            lambda: service.explain("AuthService", consistency="strict"),
+            lambda: service.path("AuthService", "validate_session", consistency="strict"),
+            lambda: service.impact("AuthService", consistency="strict"),
+            lambda: service.find_tests(entity_ref="AuthService", consistency="strict"),
+        )
+        for operation in operations:
+            with pytest.raises(IndexStaleError):
+                operation()
+
+    def test_strict_path_detects_generation_change_during_query(
+        self, indexed_workspace, monkeypatch
+    ):
+        import poldergraph.retrieval.service as service_module
+        from poldergraph.errors import IndexStaleError
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+        from poldergraph.storage.sqlite import set_meta
+
+        service = QueryService(
+            Repository(indexed_workspace.con),
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        original_find_path = service_module.find_path
+
+        def change_generation(*args, **kwargs):
+            result = original_find_path(*args, **kwargs)
+            set_meta(indexed_workspace.con, "index_generation", "concurrent-generation")
+            return result
+
+        monkeypatch.setattr(service_module, "find_path", change_generation)
+        with pytest.raises(IndexStaleError) as exc_info:
+            service.path("AuthService", "validate_session", consistency="strict")
+        assert exc_info.value.details["freshness"]["generation_changed"] is True
+
+    def test_bounded_path_reports_source_edit_during_query(
+        self, indexed_workspace, monkeypatch
+    ):
+        import poldergraph.retrieval.service as service_module
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+
+        service = QueryService(
+            Repository(indexed_workspace.con),
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        original_find_path = service_module.find_path
+        source = indexed_workspace.root / "pkg" / "auth.py"
+
+        def edit_during_query(*args, **kwargs):
+            result = original_find_path(*args, **kwargs)
+            source.write_text(source.read_text() + "\n# edited during query\n")
+            return result
+
+        monkeypatch.setattr(service_module, "find_path", edit_during_query)
+        result = service.path("AuthService", "validate_session", consistency="bounded")
+        report = result["consistency_report"]
+        assert report["status"] == "stale"
+        assert report["source_read_required"] is True
+        assert "pkg/auth.py" in report["stale_files"]
+        assert report["structural_freshness"] == "stale"
+
+    def test_strict_path_rejects_changed_git_revision(self, indexed_workspace, monkeypatch):
+        import poldergraph.indexing.pipeline as pipeline
+        from poldergraph.errors import IndexStaleError
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+        from poldergraph.storage.sqlite import set_meta
+
+        service = QueryService(
+            Repository(indexed_workspace.con),
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        set_meta(indexed_workspace.con, "indexed_head", "old-revision")
+        monkeypatch.setattr(pipeline, "git_state", lambda _root: ("main", "new-revision"))
+
+        with pytest.raises(IndexStaleError) as exc_info:
+            service.path("AuthService", "validate_session", consistency="strict")
+        freshness = exc_info.value.details["freshness"]
+        assert freshness["revision_changed"] is True
+        assert freshness["current_revision"] == "new-revision"
+
+    def test_strict_path_detects_external_database_commit_during_query(
+        self, indexed_workspace, monkeypatch
+    ):
+        import sqlite3
+
+        import poldergraph.retrieval.service as service_module
+        from poldergraph.errors import IndexStaleError
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+
+        service = QueryService(
+            Repository(indexed_workspace.con),
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        original_find_path = service_module.find_path
+
+        def commit_during_query(*args, **kwargs):
+            result = original_find_path(*args, **kwargs)
+            with sqlite3.connect(indexed_workspace.index_dir / "index.sqlite3") as connection:
+                connection.execute(
+                    "INSERT INTO meta(key, value) VALUES('concurrent_touch', '1') "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                )
+            return result
+
+        monkeypatch.setattr(service_module, "find_path", commit_during_query)
+        with pytest.raises(IndexStaleError) as exc_info:
+            service.path("AuthService", "validate_session", consistency="strict")
+        assert exc_info.value.details["freshness"]["database_changed"] is True
+
+    def test_strict_path_detects_same_connection_write_during_query(
+        self, indexed_workspace, monkeypatch
+    ):
+        import poldergraph.retrieval.service as service_module
+        from poldergraph.errors import IndexStaleError
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+        from poldergraph.storage.sqlite import set_meta
+
+        service = QueryService(
+            Repository(indexed_workspace.con),
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        original_find_path = service_module.find_path
+
+        def write_during_query(*args, **kwargs):
+            result = original_find_path(*args, **kwargs)
+            set_meta(indexed_workspace.con, "concurrent_touch", "1")
+            return result
+
+        monkeypatch.setattr(service_module, "find_path", write_during_query)
+        with pytest.raises(IndexStaleError) as exc_info:
+            service.path("AuthService", "validate_session", consistency="strict")
+        assert exc_info.value.details["freshness"]["connection_changed"] is True
+
     def test_global_graph_payload_shape(self, api_client):
         data = api_client.get("/api/graph/global?limit=50").json()["data"]
         assert data["nodes"] and data["edges"]
@@ -308,6 +470,13 @@ class TestDashboardApi:
         assert response.status_code == 400
         assert payload["error"]["code"] == "INDEX_STALE"
         assert "pkg/auth.py" in payload["error"]["details"]["freshness"]["stale_files"]
+
+    def test_path_api_strict_consistency_returns_generation_report(self, api_client):
+        response = api_client.get(
+            "/api/path?from=AuthService&to=validate_session&consistency=strict"
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["consistency_report"]["verified"] is True
 
     def test_search_graph_context_is_bounded_and_valid(self, api_client):
         data = api_client.get(

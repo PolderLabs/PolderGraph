@@ -7,6 +7,7 @@ Binds to loopback by default and may only read files inside configured roots.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from pathlib import Path
 from typing import Any
@@ -153,9 +154,14 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
         )
 
     @app.get("/api/entity/{entity_id}")
-    def entity(entity_id: str) -> Any:
+    def entity(
+        entity_id: str, consistency: str = Query(default="bounded")
+    ) -> Any:
         try:
-            return ok("entity", service.explain(entity_id, semantic_limit=8))
+            return ok(
+                "entity",
+                service.explain(entity_id, semantic_limit=8, consistency=consistency),
+            )
         except PolderGraphError as exc:
             return fail("entity", exc)
 
@@ -223,15 +229,25 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
         to: str = Query(...),
         structural_only: bool = Query(default=True),
         include_semantic: bool = Query(default=False),
+        consistency: str = Query(default="bounded"),
     ) -> Any:
         try:
-            return ok("path", service.path(from_, to, structural_only=structural_only, include_semantic=include_semantic))
+            return ok(
+                "path",
+                service.path(
+                    from_, to, structural_only=structural_only,
+                    include_semantic=include_semantic, consistency=consistency,
+                ),
+            )
         except PolderGraphError as exc:
             return fail("path", exc)
 
     @app.get("/api/impact/{entity_id}")
     def impact_route(
-        entity_id: str, max_depth: int = Query(default=3, ge=1, le=8), edge_types: str = Query(default="")
+        entity_id: str,
+        max_depth: int = Query(default=3, ge=1, le=8),
+        edge_types: str = Query(default=""),
+        consistency: str = Query(default="bounded"),
     ) -> Any:
         try:
             return ok(
@@ -240,6 +256,7 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
                     entity_id,
                     max_depth=max_depth,
                     edge_types=[e for e in edge_types.split(",") if e] or None,
+                    consistency=consistency,
                 ),
             )
         except PolderGraphError as exc:
@@ -626,10 +643,8 @@ def serve(workspace: Workspace, *, watch: bool = False) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        try:
+        with contextlib.suppress(Exception):
             server.should_exit = True
-        except Exception:
-            pass
     print("Dashboard stopped.", flush=True)
 
 
@@ -646,7 +661,7 @@ def _find_free_port(host: str, preferred: int, *, max_attempts: int = 20) -> int
         except OSError:
             continue
     raise PolderGraphError(
-        f"Ports {preferred}–{preferred + max_attempts - 1} are all in use on {host}.",
+        f"Ports {preferred}-{preferred + max_attempts - 1} are all in use on {host}.",
         code="INDEX_LOCKED",
         remediation=f"Stop the process using port {preferred} or set ui.port in .poldergraph/config.toml",
     )

@@ -39,6 +39,7 @@ Continuously update the index as files change. Coalesces file events and applies
 Show roots, schema/index versions, freshness, file/entity/edge/vector counts, model/revision/dimensions, language capability and last update.
 
 Options:
+- `--consistency MODE` — `bounded` (default), `best_effort`, or `strict`; strict hashes indexed source before and after retrieval and fails with stale paths
 - `--json` — machine-readable output
 
 ### `poldergraph search QUERY`
@@ -69,6 +70,7 @@ Semantic neighbours with optional graph-aware reranking. Shows whether two nodes
 
 Options:
 - `--limit N` — maximum neighbours (default 10)
+- `--consistency MODE` — `bounded` (default), `best_effort`, or `strict`
 - `--json` — machine-readable output
 
 ### `poldergraph path SOURCE TARGET`
@@ -78,6 +80,7 @@ Find the relationship path between two entities.
 Options:
 - `--structural-only/--include-semantic` — edge classes to traverse
 - `--max-hops N` — maximum path length (default 12)
+- `--consistency MODE` — `bounded` (default), `best_effort`, or `strict`; strict hashes indexed source before and after retrieval and fails with stale paths
 - `--json` — machine-readable output
 
 ### `poldergraph impact TARGET`
@@ -87,6 +90,7 @@ Show what may be affected if this entity changes.
 Options:
 - `--max-depth N` — reverse dependency depth (default 3)
 - `--edge-type TYPE` — restrict edge classes (repeatable)
+- `--consistency MODE` — `bounded` (default), `best_effort`, or `strict`; strict hashes indexed source before and after retrieval and fails with stale paths
 - `--json` — machine-readable output
 
 ### `poldergraph context QUERY`
