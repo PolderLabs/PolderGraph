@@ -188,6 +188,7 @@ class Daemon:
         self._workspace = None
         self._service = None
         self._server: socket.socket | None = None
+        self._supervisor = None
 
     def _ensure_loaded(self) -> Any:
         if self._service is not None:
@@ -202,6 +203,13 @@ class Daemon:
                 backend.model_info()
         self._workspace = workspace
         self._service = service
+        from .indexing.supervisor import IndexSupervisor
+
+        self._supervisor = IndexSupervisor(
+            service.root,
+            backend_provider=lambda: self._ensure_loaded().backend,
+        )
+        self._supervisor.start()
         return service
 
     def handle(self, command: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -289,6 +297,9 @@ class Daemon:
                     "counts": service.repo.counts(),
                     "freshness": service.freshness(),
                     "config": service.config.model_dump(),
+                    "supervisor": (
+                        self._supervisor.status() if self._supervisor else {"state": "stopped"}
+                    ),
                 }
         except (TypeError, ValueError) as exc:
             return {"ok": False, "error": {"code": "USAGE_ERROR", "message": str(exc)}}
@@ -315,9 +326,8 @@ class Daemon:
         # Load the model before accepting connections. The socket is bound but
         # the client connect() would succeed, so readiness is signalled by the
         # daemon answering; ensure_daemon's poll below waits for a real reply.
-        self._ensure_loaded()
-
         try:
+            self._ensure_loaded()
             while True:
                 try:
                     conn, _ = server.accept()
@@ -327,6 +337,8 @@ class Daemon:
                     self._serve_one(conn)
         finally:
             server.close()
+            if self._supervisor is not None:
+                self._supervisor.stop()
             if path.exists():
                 path.unlink()
 

@@ -20,11 +20,15 @@ from ..workspace import open_workspace
 #: Events arriving within this window are coalesced into one update.
 DEBOUNCE_SECONDS = 0.4
 RECONCILE_SECONDS = 30.0
+POLL_SECONDS = 5.0
 
 
 def _changed_paths(raw: set[Any]) -> set[str]:
     """Normalize watchfile events into a set of path strings."""
-    return {str(item) for item in raw}
+    return {
+        str(item[1] if isinstance(item, tuple) and len(item) > 1 else item)
+        for item in raw
+    }
 
 
 def run_watch(
@@ -34,16 +38,15 @@ def run_watch(
     on_update: Callable[[Any], None] | None = None,
     max_iterations: int | None = None,
     reconcile_interval: float = RECONCILE_SECONDS,
+    stop_event: threading.Event | None = None,
+    backend_provider: Callable[[], Any] | None = None,
+    on_started: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Watch a workspace and apply incremental updates until interrupted."""
     try:
         from watchfiles import watch
-    except ImportError as exc:
-        raise PolderGraphError(
-            "watchfiles is not installed.",
-            code="BACKEND_UNAVAILABLE",
-            remediation="Install it with: uv pip install watchfiles",
-        ) from exc
+    except ImportError:
+        watch = None
 
     workspace = open_workspace(path)
     # This lock prevents duplicate supervisors for this workspace. The writer
@@ -60,51 +63,69 @@ def run_watch(
     pending: set[str] = set()
     last_event = time.monotonic()
     next_reconcile = last_event + reconcile_interval
-    backend = _watch_backend(workspace)
+    stop = stop_event or threading.Event()
+    backend = None
+
+    def get_backend() -> Any:
+        nonlocal backend
+        if backend is None:
+            backend = backend_provider() if backend_provider else _watch_backend(workspace)
+        return backend
+
+    def apply_pending() -> None:
+        nonlocal pending, next_reconcile
+        with IndexLock(workspace.index_dir, timeout=0.0):
+            result = apply_changes(workspace, backend=get_backend())
+        stats["updates"] += 1
+        stats["files_indexed"] += result.files_indexed
+        if on_update:
+            on_update(result)
+        pending.clear()
+        next_reconcile = time.monotonic() + reconcile_interval
 
     try:
-        roots = [str(workspace.root)]
-        for raw in watch(
-            *roots,
-            stop_event=threading.Event(),
-            watch_filter=_should_watch,
-            debounce=int(debounce * 1000),
-            step=int(debounce * 1000),
-            rust_timeout=1000,
-            yield_on_timeout=True,
-        ):
-            changes = _changed_paths(raw)
-            pending |= changes
-            now = time.monotonic()
-            if changes:
-                last_event = now
-
-            # Apply after the writer goes quiet.
-            if pending and now - last_event < debounce:
-                continue
-            reconcile_due = now >= next_reconcile
-            if not pending and not reconcile_due:
-                continue
-
-            if max_iterations is not None and stats["updates"] >= max_iterations:
-                break
-
-            try:
-                with IndexLock(workspace.index_dir, timeout=0.0):
-                    result = apply_changes(workspace, backend=backend)
-                stats["updates"] += 1
-                stats["files_indexed"] += result.files_indexed
-                if on_update:
-                    on_update(result)
-            except PolderGraphError as exc:
-                stats["errors"] += 1
-                print(f"watch: {exc.message}")
-            else:
-                pending.clear()
-            next_reconcile = time.monotonic() + reconcile_interval
-
-            if max_iterations is not None and stats["updates"] >= max_iterations:
-                break
+        if on_started:
+            on_started()
+        if watch is None:
+            _poll_changes(
+                workspace,
+                stop,
+                debounce=debounce,
+                reconcile_interval=reconcile_interval,
+                pending=pending,
+                apply=apply_pending,
+                on_error=lambda exc: _record_watch_error(stats, exc),
+                max_iterations=max_iterations,
+                stats=stats,
+            )
+        else:
+            roots = [str(workspace.root)]
+            for raw in watch(
+                *roots,
+                stop_event=stop,
+                watch_filter=_should_watch,
+                debounce=int(debounce * 1000),
+                step=int(debounce * 1000),
+                rust_timeout=1000,
+                yield_on_timeout=True,
+            ):
+                changes = _changed_paths(raw)
+                pending |= changes
+                now = time.monotonic()
+                if changes:
+                    last_event = now
+                if pending and now - last_event < debounce:
+                    continue
+                if not pending and now < next_reconcile:
+                    continue
+                if max_iterations is not None and stats["updates"] >= max_iterations:
+                    break
+                try:
+                    apply_pending()
+                except Exception as exc:
+                    _record_watch_error(stats, exc)
+                if max_iterations is not None and stats["updates"] >= max_iterations:
+                    break
     except KeyboardInterrupt:
         pass
     finally:
@@ -113,8 +134,64 @@ def run_watch(
     return stats
 
 
-def _should_watch(path: str) -> bool:
+def _record_watch_error(stats: dict[str, int], exc: Exception) -> None:
+    stats["errors"] += 1
+    message = exc.message if isinstance(exc, PolderGraphError) else str(exc)
+    print(f"watch: {message}")
+
+
+def _poll_changes(
+    workspace: Any,
+    stop: threading.Event,
+    *,
+    debounce: float,
+    reconcile_interval: float,
+    pending: set[str],
+    apply: Callable[[], None],
+    on_error: Callable[[Exception], None],
+    max_iterations: int | None,
+    stats: dict[str, int],
+) -> None:
+    """Polling fallback when the native watchfiles backend is unavailable."""
+    from .pipeline import Indexer
+
+    def fingerprint() -> dict[str, tuple[int, int]]:
+        return {
+            item.path: (item.size, item.mtime_ns)
+            for item in Indexer(workspace, backend=None).discover().files
+        }
+
+    previous = fingerprint()
+    next_reconcile = time.monotonic() + reconcile_interval
+    last_change = 0.0
+    while not stop.wait(POLL_SECONDS):
+        now = time.monotonic()
+        current = fingerprint()
+        if current != previous:
+            pending.add("poll-detected-change")
+            previous = current
+            last_change = now
+        if pending and now - last_change < debounce:
+            continue
+        if not pending and now < next_reconcile:
+            continue
+        if max_iterations is not None and stats["updates"] >= max_iterations:
+            break
+        try:
+            apply()
+            pending.clear()
+        except Exception as exc:
+            on_error(exc)
+        next_reconcile = time.monotonic() + reconcile_interval
+        if max_iterations is not None and stats["updates"] >= max_iterations:
+            break
+
+
+def _should_watch(change_or_path: Any, path: str | None = None) -> bool:
     """Ignore index-internal and VCS paths."""
+    # watchfiles filters receive (change, path); accept one-argument calls as
+    # well so callers can validate a path without synthesizing an event.
+    path = path if path is not None else str(change_or_path)
     parts = Path(path).parts
     return not (".git" in parts or ".poldergraph" in parts or "node_modules" in parts)
 
