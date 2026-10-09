@@ -153,7 +153,9 @@ def ensure_daemon(root: Path, *, autostart: bool = True) -> bool:
         return False
 
     path = socket_path(index_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with suppress(OSError):
+        path.parent.chmod(0o700)
     if path.exists():
         # A stale socket from a crashed daemon would block bind().
         with suppress(OSError):
