@@ -11,9 +11,14 @@ from typing import Any
 class IndexSupervisor:
     """Start and stop one debounced watcher without blocking its host process."""
 
-    def __init__(self, root: Path, *, backend_provider: Any = None) -> None:
+    def __init__(
+        self, root: Path, *, backend_provider: Any = None, reconcile_interval: float = 30.0
+    ) -> None:
+        if reconcile_interval <= 0:
+            raise ValueError("reconcile_interval must be greater than zero")
         self.root = root.resolve()
         self.backend_provider = backend_provider
+        self.reconcile_interval = reconcile_interval
         self._stop = threading.Event()
         self._started = threading.Event()
         self._lock = threading.Lock()
@@ -67,6 +72,7 @@ class IndexSupervisor:
                 self.root,
                 stop_event=self._stop,
                 backend_provider=self.backend_provider,
+                reconcile_interval=self.reconcile_interval,
                 on_started=self._on_started,
             )
         except IndexLockedError:

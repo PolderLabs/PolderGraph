@@ -19,7 +19,9 @@ def test_supervisor_starts_and_stops_background_watcher(tmp_path: Path, monkeypa
         return {"updates": 0, "files_indexed": 0, "errors": 0}
 
     monkeypatch.setattr(watcher, "run_watch", fake_watch)
-    supervisor = IndexSupervisor(tmp_path)
+    # Exercise bounded reconciliation as a fallback for missed native events;
+    # keep the interval short so the cross-platform smoke test is practical.
+    supervisor = IndexSupervisor(tmp_path, reconcile_interval=1.0)
 
     assert supervisor.start(wait_seconds=1)["state"] == "running"
     assert supervisor.stop(timeout=1)["state"] == "stopped"
