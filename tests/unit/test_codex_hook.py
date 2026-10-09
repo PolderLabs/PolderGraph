@@ -95,6 +95,51 @@ def test_codex_user_event_captures_explicit_preference_only(tmp_path, monkeypatc
     assert len(memory.MemoryStore(tmp_path).list(scope="user")) == 1
 
 
+def test_codex_hook_retrieves_corrected_user_preference_across_sessions(tmp_path, monkeypatch):
+    from poldergraph.memory import MemoryStore
+
+    root = tmp_path / "fresh-project"
+    root.mkdir()
+    (root / "app.py").write_text("def explain():\n    return 'evidence'\n", encoding="utf-8")
+    monkeypatch.setenv("POLDERGRAPH_MEMORY_DB", str(tmp_path / "shared-memory.sqlite3"))
+    monkeypatch.setenv("POLDERGRAPH_AUTO_INDEX", "1")
+    monkeypatch.setenv("POLDERGRAPH_NO_DAEMON", "1")
+
+    def submit(prompt: str, session_id: str, turn_id: str) -> dict:
+        event = {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": prompt,
+            "cwd": str(root),
+            "session_id": session_id,
+            "turn_id": turn_id,
+        }
+        output = io.StringIO()
+        assert codex_hook.run_hook(io.StringIO(json.dumps(event)), output) == 0
+        return json.loads(output.getvalue())
+
+    submit("I prefer concise explanations.", "session-one", "turn-one")
+    initial = MemoryStore(root).list(scope="user")
+    assert len(initial) == 1
+    assert initial[0]["content"] == "I prefer concise explanations."
+
+    submit("I prefer detailed explanations.", "session-two", "turn-one")
+    corrected = MemoryStore(root).list(scope="user")
+    assert len(corrected) == 1
+    assert corrected[0]["content"] == "I prefer detailed explanations."
+    history = MemoryStore(root).history(corrected[0]["id"])
+    assert [item["content"] for item in history] == [
+        "I prefer concise explanations.",
+        "I prefer detailed explanations.",
+    ]
+
+    recalled = submit(
+        "Do I prefer concise or detailed explanations?", "session-three", "turn-one"
+    )
+    context = recalled["hookSpecificOutput"]["additionalContext"]
+    assert "I prefer detailed explanations." in context
+    assert "I prefer concise explanations." not in context
+
+
 def test_codex_non_user_event_cannot_capture_memory(tmp_path, monkeypatch):
     from poldergraph import memory
 
