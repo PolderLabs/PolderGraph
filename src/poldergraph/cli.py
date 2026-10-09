@@ -1117,6 +1117,9 @@ def context(
     consistency: str = typer.Option(
         "bounded", "--consistency", help="strict, bounded (default), or best_effort."
     ),
+    new_evidence_since: str | None = typer.Option(
+        None, "--new-evidence-since", help="Return only evidence absent from a prior context cursor."
+    ),
     offline: bool = typer.Option(False, "--offline", help="Do not download models or call hosted providers."),
     root: Path | None = typer.Option(None, "--root", help="Repository root."),
     json_output: bool = typer.Option(True, "--json/--no-json", help="Machine-readable output."),
@@ -1131,7 +1134,8 @@ def context(
         if plan.skipped:
             workspace, _repo, service = build_service(root, need_backend=False)
             result = service.context(
-                query, token_budget=budget, consistency=consistency
+                query, token_budget=budget, consistency=consistency,
+                new_evidence_since=new_evidence_since,
             ).to_dict()
             payload = envelope(command=command, index=freshness_payload(service), data=result)
             if json_output:
@@ -1140,7 +1144,12 @@ def context(
                 typer.echo("No repository context needed for this message.")
             return
         remote = None if offline else try_daemon(
-            "context", {"query": query, "token_budget": budget, "consistency": consistency}, root
+            "context", {
+                "query": query,
+                "token_budget": budget,
+                "consistency": consistency,
+                "new_evidence_since": new_evidence_since,
+            }, root
         )
         if isinstance(remote, _DaemonRejection):
             emit_json(envelope(command=command, error=UsageError(
@@ -1169,7 +1178,10 @@ def context(
         )
         if offline:
             workspace.config.decisions.provider = "disabled"
-        result = service.context(query, token_budget=budget, consistency=consistency)
+        result = service.context(
+            query, token_budget=budget, consistency=consistency,
+            new_evidence_since=new_evidence_since,
+        )
         data = result.to_dict()
         from .memory import MemoryStore, add_memories_to_context
 
@@ -1183,6 +1195,9 @@ def context(
             data, memory_store, query, budget, backend=memory_backend,
             decision_config=service.config.decisions,
         )
+        from .retrieval.context import apply_evidence_cursor
+
+        apply_evidence_cursor(data, new_evidence_since)
         data["memories_learned"] = 0
         payload = envelope(command=command, index=freshness_payload(service), data=data)
         if json_output:

@@ -59,6 +59,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 	const z = pi.zod;
 	const indexing = new Map<string, Promise<void>>();
 	const workspaceRoots = new Map<string, string>();
+	const evidenceCursors = new Map<string, string>();
 	let cliPath: string | undefined;
 	let cliSetup: Promise<string> | undefined;
 
@@ -170,6 +171,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 	// Start indexing without blocking session startup. The first task joins this
 	// job before receiving context, and later turns refresh stale data.
 	pi.on("session_start", (_event, ctx) => {
+		void resolveWorkspaceRoot(ctx.cwd).then((root) => evidenceCursors.delete(root));
 		void ensureIndex(ctx.cwd).catch((error) => {
 			pi.logger.warn(`PolderGraph automatic setup failed: ${error instanceof Error ? error.message : String(error)}`);
 		});
@@ -196,12 +198,19 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 		if (!event.prompt.trim()) return;
 		try {
 			await ensureIndex(ctx.cwd);
+			const root = await resolveWorkspaceRoot(ctx.cwd);
+			const cursor = evidenceCursors.get(root);
 
 			const context = await runJson(
-				["context", event.prompt, "--budget", String(CONTEXT_BUDGET), "--offline"],
+				[
+					"context", event.prompt, "--budget", String(CONTEXT_BUDGET), "--offline",
+					...(cursor ? ["--new-evidence-since", cursor] : []),
+				],
 				ctx.cwd,
 			);
 			if (!context.ok || !context.data) return;
+			const evidenceCursor = (context.data as { evidence_cursor?: unknown }).evidence_cursor;
+			if (typeof evidenceCursor === "string") evidenceCursors.set(root, evidenceCursor);
 			const contextData = context.data as { plan?: { skipped?: boolean } };
 			if (contextData.plan?.skipped) return;
 			return {
@@ -236,9 +245,16 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 		name: "poldergraph_context",
 		label: "PolderGraph Context",
 		description: "Retrieve a focused, token-budgeted context pack for a repository task from PolderGraph.",
-		parameters: z.object({ query: z.string().describe("Repository question or task"), budget: z.number().int().min(256).max(12000).default(CONTEXT_BUDGET).describe("Approximate context token budget") }),
+		parameters: z.object({
+			query: z.string().describe("Repository question or task"),
+			budget: z.number().int().min(256).max(12000).default(CONTEXT_BUDGET).describe("Approximate context token budget"),
+			newEvidenceSince: z.string().optional().describe("Opaque cursor returned by a prior context call"),
+		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
-			return toolResult(["context", params.query, "--budget", String(params.budget)], ctx.cwd, signal);
+			return toolResult([
+				"context", params.query, "--budget", String(params.budget),
+				...(params.newEvidenceSince ? ["--new-evidence-since", params.newEvidenceSince] : []),
+			], ctx.cwd, signal);
 		},
 	});
 

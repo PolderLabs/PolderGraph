@@ -7,10 +7,14 @@ lower-confidence semantic context.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ..errors import API_VERSION
+from ..errors import API_VERSION, UsageError
 from .context_plan import ContextPlan
 
 if TYPE_CHECKING:
@@ -55,6 +59,9 @@ class ContextResult:
     consistency_report: dict[str, Any] = field(default_factory=dict)
     token_estimate: int = 0
     truncated: bool = False
+    evidence_cursor: str | None = None
+    new_evidence_count: int = 0
+    evidence_cursor_truncated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,7 +82,108 @@ class ContextResult:
             "consistency_report": self.consistency_report,
             "token_estimate": self.token_estimate,
             "truncated": self.truncated,
+            "evidence_cursor": self.evidence_cursor,
+            "new_evidence_count": self.new_evidence_count,
+            "evidence_cursor_truncated": self.evidence_cursor_truncated,
         }
+
+
+_CURSOR_FIELDS = (
+    "entities",
+    "relationships",
+    "snippets",
+    "paths",
+    "relevant_tests",
+    "communities",
+    "unresolved",
+    "memories",
+)
+_CURSOR_KEY_LIMIT = 512
+_CURSOR_TOKEN_LIMIT = 16_384
+
+
+def apply_evidence_cursor(result: ContextResult | dict[str, Any], cursor: str | None) -> None:
+    """Remove already-delivered evidence and return a bounded cumulative cursor.
+
+    The cursor contains only opaque SHA-256 evidence IDs, never source text or
+    prompts. Changed snippets receive new IDs, so edits can be sent again.
+    """
+    prior = _decode_evidence_cursor(cursor)
+    prior_set = set(prior)
+    current_keys: list[str] = []
+    new_count = 0
+    for field_name in _CURSOR_FIELDS:
+        items = (
+            result.get(field_name, [])
+            if isinstance(result, dict)
+            else getattr(result, field_name, [])
+        )
+        fresh_items: list[dict[str, Any]] = []
+        for item in items:
+            key = _evidence_key(field_name, item)
+            current_keys.append(key)
+            if key not in prior_set:
+                fresh_items.append(item)
+                new_count += 1
+        if cursor is not None:
+            if isinstance(result, dict):
+                if field_name in result:
+                    result[field_name] = fresh_items
+            elif hasattr(result, field_name):
+                setattr(result, field_name, fresh_items)
+
+    combined = list(dict.fromkeys((*prior, *current_keys)))
+    truncated = len(combined) > _CURSOR_KEY_LIMIT
+    combined = combined[-_CURSOR_KEY_LIMIT:]
+    encoded = base64.urlsafe_b64encode(
+        json.dumps({"v": 1, "keys": combined}, separators=(",", ":")).encode("ascii")
+    ).decode("ascii").rstrip("=")
+    if isinstance(result, dict):
+        result["evidence_cursor"] = encoded
+        result["evidence_cursor_truncated"] = truncated
+        result["new_evidence_count"] = new_count if cursor is not None else len(current_keys)
+    else:
+        result.evidence_cursor = encoded
+        result.evidence_cursor_truncated = truncated
+        result.new_evidence_count = new_count if cursor is not None else len(current_keys)
+    if cursor is not None:
+        evidence = {
+            name: (
+                result.get(name, []) if isinstance(result, dict) else getattr(result, name, [])
+            )
+            for name in _CURSOR_FIELDS
+        }
+        token_estimate = estimate_tokens(json.dumps(evidence, ensure_ascii=False))
+        if isinstance(result, dict):
+            result["token_estimate"] = token_estimate
+        else:
+            result.token_estimate = token_estimate
+
+
+def _evidence_key(field_name: str, item: dict[str, Any]) -> str:
+    stable = {key: value for key, value in item.items() if key not in {"score", "matched_terms"}}
+    payload = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(f"{field_name}\0{payload}".encode()).hexdigest()
+
+
+def _decode_evidence_cursor(cursor: str | None) -> list[str]:
+    if cursor is None:
+        return []
+    if not isinstance(cursor, str) or len(cursor) > _CURSOR_TOKEN_LIMIT:
+        raise UsageError("The evidence cursor is invalid or too large; omit it to reset context history.")
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        payload = json.loads(raw)
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise UsageError("The evidence cursor is malformed; omit it to reset context history.") from exc
+    keys = payload.get("keys") if isinstance(payload, dict) and payload.get("v") == 1 else None
+    if (
+        not isinstance(keys, list)
+        or len(keys) > _CURSOR_KEY_LIMIT
+        or any(not isinstance(key, str) or re.fullmatch(r"[0-9a-f]{64}", key) is None for key in keys)
+    ):
+        raise UsageError("The evidence cursor has an unsupported version or content; omit it to reset context history.")
+    return list(dict.fromkeys(keys))
 
 
 def pack_context(

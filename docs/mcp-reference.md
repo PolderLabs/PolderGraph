@@ -33,8 +33,10 @@ Arguments:
 - `token_budget` (default 6000)
 - `kinds`, `languages` — optional filters
 - `consistency` (`bounded` by default; `best_effort` or `strict`)
+- `new_evidence_since` — optional cursor returned by an earlier call; omits evidence already sent in that cursor's history
 
 Returns the canonical context pack: entities, relationships, snippets, paths, communities, unresolved references, freshness metadata and token estimate. This is the preferred first tool for broad repository tasks.
+The response includes an opaque `evidence_cursor` containing hashes only. Pass it as `new_evidence_since` on a later call to receive only new or changed evidence; the cursor is bounded and can be omitted to reset it.
 
 `bounded` returns promptly with freshness and stale-file metadata. `best_effort`
 uses the same retrieval behavior without a freshness barrier. `strict` checks

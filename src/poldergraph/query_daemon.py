@@ -401,6 +401,9 @@ class Daemon:
                         backend=service.backend,
                         decision_config=service.config.decisions,
                     )
+                    from .retrieval.context import apply_evidence_cursor
+
+                    apply_evidence_cursor(data, args.get("new_evidence_since"))
                     data["memories_learned"] = 0
                 except Exception as exc:
                     data.setdefault("warnings", []).append(f"memory step skipped: {exc}")

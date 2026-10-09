@@ -100,6 +100,7 @@ Relevant user-wide and current-project memories are included in the same budget.
 
 Options:
 - `--budget N` — token budget (default 6000)
+- `--new-evidence-since CURSOR` — only return evidence absent from a prior context cursor
 - `--consistency MODE` — `bounded` (default), `best_effort`, or `strict`; strict hashes indexed source before and after retrieval and fails with stale paths
 - `--json/--no-json` — machine-readable output (default json)
 

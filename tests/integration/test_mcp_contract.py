@@ -249,6 +249,21 @@ class TestToolResponses:
         assert data["token_estimate"] <= 2000
         assert "memories" in data
 
+    def test_pg_context_cursor_returns_only_new_evidence(self, server):
+        query = "Explain AuthService token validation"
+        first = _call(server, "pg_context", {"query": query, "token_budget": 2000})
+        cursor = first["data"]["evidence_cursor"]
+        assert cursor
+        assert first["data"]["new_evidence_count"] > 0
+
+        second = _call(
+            server,
+            "pg_context",
+            {"query": query, "token_budget": 2000, "new_evidence_since": cursor},
+        )
+        assert second["data"]["new_evidence_count"] == 0
+        assert second["data"]["evidence_cursor"] == cursor
+
         learned = _call(
             server,
             "pg_context",

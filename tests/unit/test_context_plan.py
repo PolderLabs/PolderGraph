@@ -1,5 +1,8 @@
 import subprocess
 
+import pytest
+
+from poldergraph.errors import UsageError
 from poldergraph.retrieval.context_plan import plan_context
 from poldergraph.retrieval.service import QueryService
 from poldergraph.storage.repository import Repository
@@ -48,6 +51,48 @@ def test_context_budget_adapts_to_task_intent_and_respects_user_limit():
     assert debug.budget == 3200
     assert architecture.budget == 4200
     assert plan_context("Debug the token flow", 900).budget == 900
+
+
+def test_context_evidence_cursor_suppresses_duplicates_and_surfaces_updates(indexed_workspace):
+    service = QueryService(
+        Repository(indexed_workspace.con),
+        indexed_workspace.config,
+        root_id=indexed_workspace.root_id(),
+        workspace=indexed_workspace,
+    )
+    query = "Explain the AuthService authentication token flow"
+    first = service.context(query, token_budget=3000).to_dict()
+    assert first["evidence_cursor"]
+    assert first["new_evidence_count"] > 0
+
+    repeated = service.context(
+        query, token_budget=3000, new_evidence_since=first["evidence_cursor"]
+    ).to_dict()
+    assert repeated["new_evidence_count"] == 0
+    assert repeated["entities"] == []
+    assert repeated["snippets"] == []
+
+    source = indexed_workspace.root / "pkg" / "auth.py"
+    source.write_text(source.read_text().replace("Check a token is valid.", "Check a signed access token is valid."))
+    from poldergraph.agents.bootstrap import ensure_workspace_ready
+
+    ensure_workspace_ready(indexed_workspace.root)
+    updated = service.context(
+        query, token_budget=3000, new_evidence_since=first["evidence_cursor"]
+    ).to_dict()
+    assert updated["new_evidence_count"] > 0
+    assert updated["snippets"] or updated["entities"]
+
+
+def test_context_rejects_malformed_evidence_cursor(indexed_workspace):
+    service = QueryService(
+        Repository(indexed_workspace.con),
+        indexed_workspace.config,
+        root_id=indexed_workspace.root_id(),
+        workspace=indexed_workspace,
+    )
+    with pytest.raises(UsageError, match="evidence cursor"):
+        service.context("Explain AuthService", new_evidence_since="invalid")
 
 
 def test_skipped_context_does_not_run_retrieval(indexed_workspace, monkeypatch):
