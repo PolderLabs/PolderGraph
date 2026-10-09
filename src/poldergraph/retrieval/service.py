@@ -6,6 +6,7 @@ implementation of search for any surface.
 
 from __future__ import annotations
 
+import subprocess
 import threading
 from dataclasses import dataclass, field
 from functools import wraps
@@ -28,6 +29,38 @@ from .semantic import neighbors_of, semantic_candidates
 from .structural import PathResult, expand, find_path, find_tests, impact
 
 STRICT_FRESHNESS_HASH_BYTE_LIMIT = 64 * 1024 * 1024
+
+
+def _active_diff_paths(root: Path | None) -> list[str]:
+    """Return a bounded local Git worktree path sample for task planning."""
+    if root is None:
+        return []
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", str(root), "status", "--porcelain=v1", "-z",
+                "--untracked-files=all", "--", ".", ":!.poldergraph",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=0.25,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    paths: set[str] = set()
+    for entry in result.stdout.split("\0"):
+        if len(entry) < 4 or entry[2] != " ":
+            continue
+        path = entry[3:].replace("\\", "/")
+        if not path or any(part in {".git", ".poldergraph", "node_modules"} for part in path.split("/")):
+            continue
+        paths.add(path)
+        if len(paths) >= 256:
+            break
+    return sorted(paths)
 
 
 def _read_generation(method: Any) -> Any:
@@ -727,6 +760,8 @@ class QueryService:
         # as needing a source read: the indexed graph cannot safely stand in
         # for edits that have not yet been indexed.
         _pending, changed_paths, _truncated, _error = self._pending_change_details()
+        if self.root is not None:
+            changed_paths = sorted(set(changed_paths) | set(_active_diff_paths(self.root)))[:256]
         if changed_paths:
             plan = plan_context(query, budget, changed_paths=changed_paths)
         budget = plan.budget
@@ -738,6 +773,28 @@ class QueryService:
             include_structural_context="structural" in plan.lanes,
             consistency=consistency,
         )
+        if "changed_files" in plan.lanes and plan.changed_paths:
+            focused_paths = list(plan.changed_paths[:8])
+            focused_filters = SearchFilters(
+                kinds=list(filters.kinds) if filters else [],
+                languages=list(filters.languages) if filters else [],
+                roots=list(filters.roots) if filters else [],
+                path_prefixes=focused_paths,
+                provenances=list(filters.provenances) if filters else [],
+            )
+            changed_response = self.search(
+                " ".join(focused_paths),
+                limit=24,
+                filters=focused_filters,
+                include_semantic=False,
+                consistency=consistency,
+            )
+            merged: dict[str, RankedResult] = {}
+            for candidate in (*changed_response.results, *response.results):
+                merged.setdefault(candidate.entity_id, candidate)
+            response.results = list(merged.values())[:54]
+            response.truncated = response.truncated or changed_response.truncated
+            response.degraded.extend(changed_response.degraded)
         roots = self.repo.list_roots()
         freshness = self.freshness(verify_content=False)
         result = pack_context(
