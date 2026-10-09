@@ -276,7 +276,8 @@ Supported optional patterns:
 - background `poldergraph watch`
 - agent post-edit update
 
-Never install Git hooks silently. `setup-agent` must ask or require an explicit `--hooks` flag for repository mutation beyond instruction files.
+Do not install repository hooks silently. `setup-agent` requires an explicit
+`--hooks` flag before writing Codex's `.codex/hooks.json` lifecycle integration.
 
 ## Safety and trust
 

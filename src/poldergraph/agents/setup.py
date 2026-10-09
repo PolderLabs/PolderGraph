@@ -7,6 +7,7 @@ fenced PolderGraph section and leaves all user content untouched.
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import sys
 import tomllib
@@ -66,6 +67,10 @@ Do not read `.poldergraph/index.sqlite3` directly.
 
 CODEX_SKILL_BLOCK = """<!-- poldergraph:start -->
 ## Use PolderGraph for repository intelligence
+
+When the Codex `UserPromptSubmit` lifecycle hook is installed, a small local
+context pack is added automatically for relevant user tasks. Avoid repeating
+the same broad context request; use focused graph tools for follow-up questions.
 
 Before broad source exploration, use the `poldergraph` MCP tools when available, starting
 with `pg_status` and `pg_context` for the current task. Context automatically includes
@@ -211,6 +216,57 @@ def write_codex_mcp_config(root: Path) -> tuple[bool, str]:
     return True, str(path.relative_to(root))
 
 
+def write_codex_hooks_config(root: Path) -> tuple[bool, str]:
+    """Install an idempotent Codex UserPromptSubmit context hook."""
+    path = root / ".codex" / "hooks.json"
+    try:
+        config = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"{path.relative_to(root)} is invalid JSON ({exc}); hook was not changed"
+    if not isinstance(config, dict):
+        return False, f"{path.relative_to(root)} must contain a JSON object; hook was not changed"
+    hooks = config.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        return False, f"{path.relative_to(root)} has an invalid hooks object; hook was not changed"
+    groups = hooks.setdefault("UserPromptSubmit", [])
+    if not isinstance(groups, list):
+        return False, f"{path.relative_to(root)} has invalid UserPromptSubmit hooks; hook was not changed"
+    if any(
+        isinstance(group, dict)
+        and any(
+            isinstance(item, dict)
+            and isinstance(item.get("command"), str)
+            and "codex-hook" in item["command"]
+            and "poldergraph" in item["command"].lower()
+            for item in group.get("hooks", [])
+        )
+        for group in groups
+    ):
+        return False, f"{path.relative_to(root)} already installs PolderGraph context"
+
+    executable = shutil.which("poldergraph")
+    command_args = (
+        [executable, "codex-hook"]
+        if executable
+        else [sys.executable, "-c", "from poldergraph.cli import main; main()", "codex-hook"]
+    )
+    command = shlex.join(command_args) if sys.platform != "win32" else subprocess_list2cmdline(command_args)
+    handler: dict[str, Any] = {"type": "command", "command": command, "timeout": 300}
+    if sys.platform == "win32":
+        handler["commandWindows"] = command
+    groups.append({"hooks": [handler]})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return True, str(path.relative_to(root))
+
+
+def subprocess_list2cmdline(args: list[str]) -> str:
+    """Quote a command for Codex's Windows command runner."""
+    import subprocess
+
+    return subprocess.list2cmdline(args)
+
+
 def detect_agents(root: Path) -> list[AgentAdapter]:
     """Detect agent integrations already present in the workspace."""
     found: list[AgentAdapter] = []
@@ -320,12 +376,24 @@ def setup_agent_guidance(
         else:
             skipped.append(result)
 
+    hooks_installed = False
+    if hooks:
+        if any(adapter.name == "codex" for adapter in selected):
+            changed, result = write_codex_hooks_config(root)
+            hooks_installed = changed or "already installs PolderGraph" in result
+            if changed:
+                written.append(result)
+            else:
+                skipped.append(result)
+        else:
+            skipped.append("Codex lifecycle hook not installed (select the codex adapter)")
+
     return {
         "root": str(root),
         "written": written,
         "skipped": skipped,
         "mcp_config": mcp_config_snippet(root),
-        "hooks_installed": False,
+        "hooks_installed": hooks_installed,
         "hooks_requested": hooks,
     }
 

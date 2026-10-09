@@ -153,7 +153,7 @@ Options:
 - `--all` — update every supported agent integration
 - `--agent NAME` — target one agent adapter (repeatable)
 - `--print-mcp-config` — print MCP server configuration
-- `--hooks` — explicitly allow installing git hooks
+- `--hooks` — install Codex's automatic `UserPromptSubmit` context hook
 
 For Codex, `poldergraph setup --agent codex` writes a project skill and
 the repository-scoped MCP server config at `.codex/config.toml`.

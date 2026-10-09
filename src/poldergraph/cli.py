@@ -135,6 +135,7 @@ def init(
                 force=False,
                 json_output=json_output,
                 offline=offline,
+                no_embed=no_embed,
             )
         if force and index_existed:
             from .workspace import remove_index
@@ -332,6 +333,7 @@ def update(
     force: bool = typer.Option(False, "--force", help="Re-verify hashes for every file."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
     offline: bool = typer.Option(False, "--offline", help="Forbid network access."),
+    no_embed: bool = typer.Option(False, "--no-embed", help="Refresh structural and lexical data without loading an embedding model."),
 ) -> None:
     """Incrementally update the index."""
     from .progress import make_progress
@@ -352,7 +354,10 @@ def update(
 
         indexer = Indexer(workspace, backend=None)
         embedding_space_id = None
-        if workspace.config.embedding.backend != "none":
+        if no_embed:
+            p.add_stage("Embedding model")
+            p.finish_stage(status="skipped", detail="--no-embed: structural and lexical refresh only")
+        elif workspace.config.embedding.backend != "none":
             p.start_stage("Loading embedding model")
             try:
                 indexer.backend = create_backend(workspace.config, cache_dir=None, offline=offline)
@@ -1068,7 +1073,9 @@ def context(
                 for entity in remote.get("entities", []):
                     typer.echo(entity_line(_Simple(entity)))
             return
-        workspace, _repo, service = build_service(root, need_backend=True, offline=offline)
+        workspace, _repo, service = build_service(
+            root, need_backend=not offline, offline=offline
+        )
         if offline:
             workspace.config.decisions.provider = "disabled"
         result = service.context(query, token_budget=budget, consistency=consistency)
@@ -1076,8 +1083,13 @@ def context(
         from .memory import MemoryStore, add_memories_to_context
 
         memory_store = MemoryStore(service.root)
+        memory_backend = service.backend
+        if offline:
+            from .embedding.protocol import DisabledBackend
+
+            memory_backend = DisabledBackend("offline mode uses lexical memory retrieval")
         add_memories_to_context(
-            data, memory_store, query, budget, backend=service.backend,
+            data, memory_store, query, budget, backend=memory_backend,
             decision_config=service.config.decisions,
         )
         data["memories_learned"] = 0
@@ -1625,7 +1637,7 @@ def setup_agent(
     print_config: bool = typer.Option(
         False, "--print-mcp-config", help="Print MCP server configuration."
     ),
-    hooks: bool = typer.Option(False, "--hooks", help="Explicitly allow installing git hooks."),
+    hooks: bool = typer.Option(False, "--hooks", help="Install the Codex automatic context lifecycle hook."),
 ) -> None:
     """Install or update agent instructions and MCP configuration."""
     from .agents.setup import setup_agent_guidance
@@ -1649,6 +1661,14 @@ def setup_agent(
     typer.echo(f"Wrote: {', '.join(result['written']) or 'nothing'}")
     if result["skipped"]:
         typer.echo(f"Skipped: {', '.join(result['skipped'])}")
+
+
+@app.command("codex-hook", hidden=True)
+def codex_hook() -> None:
+    """Handle Codex's UserPromptSubmit lifecycle event."""
+    from .agents.codex_hook import run_hook
+
+    raise typer.Exit(run_hook())
 
 
 # ------------------------------------------------------------------ doctor

@@ -44,5 +44,20 @@ def test_context_offline_uses_in_process_service_and_disables_decisions(monkeypa
 
     result = CliRunner().invoke(app, ["context", "how does this work", "--offline", "--no-json"])
     assert result.exit_code == 0, result.output
-    assert seen == {"offline": True, "need_backend": True}
+    assert seen == {"offline": True, "need_backend": False}
     assert Workspace.config.decisions.provider == "disabled"
+
+
+def test_update_no_embed_does_not_load_embedding_model(indexed_workspace, monkeypatch):
+    import poldergraph.embedding.gemma as gemma
+
+    source = indexed_workspace.root / "pkg" / "auth.py"
+    source.write_text(source.read_text() + "\n# changed\n")
+    monkeypatch.setattr(
+        gemma,
+        "create_backend",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("embedding model loaded")),
+    )
+
+    result = CliRunner().invoke(app, ["update", str(indexed_workspace.root), "--no-embed", "--quiet", "--json"])
+    assert result.exit_code == 0, result.output
