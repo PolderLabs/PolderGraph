@@ -26,6 +26,17 @@ def test_change_task_gets_structural_evidence_plan():
     assert "tests" in plan.lanes
 
 
+def test_change_plan_carries_stable_bounded_dirty_file_focus():
+    plan = plan_context(
+        "Refactor the authentication flow",
+        3000,
+        changed_paths=["pkg/z.py", "pkg/auth.py", "pkg/z.py"],
+    )
+    assert plan.changed_paths == ("pkg/auth.py", "pkg/z.py")
+    assert "changed_files" in plan.lanes
+    assert plan.to_dict()["changed_paths_source_read_required"] is True
+
+
 def test_context_budget_adapts_to_task_intent_and_respects_user_limit():
     locate = plan_context("Where is AuthService defined?", 6000)
     debug = plan_context("Debug the failing auth token refresh behavior", 6000)
@@ -75,3 +86,20 @@ def test_change_context_includes_bounded_linked_test_evidence(indexed_workspace)
         "structural_test_edge", "lexical_test_file_match"
     } for item in context["relevant_tests"])
     assert context["token_estimate"] <= 3000
+
+
+def test_change_context_surfaces_unindexed_source_drift(indexed_workspace):
+    source = indexed_workspace.root / "pkg" / "auth.py"
+    source.write_text(source.read_text() + "\n# pending local edit\n")
+    service = QueryService(
+        Repository(indexed_workspace.con),
+        indexed_workspace.config,
+        root_id=indexed_workspace.root_id(),
+        workspace=indexed_workspace,
+    )
+
+    context = service.context("Refactor AuthService", token_budget=3000).to_dict()
+
+    assert "pkg/auth.py" in context["plan"]["changed_paths"]
+    assert context["plan"]["changed_paths_source_read_required"] is True
+    assert "changed_files" in context["plan"]["lanes"]
