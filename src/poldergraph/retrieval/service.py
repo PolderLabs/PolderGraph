@@ -18,7 +18,7 @@ from ..models.edge import Edge
 from ..models.entity import Entity
 from ..storage.repository import Repository
 from ..storage.sqlite import get_meta
-from .context import ContextResult, pack_context
+from .context import ContextResult, estimate_tokens, pack_context
 from .context_plan import plan_context
 from .lexical import Candidate, exact_matches, lexical_candidates
 from .rerank import RankedResult, dedupe_results, detect_intent, fuse
@@ -659,7 +659,51 @@ class QueryService:
         result.plan = plan
         result.consistency = consistency
         result.consistency_report = self._finish_consistency(consistency, snapshot)
+        if "tests" in plan.lanes and result.entities:
+            self._add_relevant_test_evidence(result, budget)
         return result
+
+    def _add_relevant_test_evidence(self, result: ContextResult, budget: int) -> None:
+        """Add a few linked tests inside the existing context token budget."""
+        entity_ids = [item["id"] for item in result.entities[:8] if item.get("id")]
+        if not entity_ids:
+            return
+        test_ids = find_tests(self.repo, entity_ids, limit=8)
+        if not test_ids:
+            return
+        links: dict[str, list[str]] = {test_id: [] for test_id in test_ids}
+        for row in self.repo.con.execute(
+            "SELECT source_id, target_id FROM edges WHERE type='tests'"
+        ).fetchall():
+            source, target = row[0], row[1]
+            if source in links and target in entity_ids:
+                links[source].append(target)
+            elif target in links and source in entity_ids:
+                links[target].append(source)
+        content_budget = max(0, budget - 120)
+        for test_id in test_ids:
+            entity = self.repo.get_entity(test_id)
+            if entity is None or not entity.path:
+                continue
+            connected = links[test_id]
+            evidence = "structural_test_edge" if connected else "lexical_test_file_match"
+            excerpt = self.source_excerpt(entity, max_chars=800)
+            payload = {
+                "id": entity.id,
+                "name": entity.qualified_name or entity.name,
+                "path": entity.path,
+                "start_line": entity.start_line,
+                "end_line": entity.end_line,
+                "evidence": evidence,
+                "linked_entity_ids": connected,
+                "content": excerpt,
+            }
+            cost = estimate_tokens(str(payload))
+            if result.token_estimate + cost > content_budget:
+                result.truncated = True
+                continue
+            result.relevant_tests.append(payload)
+            result.token_estimate += cost
 
     # ------------------------------------------------------------- utilities
 
