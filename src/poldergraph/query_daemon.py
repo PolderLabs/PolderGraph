@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import socket
 import subprocess
@@ -34,6 +35,10 @@ SOCKET_NAME = "query.sock"
 #: close to the real model-load time so a failed spawn falls back to in-process
 #: execution quickly instead of stalling the agent.
 START_TIMEOUT = 45.0
+# Release the resident query service after a quiet period. A later CLI request
+# starts it again through ensure_daemon(), so this bounds idle model/RSS use
+# without changing the warm path for active sessions.
+DEFAULT_IDLE_TIMEOUT_SECONDS = 15 * 60
 
 #: Seconds a request may run before the client gives up.
 REQUEST_TIMEOUT = 120.0
@@ -207,7 +212,7 @@ def stop_daemon(root: Path) -> bool:
 class Daemon:
     """Serves retrieval commands for one workspace over a unix socket."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, idle_timeout: float | None = None) -> None:
         self.root = root
         self._workspace = None
         self._service = None
@@ -219,6 +224,17 @@ class Daemon:
         self._handlers: set[threading.Thread] = set()
         self._handlers_lock = threading.Lock()
         self._shutdown = threading.Event()
+        if idle_timeout is None:
+            configured = os.environ.get("POLDERGRAPH_DAEMON_IDLE_SECONDS")
+            try:
+                idle_timeout = (
+                    float(configured) if configured is not None else DEFAULT_IDLE_TIMEOUT_SECONDS
+                )
+            except ValueError:
+                idle_timeout = DEFAULT_IDLE_TIMEOUT_SECONDS
+        if not math.isfinite(idle_timeout) or idle_timeout < 0:
+            raise ValueError("idle_timeout must be finite and non-negative")
+        self._idle_timeout = idle_timeout
 
     def _ensure_loaded(self) -> Any:
         if self._service is not None:
@@ -477,12 +493,21 @@ class Daemon:
         # daemon answering; ensure_daemon's poll below waits for a real reply.
         try:
             self._ensure_loaded()
+            last_activity = time.monotonic()
             while True:
                 try:
                     conn, _ = server.accept()
                 except TimeoutError:
                     if self._shutdown.is_set():
                         break
+                    if (
+                        self._idle_timeout > 0
+                        and time.monotonic() - last_activity >= self._idle_timeout
+                    ):
+                        with self._handlers_lock:
+                            active_handlers = bool(self._handlers)
+                        if not active_handlers:
+                            break
                     continue
                 except OSError:
                     break
@@ -495,6 +520,7 @@ class Daemon:
                 with self._handlers_lock:
                     self._handlers.add(handler)
                 handler.start()
+                last_activity = time.monotonic()
         finally:
             server.close()
             with self._handlers_lock:

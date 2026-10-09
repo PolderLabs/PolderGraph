@@ -235,6 +235,41 @@ def test_socket_server_serves_three_clients_concurrently(tmp_path):
     assert not server.is_alive()
 
 
+def test_daemon_shuts_down_after_configured_idle_period(tmp_path):
+    import threading
+
+    from poldergraph.config.models import Config
+    from poldergraph.indexing.pipeline import Indexer
+    from poldergraph.workspace import create_index, open_workspace
+
+    (tmp_path / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    create_index(tmp_path, Config(embedding={"backend": "none"}))
+    workspace = open_workspace(tmp_path)
+    indexer = Indexer(workspace, backend=None)
+    indexer.ensure_root()
+    indexer.run(indexer.discover())
+    workspace.close()
+
+    daemon = Daemon(tmp_path, idle_timeout=0.25)
+    server = threading.Thread(target=daemon.serve, daemon=True)
+    server.start()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and server.is_alive():
+        if not socket_path(tmp_path / ".poldergraph").exists():
+            time.sleep(0.02)
+            continue
+        # Probe readiness. This activity restarts the quiet-period timer.
+        status = send_request(tmp_path / ".poldergraph", "status", {})
+        if status and status.get("ok", True):
+            break
+        time.sleep(0.02)
+
+    server.join(timeout=5)
+    assert not server.is_alive()
+    assert daemon._supervisor is not None
+    assert daemon._supervisor.status()["state"] == "stopped"
+
+
 def test_daemon_pins_query_generation_and_marks_post_commit_change(tmp_path, monkeypatch):
     from poldergraph.config.models import Config
     from poldergraph.indexing.pipeline import Indexer
