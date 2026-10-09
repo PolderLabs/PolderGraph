@@ -156,22 +156,35 @@ class IndexLock:
     automatically instead of leaving a stale lock behind.
     """
 
-    def __init__(self, index_dir: Path, *, timeout: float = 0.0) -> None:
-        self.path = index_dir / "lock"
+    def __init__(
+        self, index_dir: Path, *, timeout: float = 0.0, lock_name: str = "lock"
+    ) -> None:
+        self.path = index_dir / lock_name
         self.timeout = timeout
         self._fd: int | None = None
+        self._windows_lock = False
 
     def acquire(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fd = os.open(str(self.path), os.O_CREAT | os.O_RDWR, 0o644)
+        if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+            import msvcrt
+
+            if os.fstat(self._fd).st_size == 0:
+                os.write(self._fd, b"\0")
         deadline = time.monotonic() + self.timeout
         while True:
             try:
-                import fcntl
+                if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+                    import msvcrt
 
-                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return
-            except ImportError:  # pragma: no cover - Windows
+                    os.lseek(self._fd, 0, os.SEEK_SET)
+                    msvcrt.locking(self._fd, msvcrt.LK_NBLCK, 1)
+                    self._windows_lock = True
+                else:
+                    import fcntl
+
+                    fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return
             except OSError:
                 if time.monotonic() >= deadline:
@@ -187,11 +200,15 @@ class IndexLock:
         if self._fd is None:
             return
         try:
-            import fcntl
+            if self._windows_lock:  # pragma: no cover - exercised on Windows CI
+                import msvcrt
 
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
-        except ImportError:  # pragma: no cover - Windows
-            pass
+                os.lseek(self._fd, 0, os.SEEK_SET)
+                msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
         finally:
             os.close(self._fd)
             self._fd = None

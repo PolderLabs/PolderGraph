@@ -198,8 +198,15 @@ Semantic edges primarily support visualization/community discovery; live semanti
 - debounces/coalesces file events,
 - handles atomic-save rename patterns,
 - batches re-index work,
+- retries a failed dirty batch and performs periodic reconciliation for missed events,
+- holds a per-workspace supervisor lock while running and the writer lock only per batch,
+- reuses its optional embedding backend across batches,
 - publishes graph/index change events to the dashboard,
 - remains responsive under rapid editor writes.
+
+The index writer lock uses OS-level advisory locking on Linux/macOS and Windows. Automatic
+startup from MCP and the query daemon, plus a polling fallback when native watching is
+unavailable, are still being integrated.
 
 ## Git awareness
 
