@@ -7,6 +7,7 @@ execution, correct invalidation after an index update, and safe fallback.
 
 from __future__ import annotations
 
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -289,11 +290,15 @@ class TestSocketPaths:
     def test_socket_lives_inside_index_dir(self, indexed_workspace):
         index_dir = indexed_workspace.index_dir
         path = socket_path(index_dir)
-        # A nested ".poldergraph/.poldergraph" path would never resolve.
-        assert path.parent == index_dir
+        canonical_path = index_dir / "query.sock"
+        if len(os.fsencode(canonical_path)) < 100:
+            # A nested ".poldergraph/.poldergraph" path would never resolve.
+            assert path == canonical_path
+        else:
+            assert path.parent != index_dir
+            assert len(os.fsencode(path)) < 100
 
     def test_long_macos_socket_path_uses_short_per_workspace_runtime_path(self):
-        import os
         from pathlib import Path
 
         from poldergraph import query_daemon
