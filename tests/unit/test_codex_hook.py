@@ -31,6 +31,34 @@ def test_codex_hook_emits_user_prompt_submit_context_json(tmp_path, monkeypatch)
     }
 
 
+def test_codex_hook_bootstraps_fresh_repo_and_injects_real_context(tmp_path, monkeypatch):
+    root = tmp_path / "fresh-repository"
+    root.mkdir()
+    (root / "auth.py").write_text(
+        "class AuthService:\n    def validate(self, token):\n        return token\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("POLDERGRAPH_MEMORY_DB", str(tmp_path / "memory" / "memory.sqlite3"))
+    monkeypatch.setenv("POLDERGRAPH_AUTO_INDEX", "1")
+    monkeypatch.setenv("POLDERGRAPH_NO_DAEMON", "1")
+    event = {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "Find the AuthService validation entry point",
+        "cwd": str(root),
+        "session_id": "fresh-repo-session",
+        "turn_id": "turn-1",
+    }
+    output = io.StringIO()
+
+    assert codex_hook.run_hook(io.StringIO(json.dumps(event)), output) == 0
+    payload = json.loads(output.getvalue())
+    context = payload["hookSpecificOutput"]["additionalContext"]
+
+    assert "AuthService" in context
+    assert "auth.py" in context
+    assert (root / ".poldergraph" / "index.sqlite3").is_file()
+
+
 def test_codex_user_event_captures_explicit_preference_only(tmp_path, monkeypatch):
     from poldergraph import memory
 
@@ -92,6 +120,59 @@ def test_codex_hook_uses_offline_context_and_skips_social_plan(tmp_path, monkeyp
     assert codex_hook._context_for(event) is None
     assert calls[0][0] == "agent-ready"
     assert calls[1][0] == "context"
+
+
+def test_codex_hook_reuses_per_session_context_cursor(tmp_path, monkeypatch):
+    cursor_path = tmp_path / "session-context.json"
+    calls = []
+    context_calls = 0
+
+    def fake_run(root, args, timeout):
+        nonlocal context_calls
+        calls.append(args)
+        if args[0] == "agent-ready":
+            return {"ok": True}
+        context_calls += 1
+        if context_calls == 1:
+            return {
+                "ok": True,
+                "data": {
+                    "plan": {"skipped": False},
+                    "index": {"fresh": True},
+                    "entities": [{"id": "entity-a"}],
+                    "evidence_cursor": "opaque-cursor-1",
+                    "new_evidence_count": 1,
+                },
+            }
+        return {
+            "ok": True,
+            "data": {
+                "plan": {"skipped": False},
+                "index": {"fresh": True},
+                "entities": [],
+                "evidence_cursor": "opaque-cursor-1",
+                "new_evidence_count": 0,
+            },
+        }
+
+    monkeypatch.setattr(codex_hook, "_run", fake_run)
+    monkeypatch.setattr(codex_hook, "_context_cursor_path", lambda _event, _root: cursor_path)
+    event = {
+        "prompt": "explain the authentication entry point",
+        "cwd": str(tmp_path),
+        "session_id": "codex-session-1",
+    }
+
+    assert codex_hook._context_for(event) is not None
+    assert json.loads(cursor_path.read_text())["cursor"] == "opaque-cursor-1"
+    assert event["prompt"] not in cursor_path.read_text()
+
+    assert codex_hook._context_for(event) is None
+    context_calls_made = [call for call in calls if call[0] == "context"]
+    assert "--new-evidence-since" not in context_calls_made[0]
+    assert context_calls_made[1][
+        context_calls_made[1].index("--new-evidence-since") + 1
+    ] == "opaque-cursor-1"
 
 
 def test_codex_hook_refreshes_stale_index_without_model(tmp_path, monkeypatch):

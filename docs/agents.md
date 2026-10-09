@@ -90,7 +90,8 @@ Arguments:
 Returns the same canonical context schema as CLI `context --json`.
 The response includes an opaque `evidence_cursor`; pass it on the next task turn
 to suppress already delivered chunks while allowing changed source evidence
-through. The OMP adapter carries this cursor within a session automatically.
+through. OMP carries this cursor in session memory; the Codex hook stores a
+private, expiring, hash-only cursor per session.
 
 This is the preferred first tool for broad repository tasks.
 
