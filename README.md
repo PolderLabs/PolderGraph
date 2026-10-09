@@ -127,7 +127,11 @@ Memory commands are served by the same resident process, so
 
 The daemon re-reads the index on every request, so `poldergraph update` is
 visible immediately; cached community data invalidates when the graph changes.
-Set `POLDERGRAPH_NO_DAEMON=1` to bypass it.
+After 15 minutes without a client connection, it shuts down and releases its
+workspace watcher; the next request starts it again. Set
+`POLDERGRAPH_DAEMON_IDLE_SECONDS` to change the idle period (use `0` to keep it
+resident until explicitly stopped), or set `POLDERGRAPH_NO_DAEMON=1` to bypass
+the daemon.
 
 ## Architecture
 
