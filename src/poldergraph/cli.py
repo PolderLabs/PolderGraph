@@ -1709,6 +1709,26 @@ def codex_hook() -> None:
 # ------------------------------------------------------------------ doctor
 
 
+@app.command("integrations")
+def integrations(
+    path: Optional[Path] = typer.Argument(None, help="Repository root."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Report detected agent integrations and their supported PolderGraph events."""
+    from .agents.capabilities import integration_capabilities
+
+    report = integration_capabilities(path)
+    if json_output:
+        emit_json(envelope(command="integrations", data=report))
+        return
+    for item in report["integrations"]:
+        state = "installed" if item["installed"] else "not detected"
+        events = ", ".join(item["native_events"]) or "none"
+        typer.echo(f"{item['agent']}: {item['mode']} ({state}); events: {events}")
+        if item["remediation"]:
+            typer.echo(f"  {item['remediation']}")
+
+
 @app.command()
 def doctor(
     path: Optional[Path] = typer.Argument(None, help="Repository root."),
@@ -1716,6 +1736,19 @@ def doctor(
     fix: bool = typer.Option(False, "--fix", help="Attempt to repair recoverable problems."),
 ) -> None:
     """Verify index integrity, schema, backend and vector health."""
+    if path == Path("integrations") and not path.exists():
+        from .agents.capabilities import integration_capabilities
+
+        report = integration_capabilities()
+        if json_output:
+            emit_json(envelope(command="doctor integrations", data=report))
+        else:
+            for item in report["integrations"]:
+                events = ", ".join(item["native_events"]) or "none"
+                typer.echo(f"{item['agent']}: {item['mode']}; native events: {events}")
+                if item["remediation"]:
+                    typer.echo(f"  {item['remediation']}")
+        return
     command = "doctor"
     workspace = None
     try:
