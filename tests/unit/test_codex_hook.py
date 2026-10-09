@@ -65,6 +65,25 @@ def test_codex_hook_refreshes_stale_index_without_model(tmp_path, monkeypatch):
     assert [call[0] for call in calls] == ["status", "update", "context"]
 
 
+def test_codex_hook_uses_enclosing_git_root_from_nested_folder(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    nested = project / "packages" / "api"
+    nested.mkdir(parents=True)
+    (project / ".git").write_text("gitdir: /tmp/worktree-metadata\n")
+    roots = []
+
+    def fake_run(root, args, timeout):
+        roots.append(root)
+        if args[0] == "status":
+            return {"ok": True, "index": {"fresh": True}}
+        return {"ok": True, "data": {"plan": {"skipped": True}}}
+
+    monkeypatch.setattr(codex_hook, "_run", fake_run)
+    codex_hook._context_for({"prompt": "thanks", "cwd": str(nested)})
+
+    assert roots == [project, project]
+
+
 def test_codex_hook_setup_preserves_existing_handlers_and_is_idempotent(tmp_path):
     path = tmp_path / ".codex" / "hooks.json"
     path.parent.mkdir()
