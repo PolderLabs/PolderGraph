@@ -177,6 +177,46 @@ class TestDashboardApi:
         assert stale["pending_changes"] > 0
         assert stale["source_read_required"] is True
 
+    def test_freshness_skips_full_scan_until_directory_entries_change(
+        self, indexed_workspace, monkeypatch
+    ):
+        from poldergraph.discovery.scanner import Discovery
+        from poldergraph.retrieval.service import QueryService
+        from poldergraph.storage.repository import Repository
+
+        service = QueryService(
+            Repository(indexed_workspace.con),
+            indexed_workspace.config,
+            root_id=indexed_workspace.root_id(),
+            workspace=indexed_workspace,
+        )
+        assert service.freshness()["fresh"] is True  # populate directory snapshot
+        original_scan = Discovery.scan
+        scans = 0
+
+        def counted_scan(discovery):
+            nonlocal scans
+            scans += 1
+            return original_scan(discovery)
+
+        monkeypatch.setattr(Discovery, "scan", counted_scan)
+        assert service.freshness()["fresh"] is True
+        assert scans == 0
+
+        edited_file = indexed_workspace.root / "pkg" / "auth.py"
+        edited_file.write_text(edited_file.read_text() + "\n# source edit\n")
+        stale_edit = service.freshness()
+        assert stale_edit["fresh"] is False
+        assert "pkg/auth.py" in stale_edit["stale_files"]
+        assert scans == 0
+
+        new_file = indexed_workspace.root / "pkg" / "new_module.py"
+        new_file.write_text("def new_entrypoint():\n    return True\n")
+        stale = service.freshness()
+        assert stale["fresh"] is False
+        assert "pkg/new_module.py" in stale["stale_files"]
+        assert scans == 1
+
     def test_freshness_detects_same_size_edit_with_older_mtime(self, indexed_workspace):
         from poldergraph.retrieval.service import QueryService
         from poldergraph.storage.repository import Repository

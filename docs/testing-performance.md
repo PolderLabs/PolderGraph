@@ -66,6 +66,21 @@ Spawn MCP server and verify every tool schema/response. Test a synthetic agent w
 
 Maintain a checked-in benchmark manifest with repositories/fixtures and natural-language questions.
 
+### Freshness-barrier latency
+
+Run `PYTHONPATH=src python scripts/benchmark_freshness.py --samples 30` against a
+fresh index to compare normal warm query checks with a forced full-discovery scan on
+every query. This isolates the directory-snapshot fast path while keeping the query,
+index, file metadata checks, and machine the same. New/renamed entries still trigger
+the full ignore-aware discovery pass; file edits are detected through indexed file
+metadata.
+
+Reference run (2026-10-09, Linux x86_64, Python 3.12.14, 183 indexed files, shared
+workspace): directory snapshot p50 **13.52 ms**, p95 **42.37 ms**; forced full discovery
+p50 **43.76 ms**, p95 **262.31 ms**. This small-repository result is directional, not a
+large-monorepo guarantee. The run does not include embeddings, and shared-host jitter
+is visible in the tail; rerun on target hardware before setting latency budgets.
+
 Question classes:
 - exact implementation location
 - synonym/concept query

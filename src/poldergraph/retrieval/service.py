@@ -134,6 +134,8 @@ class QueryService:
         self.root = workspace.root if workspace is not None else None
         self._communities: dict[str, str] | None = None
         self._communities_token: tuple[Any, ...] | None = None
+        self._freshness_directories: dict[str, int] | None = None
+        self._freshness_directory_generation: str | None = None
 
     def workspace_index(self) -> Any:
         """Index directory, used for size reporting."""
@@ -896,13 +898,36 @@ class QueryService:
                     digest = ""
                 if not digest or digest != record["content_hash"]:
                     mark_stale(record["path"])
+        generation = self._index_generation()
+        cached_directories = self._freshness_directories
+        if (
+            cached_directories is not None
+            and self._freshness_directory_generation == generation
+        ):
+            directories_unchanged = True
+            for relative, expected_mtime in cached_directories.items():
+                directory = root / relative if relative else root
+                try:
+                    if directory.stat().st_mtime_ns != expected_mtime:
+                        directories_unchanged = False
+                        break
+                except OSError:
+                    directories_unchanged = False
+                    break
+            if directories_unchanged:
+                # File edits/deletions were checked above. Unchanged directory
+                # mtimes prove there are no new or renamed entries, avoiding a
+                # full ignore-aware tree walk on the common query path.
+                return pending, stale_paths, pending > len(stale_paths), None
         try:
-            files = self._discovery(root).scan().files
+            discovered = self._discovery(root).scan()
         except OSError as exc:
             return pending, stale_paths, pending > len(stale_paths), (
                 f"Could not reconcile workspace files ({type(exc).__name__})."
             )
-        for item in files:
+        self._freshness_directories = dict(discovered.directories)
+        self._freshness_directory_generation = generation
+        for item in discovered.files:
             if item.path not in seen:
                 mark_stale(item.path)
         return pending, stale_paths, pending > len(stale_paths), None

@@ -63,7 +63,6 @@ DEFAULT_EXCLUDED_DIRS: frozenset[str] = frozenset(
         "obj",
         "bin",
         ".dart_tool",
-        "obj",
     }
 )
 
@@ -129,6 +128,7 @@ class DiscoveredFile:
 @dataclass
 class DiscoveryResult:
     files: list[DiscoveredFile]
+    directories: list[tuple[str, int]] = field(default_factory=list)
     skipped_dirs: int = 0
     ignored_count: int = 0
     total_seen: int = 0
@@ -303,9 +303,7 @@ class Discovery:
                     return True
         if self.ignore_spec and self.ignore_spec.match_file(candidate):
             return True
-        if self.pgignore and self.pgignore.match_file(candidate):
-            return True
-        return False
+        return bool(self.pgignore and self.pgignore.match_file(candidate))
 
     def scan(self) -> DiscoveryResult:
         result = DiscoveryResult(files=[])
@@ -337,6 +335,11 @@ class Discovery:
         inherited: list[tuple[str, PathSpec]],
     ) -> None:
         if len(result.files) > 200_000:  # runaway guard for pathological trees
+            return
+        try:
+            directory_mtime_ns = directory.stat().st_mtime_ns
+            result.directories.append((prefix.rstrip("/"), directory_mtime_ns))
+        except OSError:
             return
         try:
             entries = sorted(os.scandir(directory), key=lambda e: e.name)
