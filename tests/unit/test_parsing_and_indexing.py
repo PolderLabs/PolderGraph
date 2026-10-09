@@ -319,7 +319,7 @@ class TestIncrementalUpdate:
         assert len(plan.to_index) == len(discovered)
         assert not plan.unchanged
 
-    def test_switching_embedding_spaces_rebuilds_and_preserves_vectors(self, sample_repo):
+    def test_switching_embedding_spaces_rebuilds_and_preserves_vectors(self, sample_repo, monkeypatch):
         from poldergraph.config.models import Config
         from poldergraph.embedding.protocol import ModelInfo
         from poldergraph.indexing.incremental import embedding_space_fingerprint, plan_update
@@ -327,6 +327,12 @@ class TestIncrementalUpdate:
         from poldergraph.storage.repository import Repository
         from poldergraph.storage.vectors import create_vector_store, get_entity_vector
         from poldergraph.workspace import create_index, open_workspace
+
+        # The cross-platform lifecycle job installs core dependencies only,
+        # so exercise the supported no-sqlite-vec storage fallback here.
+        monkeypatch.setattr(
+            "poldergraph.storage.vectors.load_vec_extension", lambda _connection: False
+        )
 
         class FakeBackend:
             def __init__(self, model_id, vector):

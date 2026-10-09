@@ -220,7 +220,8 @@ class BruteForceStore:
             return
         self.ensure_table()
         self.con.executemany(
-            f"DELETE FROM {self.table} WHERE entity_id=?", [(e,) for e in entity_ids]
+            f"DELETE FROM {self.table} WHERE entity_id=? AND model_id=?",
+            [(entity_id, self.model_id) for entity_id in entity_ids],
         )
 
     def search(
@@ -230,14 +231,13 @@ class BruteForceStore:
         query = array.array("f", vector)
         qnorm = math.sqrt(sum(v * v for v in query)) or 1.0
         clause = ""
-        params: list[Any] = []
-        conditions = []
+        params: list[Any] = [self.model_id]
+        conditions = ["model_id = ?"]
+        if filters and filters.get("model_id") not in {None, self.model_id}:
+            return []
         if filters and filters.get("modality"):
             conditions.append("modality = ?")
             params.append(filters["modality"])
-        if filters and filters.get("model_id"):
-            conditions.append("model_id = ?")
-            params.append(filters["model_id"])
         if conditions:
             clause = " WHERE " + " AND ".join(conditions)
         rows = self.con.execute(
@@ -258,7 +258,11 @@ class BruteForceStore:
 
     def count(self) -> int:
         self.ensure_table()
-        return int(self.con.execute(f"SELECT COUNT(*) FROM {self.table}").fetchone()[0])
+        return int(
+            self.con.execute(
+                f"SELECT COUNT(*) FROM {self.table} WHERE model_id=?", (self.model_id,)
+            ).fetchone()[0]
+        )
 
 
 class SQLiteVecStore:
@@ -413,7 +417,8 @@ def get_entity_vector(store: Any, entity_id: str) -> list[float] | None:
     if isinstance(store, BruteForceStore):
         store.ensure_table()
         row = store.con.execute(
-            f"SELECT vector FROM {store.table} WHERE entity_id=? LIMIT 1", (entity_id,)
+            f"SELECT vector FROM {store.table} WHERE entity_id=? AND model_id=? LIMIT 1",
+            (entity_id, store.model_id),
         ).fetchone()
         if row is None:
             return None
