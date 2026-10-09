@@ -3,9 +3,35 @@ from concurrent.futures import ThreadPoolExecutor
 
 from typer.testing import CliRunner
 
-from poldergraph.agents.bootstrap import ensure_workspace_ready
+from poldergraph.agents.bootstrap import ensure_workspace_ready, workspace_root
 from poldergraph.cli import app
 from poldergraph.workspace import find_index_dir, open_workspace
+
+
+def test_workspace_root_prefers_nested_worktree_to_outer_index(tmp_path):
+    outer = tmp_path / "outer"
+    nested = outer / "packages" / "independent"
+    nested.mkdir(parents=True)
+    (outer / ".git").mkdir()
+    index_dir = outer / ".poldergraph"
+    index_dir.mkdir()
+    (index_dir / "index.sqlite3").touch()
+    # Git worktrees represent .git as a file, not a directory.
+    (nested / ".git").write_text("gitdir: ../../.git/worktrees/independent\n")
+
+    assert workspace_root(nested) == nested
+
+
+def test_workspace_root_reuses_outer_index_for_ordinary_nested_directory(tmp_path):
+    project = tmp_path / "project"
+    nested = project / "packages" / "api"
+    nested.mkdir(parents=True)
+    (project / ".git").mkdir()
+    index_dir = project / ".poldergraph"
+    index_dir.mkdir()
+    (index_dir / "index.sqlite3").touch()
+
+    assert workspace_root(nested) == project
 
 
 def test_agent_bootstrap_creates_structural_index_without_embedding(tmp_path):
