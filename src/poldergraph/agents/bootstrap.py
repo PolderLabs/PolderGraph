@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,25 @@ def ensure_workspace_ready(start: Path | None = None, *, lock_timeout: float = 3
 
     root = workspace_root(start)
     index_path = root / ".poldergraph" / "index.sqlite3"
+    opt_out = root / ".poldergraph-disable"
+    if os.environ.get("POLDERGRAPH_AUTO_INDEX", "").strip().lower() in {"0", "false", "off", "no"}:
+        return {
+            "ok": True,
+            "root": str(root),
+            "created": False,
+            "state": "unavailable",
+            "reason": "Automatic repository indexing is disabled by POLDERGRAPH_AUTO_INDEX.",
+            "recovery": "Unset POLDERGRAPH_AUTO_INDEX or set it to 1 to enable automatic indexing.",
+        }
+    if opt_out.exists():
+        return {
+            "ok": True,
+            "root": str(root),
+            "created": False,
+            "state": "unavailable",
+            "reason": "Automatic repository indexing is disabled by .poldergraph-disable.",
+            "recovery": "Remove .poldergraph-disable to enable automatic indexing for this project.",
+        }
     created = not index_path.is_file()
     if created:
         # Config() defaults to the local backend, but no backend is constructed

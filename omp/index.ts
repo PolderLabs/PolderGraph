@@ -138,6 +138,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 		const work = (async () => {
 			const ready = await runJson(["agent-ready", "--quiet"], root);
 			if (!ready.ok) throw new Error(formatResult(ready));
+			if ((ready.data as { state?: string } | undefined)?.state === "unavailable") return;
 		})();
 		indexing.set(root, work);
 		try {

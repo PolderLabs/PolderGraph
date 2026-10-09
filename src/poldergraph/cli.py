@@ -102,6 +102,8 @@ def agent_ready(
         result = ensure_workspace_ready(path)
         if json_output:
             emit_json(envelope(command="agent-ready", data=result))
+        elif result.get("state") == "unavailable" and not quiet:
+            typer.echo(f"Automatic indexing is disabled for {result['root']}. {result['recovery']}")
         elif not quiet:
             action = "Created" if result["created"] else "Ready"
             typer.echo(f"{action} structural PolderGraph index at {result['root']}.")

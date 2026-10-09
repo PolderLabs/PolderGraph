@@ -84,7 +84,7 @@ def _context_for(event: dict[str, Any]) -> str | None:
     root = _project_root(cwd_path)
 
     ready = _run(root, ["agent-ready", "--quiet", "--json"], timeout=300)
-    if not ready or not ready.get("ok"):
+    if not ready or not ready.get("ok") or ready.get("state") == "unavailable":
         return None
 
     result = _run(
