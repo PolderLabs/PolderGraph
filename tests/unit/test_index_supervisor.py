@@ -70,6 +70,57 @@ def test_watcher_ready_callback_fires_after_watch_registration(tmp_path: Path, m
     assert ready.is_set()
 
 
+def test_watcher_loads_backend_before_acquiring_writer_lock(indexed_workspace, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    active_locks: set[str] = set()
+    backend_loaded_under_writer: list[bool] = []
+
+    class FakeIndexLock:
+        def __init__(self, _path, *, lock_name="writer", **_kwargs):
+            self.name = lock_name
+
+        def acquire(self):
+            active_locks.add(self.name)
+
+        def release(self):
+            active_locks.discard(self.name)
+
+        def __enter__(self):
+            active_locks.add(self.name)
+            return self
+
+        def __exit__(self, *_args):
+            active_locks.discard(self.name)
+
+    def fake_watch(*_roots, **_kwargs):
+        yield {("added", "pkg/auth.py")}
+
+    def fake_apply(_workspace, *, backend):
+        assert backend == "loaded-backend"
+        assert "writer" in active_locks
+        return SimpleNamespace(files_indexed=0)
+
+    monkeypatch.setattr(watcher, "IndexLock", FakeIndexLock)
+    monkeypatch.setattr(watcher, "apply_changes", fake_apply)
+    monkeypatch.setitem(sys.modules, "watchfiles", SimpleNamespace(watch=fake_watch))
+
+    def backend_provider():
+        backend_loaded_under_writer.append("writer" in active_locks)
+        return "loaded-backend"
+
+    stats = watcher.run_watch(
+        indexed_workspace.root,
+        debounce=0,
+        max_iterations=1,
+        backend_provider=backend_provider,
+    )
+
+    assert stats["updates"] == 1
+    assert backend_loaded_under_writer == [False]
+
+
 def test_supervisor_indexes_a_live_edit_without_model_download(tmp_path: Path) -> None:
     import time
 
