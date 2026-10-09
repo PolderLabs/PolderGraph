@@ -13,11 +13,13 @@ demand.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from contextlib import suppress
@@ -51,7 +53,17 @@ def resolve_index_dir(root: Path | None) -> Path | None:
 
 
 def socket_path(index_dir: Path) -> Path:
-    return Path(index_dir) / SOCKET_NAME
+    index_dir = Path(index_dir)
+    path = index_dir / SOCKET_NAME
+    # macOS has a shorter sockaddr_un path limit than Linux. Deep temporary
+    # worktrees can exceed it, so use a stable, per-user runtime socket path
+    # when the canonical in-index path cannot fit.
+    if os.name != "nt" and len(os.fsencode(path)) >= 100:
+        runtime_dir = Path("/tmp") if Path("/tmp").is_dir() else Path(tempfile.gettempdir())
+        user_id = getattr(os, "getuid", lambda: os.environ.get("USERNAME", "user"))()
+        workspace_id = hashlib.sha256(os.fsencode(index_dir.resolve())).hexdigest()[:20]
+        path = runtime_dir / f"pg-{user_id}" / f"{workspace_id}.sock"
+    return path
 
 
 def is_running(index_dir: Path) -> bool:
@@ -415,6 +427,9 @@ class Daemon:
         index_dir = resolve_index_dir(self.root) or index_dir_for(self.root)
         index_dir.mkdir(parents=True, exist_ok=True)
         path = socket_path(index_dir)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with suppress(OSError):
+            path.parent.chmod(0o700)
         if path.exists():
             path.unlink()
 

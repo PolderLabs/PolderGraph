@@ -292,6 +292,18 @@ class TestSocketPaths:
         # A nested ".poldergraph/.poldergraph" path would never resolve.
         assert path.parent == index_dir
 
+    def test_long_macos_socket_path_uses_short_per_workspace_runtime_path(self):
+        import os
+        from pathlib import Path
+
+        from poldergraph import query_daemon
+
+        long_index_dir = Path("/tmp") / ("deep-" * 18) / ".poldergraph"
+        path = query_daemon.socket_path(long_index_dir)
+        assert path != long_index_dir / query_daemon.SOCKET_NAME
+        assert len(os.fsencode(path)) < 100
+        assert path != query_daemon.socket_path(long_index_dir / "other")
+
     def test_resolve_finds_index_dir(self, indexed_workspace):
         resolved = resolve_index_dir(indexed_workspace.root)
         assert resolved == indexed_workspace.index_dir
