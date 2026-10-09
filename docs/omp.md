@@ -21,8 +21,10 @@ That's the only setup command. The extension bootstraps the PolderGraph CLI
 with `uv` when it is first needed, then creates or structurally refreshes the
 repository index without loading an embedding model. The first task waits for
 index setup before retrieving graph context. Later sessions reuse the
-installation and index. `uv` must be installed; the initial package install
-requires network access. After setup, indexing and retrieval run locally.
+installation and index. The bootstrap installs the base CLI only; embedding
+extras and model weights are not needed for the offline structural context
+path. `uv` must be installed; the initial package install requires network
+access. After setup, indexing and retrieval run locally.
 
 You can prewarm a repository before starting OMP by running:
 
