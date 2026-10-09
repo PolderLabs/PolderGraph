@@ -91,3 +91,37 @@ uv run python scripts/benchmark_freshness.py . --samples 40
 ```
 
 The harness fails if any sample is stale, so it cannot silently record latency for an invalid freshness state.
+
+## Context planner benchmark
+
+The planner comparison uses the synthetic multi-module repository in
+`tests/benchmarks/corpus_manifest.json`, plus two explicit abstention cases
+(`Hello!` and `What is the weather?`). Each request runs five times. Both
+configurations use the same offline lexical/structural index and expected
+entity annotations (300 requests total per configuration):
+
+- **Adaptive planner** calls `QueryService.context` with a 6,000-token caller
+  ceiling. The task planner selects its intent, lanes, and effective budget.
+- **Fixed baseline** runs one lexical/structural search and packs with a
+  3,000-token budget, matching the former fixed-budget OMP behavior.
+
+The report records estimated content tokens, p50/p95 and mean wall latency,
+internal search-call count, expected-entity case recall, and expected-entity
+precision among returned context entity/snippet names. The planner benchmark
+can be reproduced with:
+
+```bash
+uv run python tests/benchmarks/benchmark_context_planner.py --repeats 30
+```
+
+The Linux/Python 3.12.14 run on 2026-10-09 kept expected-entity case recall
+equal at 0.875 and reduced mean estimated tokens from 1,026 to 520 per
+request. Expected-entity precision rose from 0.104 to 0.237; mean latency rose
+from 3.1 ms to 4.0 ms and p95 from 5.5 ms to 7.2 ms. Adaptive context avoided
+retrieval for greetings and the unrelated weather prompt. This dataset is small
+and synthetic. Entity overlap
+is only an evidence-selection proxy; it is not answer grounding judged by a
+model, end-to-end task completion, or developer productivity. The semantic
+channel is intentionally disabled to isolate the deterministic planner and
+packing path. Latencies are machine-specific. A real task benchmark still
+needs paired coding-agent runs and independent answer/task evaluation.
