@@ -113,7 +113,7 @@ POLDERGRAPH_DECISIONS__PROVIDER=typesafe
 | `ollama_host` | string | "http://127.0.0.1:11434" | Ollama server URL |
 | `api_endpoint` | string | provider default | Optional API base URL; custom endpoints must come from trusted config |
 | `api_model` | string | provider default | Remote embedding model |
-| `api_provider` | string | "openai" | API provider: "openai" or "voyage" |
+| `api_provider` | string | "openai" | API provider: "openai", "voyage", or "cohere" |
 | `api_timeout` | float | 30.0 | Remote request timeout in seconds |
 | `api_retries` | int | 2 | Bounded retries for transient network, HTTP 429 and server errors (0–5) |
 | `api_batch_size` | int | 64 | Maximum inputs per API request (1–128) |
@@ -125,6 +125,10 @@ provider-specific `input_type` and `output_dimension` fields. In both cases,
 remote transmission remains disabled until `allow_remote_embedding = true` is
 set in trusted user config or the host environment. Workspace config alone
 cannot authorize egress. Do not put API keys in TOML.
+To use Cohere's native v2 embed endpoint, set `api_provider = "cohere"` and
+provide `COHERE_API_KEY`. The `embed-v4.0` model supports 256, 512, 1024, or
+1536 output dimensions. PolderGraph maps query and document tasks to Cohere's
+`search_query` and `search_document` input types.
 Transient rate limits and server failures retry with bounded exponential backoff
 and jitter, honoring numeric `Retry-After` values.
 Changing the active provider, model, revision, dimensions, normalization, or task
