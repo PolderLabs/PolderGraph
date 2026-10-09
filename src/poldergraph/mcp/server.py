@@ -525,7 +525,12 @@ def _guard(command: str, call: Any) -> Any:
 
 def run_server(root: Path | None = None) -> None:
     """Run the stdio MCP server until the client disconnects."""
-    server = build_server(root)
+    # MCP clients commonly launch from a fresh checkout before any setup
+    # command has run. Prepare its local structural index before binding tools.
+    from ..agents.bootstrap import ensure_workspace_ready
+
+    ready = ensure_workspace_ready(root)
+    server = build_server(Path(ready["root"]))
     session = getattr(server, "poldergraph_session", None)
     try:
         if session is not None:

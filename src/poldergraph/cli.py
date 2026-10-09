@@ -89,6 +89,30 @@ def main_callback(
 # --------------------------------------------------------------------- init
 
 
+@app.command("agent-ready")
+def agent_ready(
+    path: Optional[Path] = typer.Argument(None, help="Repository or workspace root."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+    quiet: bool = typer.Option(False, "--quiet", help="Print nothing on success."),
+) -> None:
+    """Automatically create or structurally refresh a workspace for an agent."""
+    from .agents.bootstrap import ensure_workspace_ready
+
+    try:
+        result = ensure_workspace_ready(path)
+        if json_output:
+            emit_json(envelope(command="agent-ready", data=result))
+        elif not quiet:
+            action = "Created" if result["created"] else "Ready"
+            typer.echo(f"{action} structural PolderGraph index at {result['root']}.")
+    except PolderGraphError as exc:
+        if json_output:
+            emit_error("agent-ready", exc)
+        else:
+            typer.secho(f"error: {exc.message}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(int(exc.exit_code))
+
+
 @app.command()
 def init(
     path: Optional[Path] = typer.Argument(None, help="Repository or workspace root."),
