@@ -75,6 +75,11 @@ def run(root: Path) -> dict[str, Any]:
         final_indexed = service.resolve_entity("watcher_burst_final_probe") is not None
         cpu_seconds = time.process_time() - cpu_started
         wall_seconds = time.perf_counter() - wall_started
+        idle_cpu_started = time.process_time()
+        idle_wall_started = time.perf_counter()
+        time.sleep(2.0)
+        idle_cpu_seconds = time.process_time() - idle_cpu_started
+        idle_wall_seconds = time.perf_counter() - idle_wall_started
         return {
             "files_written": 100,
             "concurrent_readers": 3,
@@ -86,6 +91,11 @@ def run(root: Path) -> dict[str, Any]:
             "wall_seconds": round(wall_seconds, 3),
             "process_cpu_seconds": round(cpu_seconds, 3),
             "cpu_cores_used_average": round(cpu_seconds / max(wall_seconds, 1e-9), 4),
+            "idle_observation_seconds": round(idle_wall_seconds, 3),
+            "idle_process_cpu_seconds": round(idle_cpu_seconds, 4),
+            "idle_cpu_cores_used_average": round(
+                idle_cpu_seconds / max(idle_wall_seconds, 1e-9), 4
+            ),
             "final_revision_visible": final_indexed,
             "supervisor_state": daemon._supervisor.status()["state"],
             "embedding_backend": "none",
@@ -117,6 +127,12 @@ def main() -> int:
         ),
         "median_cpu_cores_used_average": round(
             statistics.median(item["cpu_cores_used_average"] for item in runs), 4
+        ),
+        "median_idle_process_cpu_seconds": round(
+            statistics.median(item["idle_process_cpu_seconds"] for item in runs), 4
+        ),
+        "median_idle_cpu_cores_used_average": round(
+            statistics.median(item["idle_cpu_cores_used_average"] for item in runs), 4
         ),
         "median_p50_read_latency_ms": round(
             statistics.median(item["p50_read_latency_ms"] for item in runs), 3
