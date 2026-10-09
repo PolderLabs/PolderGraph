@@ -50,11 +50,14 @@ def ensure_workspace_ready(start: Path | None = None, *, lock_timeout: float = 3
             "reason": "Automatic repository indexing is disabled by .poldergraph-disable.",
             "recovery": "Remove .poldergraph-disable to enable automatic indexing for this project.",
         }
-    created = not index_path.is_file()
-    if created:
-        # Config() defaults to the local backend, but no backend is constructed
-        # here; first contact remains fast and strictly offline.
-        create_index(root)
+    # Serialize first-time database creation separately from index updates.
+    # The lock lives in the index directory, whose mkdir is itself idempotent.
+    with IndexLock(root / ".poldergraph", timeout=lock_timeout, lock_name="bootstrap.lock"):
+        created = not index_path.is_file()
+        if created:
+            # Config() defaults to the local backend, but no backend is constructed
+            # here; first contact remains fast and strictly offline.
+            create_index(root)
 
     workspace = open_workspace(root)
     try:
