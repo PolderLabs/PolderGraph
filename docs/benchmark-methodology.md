@@ -96,7 +96,7 @@ The harness fails if any sample is stale, so it cannot silently record latency f
 
 The planner comparison uses the synthetic multi-module repository in
 `tests/benchmarks/corpus_manifest.json`, plus two explicit abstention cases
-(`Hello!` and `What is the weather?`). Each request runs five times. Both
+(`Hello!` and `What is the weather?`). Each request runs 30 times. Both
 configurations use the same offline lexical/structural index and expected
 entity annotations (300 requests total per configuration):
 
@@ -125,3 +125,24 @@ model, end-to-end task completion, or developer productivity. The semantic
 channel is intentionally disabled to isolate the deterministic planner and
 packing path. Latencies are machine-specific. A real task benchmark still
 needs paired coding-agent runs and independent answer/task evaluation.
+
+## Watcher contention benchmark
+
+`tests/benchmarks/benchmark_watcher_contention.py` creates a structural-only
+index, runs three concurrent readers (40 searches each), and writes the same
+source file 100 times at 3 ms intervals while the supervised watcher is live.
+It waits for the final revision to appear, and reports read errors, p50/p95/max
+latency, wall time, and process CPU time. Run five isolated samples with:
+
+```bash
+uv run python tests/benchmarks/benchmark_watcher_contention.py --repeats 5
+```
+
+In the Linux/Python 3.12.14 run on 2026-10-09, all five runs indexed the final
+revision and completed all 120 reads without errors. Median burst+reconcile
+wall time was 1.095 s, process CPU time was 0.451 s (0.41 CPU cores average),
+read p50/p95 were 4.5/14.7 ms, and the worst single read across runs was 57.3
+ms. This supplies a local contention observation, not a cross-platform CPU or
+starvation guarantee; the harness intentionally reports measurements instead
+of imposing machine-dependent latency thresholds. CI separately runs the
+functional 100-write/three-reader scenario on supported operating systems.
