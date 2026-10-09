@@ -1774,9 +1774,10 @@ def setup_agent(
         False, "--print-mcp-config", help="Print MCP server configuration."
     ),
     hooks: bool = typer.Option(False, "--hooks", help="Install the Codex automatic context lifecycle hook."),
+    remove: bool = typer.Option(False, "--remove", help="Remove only PolderGraph-managed project integration entries."),
 ) -> None:
-    """Install or update agent instructions and MCP configuration."""
-    from .agents.setup import setup_agent_guidance
+    """Install, update, or remove PolderGraph-managed agent integration files."""
+    from .agents.setup import remove_agent_guidance, setup_agent_guidance
 
     root = (target or Path.cwd()).resolve()
     try:
@@ -1789,6 +1790,13 @@ def setup_agent(
         from .agents.setup import mcp_config_snippet
 
         typer.echo(mcp_config_snippet(root))
+        return
+
+    if remove:
+        result = remove_agent_guidance(root, targets=list(agent) or None)
+        typer.echo(f"Removed: {', '.join(result['removed']) or 'nothing'}")
+        if result["skipped"]:
+            typer.echo(f"Left untouched: {', '.join(result['skipped'])}")
         return
 
     result = setup_agent_guidance(

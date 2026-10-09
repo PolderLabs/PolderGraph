@@ -398,6 +398,86 @@ def setup_agent_guidance(
     }
 
 
+def remove_agent_guidance(root: Path, *, targets: list[str] | None = None) -> dict[str, Any]:
+    """Remove only PolderGraph-managed project guidance and Codex entries.
+
+    Unrelated text, MCP servers, hook handlers, and user-level configuration are
+    left untouched. Invalid Codex hook JSON is reported without being rewritten.
+    """
+    selected = [adapter for adapter in AGENT_ADAPTERS if targets is None or adapter.name in targets]
+    removed: list[str] = []
+    skipped: list[str] = []
+
+    for adapter in selected:
+        path = adapter.path(root)
+        if not path.exists():
+            continue
+        existing = path.read_text(encoding="utf-8")
+        if START_MARKER not in existing or END_MARKER not in existing:
+            skipped.append(f"{adapter.relative_path} (no managed PolderGraph block)")
+            continue
+        start = existing.index(START_MARKER)
+        end = existing.index(END_MARKER, start) + len(END_MARKER)
+        before = existing[:start].rstrip()
+        after = existing[end:].lstrip()
+        updated = "\n\n".join(part for part in (before, after) if part)
+        if adapter.name == "codex" and updated.strip() == CODEX_SKILL_FRONTMATTER:
+            path.unlink()
+        elif updated.strip():
+            path.write_text(updated + "\n", encoding="utf-8")
+        else:
+            path.unlink()
+        removed.append(adapter.relative_path)
+
+    codex_selected = targets is None or "codex" in targets
+    if codex_selected:
+        mcp_path = root / ".codex" / "config.toml"
+        if mcp_path.exists():
+            content = mcp_path.read_text(encoding="utf-8")
+            if CODEX_MCP_START in content and CODEX_MCP_END in content:
+                start = content.index(CODEX_MCP_START)
+                end = content.index(CODEX_MCP_END, start) + len(CODEX_MCP_END)
+                updated = (content[:start].rstrip() + "\n\n" + content[end:].lstrip()).strip()
+                mcp_path.write_text(updated + ("\n" if updated else ""), encoding="utf-8")
+                removed.append(".codex/config.toml (managed MCP entry)")
+
+        hooks_path = root / ".codex" / "hooks.json"
+        if hooks_path.exists():
+            try:
+                config = json.loads(hooks_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                skipped.append(".codex/hooks.json (invalid JSON; left untouched)")
+            else:
+                hooks = config.get("hooks") if isinstance(config, dict) else None
+                groups = hooks.get("UserPromptSubmit") if isinstance(hooks, dict) else None
+                if isinstance(groups, list):
+                    def is_managed(group: Any) -> bool:
+                        handlers = group.get("hooks", []) if isinstance(group, dict) else []
+                        return any(
+                            isinstance(handler, dict)
+                            and any(
+                                isinstance(handler.get(key), str)
+                                and "poldergraph" in handler[key].lower()
+                                and "codex-hook" in handler[key].lower()
+                                for key in ("command", "commandWindows")
+                            )
+                            for handler in handlers
+                        )
+
+                    kept = [group for group in groups if not is_managed(group)]
+                    if len(kept) != len(groups):
+                        if kept:
+                            hooks["UserPromptSubmit"] = kept
+                        else:
+                            hooks.pop("UserPromptSubmit", None)
+                        if not hooks:
+                            config.pop("hooks", None)
+                        hooks_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+                        removed.append(".codex/hooks.json (managed UserPromptSubmit hook)")
+
+    return {"root": str(root), "removed": removed, "skipped": skipped}
+
+
 def main() -> int:  # pragma: no cover - console helper
     """Print the generated MCP configuration for the current directory."""
     sys.stdout.write(mcp_config_snippet(Path.cwd().resolve()) + "\n")

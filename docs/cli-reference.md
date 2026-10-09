@@ -155,10 +155,11 @@ Example: `poldergraph setup --agent codex --agent omp`.
 Install or update agent instructions and MCP configuration.
 
 Options:
-- `--all` — update every supported agent integration
+- `--all` — update every supported integration, or remove all managed project entries with `--remove`
 - `--agent NAME` — target one agent adapter (repeatable)
 - `--print-mcp-config` — print MCP server configuration
 - `--hooks` — install Codex's automatic `UserPromptSubmit` context hook
+- `--remove` — remove only PolderGraph-managed project guidance, MCP marker block, and Codex hook groups; preserve other user settings
 
 For Codex, `poldergraph setup --agent codex` writes a project skill and
 the repository-scoped MCP server config at `.codex/config.toml`.
