@@ -1445,6 +1445,26 @@ def memory_forget(
     _memory_guard("forget", json_output, run)
 
 
+@memory_app.command("history")
+def memory_history(
+    memory_id: str = typer.Argument(..., help="Memory ID."),
+    root: Path | None = typer.Option(None, "--root", help="Current project root."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Show prior and current versions of a visible memory."""
+    from .memory import MemoryStore
+
+    store = MemoryStore(root)
+
+    def run():
+        versions = store.history(memory_id)
+        if not versions:
+            raise UsageError(f"No memory '{memory_id}' exists in the current project or user scope.")
+        return {"memory_id": memory_id, "versions": versions}, "Memory history."
+
+    _memory_guard("history", json_output, run)
+
+
 class _Simple:
     """Adapter so `entity_line` can render a context payload entry."""
 

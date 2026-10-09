@@ -12,6 +12,7 @@ from typing import Any
 
 from ..errors import (
     PolderGraphError,
+    UsageError,
     envelope,
     error_envelope,
 )
@@ -460,6 +461,22 @@ def build_server(root: Path | None = None) -> Any:
             return envelope(command="pg_memory_add", data=data, warnings=warnings)
 
         return _guard("pg_memory_add", run)
+
+    @server.tool()
+    def pg_memory_history(memory_id: str) -> dict[str, Any]:
+        """Inspect the audited revisions of a visible project or user memory."""
+        from ..memory import MemoryStore
+
+        def run():
+            versions = MemoryStore(session.service().root).history(memory_id)
+            if not versions:
+                raise UsageError(f"No memory '{memory_id}' exists in the current project or user scope.")
+            return envelope(
+                command="pg_memory_history",
+                data={"memory_id": memory_id, "versions": versions},
+            )
+
+        return _guard("pg_memory_history", run)
 
     @server.tool()
     def pg_memory_update(

@@ -612,6 +612,12 @@ class TestDashboardApi:
         assert any(item["id"] == memory_id for item in found)
         updated = api_client.post(f"/api/memory/{memory_id}/update", json={"content": "Keep the dashboard API client shared"}).json()
         assert updated["ok"] is True
+        history = api_client.get(f"/api/memory/{memory_id}/history").json()
+        assert history["ok"] is True
+        assert [item["content"] for item in history["data"]["versions"]] == [
+            "Use the repository's shared API client",
+            "Keep the dashboard API client shared",
+        ]
         forgotten = api_client.post(f"/api/memory/{memory_id}/forget").json()
         assert forgotten["ok"] is True
         after = api_client.get("/api/memory?scope=project").json()["data"]["results"]

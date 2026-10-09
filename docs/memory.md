@@ -33,10 +33,14 @@ edit, export through JSON output, or delete entries at any time.
 ## Record structure
 
 Each record includes a stable ID, scope, type, text, tags, creation/update times,
-and (for project scope) a project root. Types are `fact`, `preference`,
-`decision`, `workflow`, and `reference`. Re-adding the same normalized text to
-the same scope is idempotent and updates its type/tags rather than duplicating
-it.
+an active `version_id` and `valid_from` timestamp, and (for project scope) a
+project root. Types are `fact`, `preference`, `decision`, `workflow`, and
+`reference`. Re-adding the same normalized text to
+the same scope is idempotent. Changes to content, type, tags, or provenance
+create an append-only prior-version record linked to its replacement; retrieval
+continues to return only the current version. History retains provenance and
+valid-time boundaries so agents can explain what changed and when. Explicit
+`forget` removes both the current record and its revision history.
 
 The central store keeps vectors separate from code-index vectors. It reuses the
 active local project embedding backend when one is available; standalone memory
@@ -84,6 +88,7 @@ poldergraph memory add "Use the shared settings loader" --scope project --kind d
 poldergraph memory search "where should I add config" --json
 poldergraph memory list --scope all --json
 poldergraph memory update mem_123 --content "Updated durable note"
+poldergraph memory history mem_123 --json
 poldergraph memory forget mem_123
 ```
 
@@ -98,6 +103,8 @@ scope when running the command outside that project.
 - `pg_memory_search`: hybrid semantic/keyword recall with scope and result cap.
 - `pg_memory_list`: list accessible memories.
 - `pg_memory_add`: save a project fact/decision or user preference.
+- `pg_memory_history`: inspect the visible current and prior versions, including
+  provenance and validity timestamps.
 - `pg_memory_update`: edit an accessible record and refresh its vector.
 - `pg_memory_forget`: delete an accessible record and its vectors.
 
