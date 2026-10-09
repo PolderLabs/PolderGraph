@@ -69,6 +69,8 @@ def socket_path(index_dir: Path) -> Path:
 
 def is_running(index_dir: Path) -> bool:
     """True when a daemon is bound, has loaded its model, and answers."""
+    if not hasattr(socket, "AF_UNIX"):
+        return False
     path = socket_path(index_dir)
     if not path.exists():
         return False
@@ -90,6 +92,8 @@ def is_running(index_dir: Path) -> bool:
 
 
 def _connect(index_dir: Path, timeout: float) -> socket.socket | None:
+    if not hasattr(socket, "AF_UNIX"):
+        return None
     path = socket_path(index_dir)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(timeout)
@@ -144,6 +148,10 @@ def _recv_exactly(sock: socket.socket, count: int) -> bytes | None:
 
 def ensure_daemon(root: Path, *, autostart: bool = True) -> bool:
     """Start the daemon for a workspace if it is not already running."""
+    # Platforms without Unix domain sockets use the caller's in-process query
+    # service; never spawn a daemon that cannot bind its transport.
+    if not hasattr(socket, "AF_UNIX"):
+        return False
     index_dir = resolve_index_dir(root)
     if index_dir is None:
         return False
@@ -437,6 +445,11 @@ class Daemon:
 
     def serve(self) -> None:
         """Accept connections until shutdown."""
+        if not hasattr(socket, "AF_UNIX"):
+            raise RuntimeError(
+                "The query daemon requires Unix domain sockets on this platform; "
+                "use the in-process query service instead."
+            )
         from .workspace import index_dir_for
 
         index_dir = resolve_index_dir(self.root) or index_dir_for(self.root)
