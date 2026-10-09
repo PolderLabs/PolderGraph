@@ -18,20 +18,22 @@ from .protocol import DOCUMENT_TASK, EmbeddingBackend, MediaRequest, ModelInfo
 
 
 class OpenAICompatibleBackend(EmbeddingBackend):
-    """Provider adapters for OpenAI-compatible APIs and Cohere's native v2 API."""
+    """Small HTTP adapters for OpenAI-compatible, Cohere, Gemini and Jina APIs."""
 
     def __init__(self, *, provider: str = "openai", endpoint: str | None = None,
                  model: str | None = None, dimensions: int, normalize: bool = True,
                  timeout: float = 30.0, offline: bool = False, authorized: bool = False,
                  endpoint_authorized: bool = False, retries: int = 2,
                  batch_size: int = 64) -> None:
-        if provider not in {"openai", "voyage", "cohere"}:
+        if provider not in {"openai", "voyage", "cohere", "gemini", "jina"}:
             raise ValueError(f"Unsupported API embedding provider: {provider}")
         self.provider = provider
         self.endpoint = (endpoint or {
             "openai": "https://api.openai.com/v1",
             "voyage": "https://api.voyageai.com/v1",
             "cohere": "https://api.cohere.com/v2",
+            "gemini": "https://generativelanguage.googleapis.com/v1beta",
+            "jina": "https://api.jina.ai/v1",
         }[provider]).rstrip("/")
         parsed_endpoint = urlsplit(self.endpoint)
         local_http = parsed_endpoint.hostname in {"localhost", "127.0.0.1", "::1"}
@@ -50,14 +52,23 @@ class OpenAICompatibleBackend(EmbeddingBackend):
             "openai": "text-embedding-3-small",
             "voyage": "voyage-3.5",
             "cohere": "embed-v4.0",
+            "gemini": "gemini-embedding-2",
+            "jina": "jina-embeddings-v3",
         }[provider]
         if provider == "cohere" and dimensions not in {256, 512, 1024, 1536}:
             raise ValueError("Cohere embed-v4.0 supports output dimensions 256, 512, 1024, and 1536.")
+        if provider == "jina" and self.model == "jina-embeddings-v3" and dimensions not in {
+            32, 64, 128, 256, 512, 1024,
+        }:
+            raise ValueError(
+                "Jina jina-embeddings-v3 supports Matryoshka dimensions 32, 64, 128, 256, 512, and 1024."
+            )
         self.dimensions = dimensions
         self.normalize = normalize
         self.timeout = timeout
         self.retries = max(0, min(5, retries))
-        self.batch_size = max(1, min(128, batch_size))
+        provider_batch_cap = {"cohere": 96, "gemini": 100}.get(provider, 128)
+        self.batch_size = max(1, min(provider_batch_cap, batch_size))
         self.offline = offline
         self.authorized = authorized
         self.endpoint_authorized = endpoint_authorized
@@ -83,6 +94,8 @@ class OpenAICompatibleBackend(EmbeddingBackend):
             "openai": "OPENAI_API_KEY",
             "voyage": "VOYAGE_API_KEY",
             "cohere": "COHERE_API_KEY",
+            "gemini": "GEMINI_API_KEY",
+            "jina": "JINA_API_KEY",
         }[self.provider]
         key = os.environ.get(key_name)
         if not key:
@@ -103,10 +116,43 @@ class OpenAICompatibleBackend(EmbeddingBackend):
                 "output_dimension": self.dimensions,
             }
             request_url = f"{self.endpoint}/embed"
+        if self.provider == "gemini":
+            model_name = self.model.removeprefix("models/")
+            if not model_name or "/" in model_name or ":" in model_name:
+                raise BackendUnavailableError("Gemini model must be a model name without a resource path.")
+            task_type = "CODE_RETRIEVAL_QUERY" if task == "query" else "RETRIEVAL_DOCUMENT"
+            payload_data = {
+                "requests": [
+                    {
+                        "model": f"models/{model_name}",
+                        "content": {"parts": [{"text": text}]},
+                        "embedContentConfig": {
+                            "taskType": task_type,
+                            "outputDimensionality": self.dimensions,
+                        },
+                    }
+                    for text in texts
+                ]
+            }
+            request_url = f"{self.endpoint}/models/{model_name}:batchEmbedContents"
+        elif self.provider == "jina":
+            payload_data = {
+                "model": self.model,
+                "input": texts,
+                "task": "retrieval.query" if task == "query" else "retrieval.passage",
+                "dimensions": self.dimensions,
+                "embedding_type": "float",
+            }
+            request_url = f"{self.endpoint}/embeddings"
         payload = json.dumps(payload_data).encode()
+        headers = {"Content-Type": "application/json"}
+        if self.provider == "gemini":
+            headers["x-goog-api-key"] = key
+        else:
+            headers["Authorization"] = f"Bearer {key}"
         req = urllib.request.Request(
             request_url, data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"}, method="POST",
+            headers=headers, method="POST",
         )
         body = None
         for attempt in range(self.retries + 1):
@@ -143,6 +189,11 @@ class OpenAICompatibleBackend(EmbeddingBackend):
                         "Cohere returned an unexpected number of vectors."
                     )
                 vectors = [[float(value) for value in vector] for vector in data]
+            elif self.provider == "gemini":
+                data = body.get("embeddings")
+                if not isinstance(data, list) or len(data) != len(texts):
+                    raise BackendUnavailableError("Gemini returned an unexpected number of vectors.")
+                vectors = [[float(value) for value in item["values"]] for item in data]
             else:
                 data = body.get("data")
                 if not isinstance(data, list) or len(data) != len(texts):

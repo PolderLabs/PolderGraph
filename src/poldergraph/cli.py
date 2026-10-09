@@ -1538,9 +1538,9 @@ def setup(
             typer.echo("  Semantic search disabled. Only lexical and structural retrieval available.")
         elif backend_choice == "api":
             api_provider_choice = typer.prompt(
-                "  API provider (openai/voyage/cohere)", default="openai"
+                "  API provider (openai/voyage/cohere/gemini/jina)", default="openai"
             ).strip().lower()
-            if api_provider_choice not in {"openai", "voyage", "cohere"}:
+            if api_provider_choice not in {"openai", "voyage", "cohere", "gemini", "jina"}:
                 typer.secho("  Invalid provider; using openai.", fg=typer.colors.RED)
                 api_provider_choice = "openai"
             allowed_dimensions = (
@@ -1548,6 +1548,10 @@ def setup(
                 if api_provider_choice == "voyage"
                 else {"256", "512", "1024", "1536"}
                 if api_provider_choice == "cohere"
+                else {"256", "512", "1024"}
+                if api_provider_choice == "jina"
+                else {"128", "256", "512", "768", "1024", "1536", "2048", "3072"}
+                if api_provider_choice == "gemini"
                 else _VALID_DIMS
             )
             dimensions = typer.prompt(

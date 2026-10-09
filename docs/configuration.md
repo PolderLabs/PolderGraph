@@ -113,10 +113,10 @@ POLDERGRAPH_DECISIONS__PROVIDER=typesafe
 | `ollama_host` | string | "http://127.0.0.1:11434" | Ollama server URL |
 | `api_endpoint` | string | provider default | Optional API base URL; custom endpoints must come from trusted config |
 | `api_model` | string | provider default | Remote embedding model |
-| `api_provider` | string | "openai" | API provider: "openai", "voyage", or "cohere" |
+| `api_provider` | string | "openai" | API provider: "openai", "voyage", "cohere", "gemini", or "jina" |
 | `api_timeout` | float | 30.0 | Remote request timeout in seconds |
 | `api_retries` | int | 2 | Bounded retries for transient network, HTTP 429 and server errors (0–5) |
-| `api_batch_size` | int | 64 | Maximum inputs per API request (1–128) |
+| `api_batch_size` | int | 64 | Maximum inputs per API request (1–128, additionally capped by provider limits) |
 | `max_tokens` | int | 2048 | Maximum sequence length |
 
 For OpenAI set `backend = "api"` and provide `OPENAI_API_KEY`. To use Voyage,
@@ -129,6 +129,13 @@ To use Cohere's native v2 embed endpoint, set `api_provider = "cohere"` and
 provide `COHERE_API_KEY`. The `embed-v4.0` model supports 256, 512, 1024, or
 1536 output dimensions. PolderGraph maps query and document tasks to Cohere's
 `search_query` and `search_document` input types.
+Gemini uses `GEMINI_API_KEY` and the native `batchEmbedContents` endpoint with
+`gemini-embedding-2`; its documented output range is 128–3072 dimensions.
+Jina uses `JINA_API_KEY`, `jina-embeddings-v3`, and the provider's retrieval
+query/passage task labels; its default model supports Matryoshka output
+dimensions 32, 64, 128, 256, 512, or 1024.
+These providers send text directly to their respective APIs, with
+the same trusted remote-embedding consent gate as OpenAI and Voyage.
 Transient rate limits and server failures retry with bounded exponential backoff
 and jitter, honoring numeric `Retry-After` values.
 Changing the active provider, model, revision, dimensions, normalization, or task

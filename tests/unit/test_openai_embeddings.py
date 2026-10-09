@@ -140,6 +140,69 @@ def test_cohere_rejects_unsupported_dimensions():
         OpenAICompatibleBackend(provider="cohere", dimensions=2048)
 
 
+@pytest.mark.parametrize(("provider", "cap"), [("cohere", 96), ("gemini", 100)])
+def test_native_provider_batch_limits_are_enforced(provider, cap):
+    backend = OpenAICompatibleBackend(provider=provider, dimensions=256, batch_size=128)
+    assert backend.batch_size == cap
+
+
+def test_gemini_uses_native_batched_embedding_contract(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test")
+    vector = [1.0, *([0.0] * 255)]
+    response = type("Response", (), {
+        "__enter__": lambda self: self,
+        "__exit__": lambda self, *args: None,
+        "read": lambda self: json.dumps({"embeddings": [{"values": vector}]}).encode(),
+    })()
+    backend = OpenAICompatibleBackend(
+        provider="gemini", dimensions=256, authorized=True, endpoint_authorized=True,
+    )
+    with patch("urllib.request.urlopen", return_value=response) as request:
+        assert backend.embed_texts(["query"], task="query") == [vector]
+        assert backend.embed_texts(["document"], task="document") == [vector]
+    query_body = json.loads(request.call_args_list[0].args[0].data)
+    document_body = json.loads(request.call_args_list[1].args[0].data)
+    assert query_body["requests"][0]["embedContentConfig"]["taskType"] == "CODE_RETRIEVAL_QUERY"
+    assert document_body["requests"][0]["embedContentConfig"]["taskType"] == "RETRIEVAL_DOCUMENT"
+    assert request.call_args.args[0].full_url.endswith(
+        "/models/gemini-embedding-2:batchEmbedContents"
+    )
+    assert request.call_args.args[0].get_header("X-goog-api-key") == "gemini-test"
+
+
+def test_jina_maps_query_and_document_task_fields(monkeypatch):
+    monkeypatch.setenv("JINA_API_KEY", "jina-test")
+    vector = [1.0, *([0.0] * 1023)]
+    response = type("Response", (), {
+        "__enter__": lambda self: self,
+        "__exit__": lambda self, *args: None,
+        "read": lambda self: json.dumps({"data": [{"index": 0, "embedding": vector}]}).encode(),
+    })()
+    backend = OpenAICompatibleBackend(
+        provider="jina", dimensions=1024, authorized=True, endpoint_authorized=True,
+    )
+    with patch("urllib.request.urlopen", return_value=response) as request:
+        assert backend.embed_texts(["document"], task="document") == [vector]
+        assert backend.embed_texts(["query"], task="query") == [vector]
+    document_sent = json.loads(request.call_args_list[0].args[0].data)
+    sent = json.loads(request.call_args.args[0].data)
+    assert document_sent["task"] == "retrieval.passage"
+    assert sent == {
+        "model": "jina-embeddings-v3",
+        "input": ["query"],
+        "task": "retrieval.query",
+        "dimensions": 1024,
+        "embedding_type": "float",
+    }
+    assert request.call_args.args[0].full_url == "https://api.jina.ai/v1/embeddings"
+    assert request.call_args.args[0].headers["Authorization"] == "Bearer jina-test"
+
+
+def test_jina_rejects_unsupported_v3_dimensions():
+    with pytest.raises(ValueError, match="Jina jina-embeddings-v3"):
+        OpenAICompatibleBackend(provider="jina", dimensions=1536)
+
+
 def test_provider_rejects_duplicate_vector_indexes(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     backend = OpenAICompatibleBackend(
