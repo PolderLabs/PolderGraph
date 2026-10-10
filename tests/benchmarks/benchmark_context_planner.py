@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import json
 import statistics
+import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
-from corpus_repo import build_corpus, cases
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from corpus_repo import build_corpus, cases  # noqa: E402
 
 
 def _evidence_names(result: Any) -> set[str]:

@@ -128,26 +128,26 @@ per configuration, `--repeats 3` over 10 cases):
 | Metric | Adaptive @3,000 | Fixed @3,000 baseline |
 |---|---|---|
 | Expected-entity case recall | 0.875 | 0.875 |
-| Expected-entity precision | 0.237 | 0.104 |
-| Unnecessary context rate | 0.763 | 0.896 |
-| Mean estimated tokens | 519.6 | 1,026.3 |
+| Expected-entity precision | 0.200 | 0.104 |
+| Unnecessary context rate | 0.800 | 0.896 |
+| Mean estimated tokens | 574.3 | 1,026.3 |
 | p50 estimated tokens | 249 | 1,268 |
-| p95 estimated tokens | 1,341 | 1,699 |
-| Mean latency | 1.739 ms | 1.765 ms |
-| p50 / p95 latency | 1.703 / 3.697 ms | 1.891 / 3.188 ms |
+| p95 estimated tokens | 1,485 | 1,699 |
+| Mean latency | 1.756 ms | 1.572 ms |
+| p50 / p95 latency | 1.783 / 3.707 ms | 1.693 / 3.076 ms |
 | Mean search calls | 0.80 | 1.00 |
 
 At an equal budget the planner keeps case recall identical while roughly
-halving tokens, cutting unnecessary context, more than doubling expected-entity
-precision, and issuing fewer internal searches. Mean latency is flat
-(1.739 ms vs 1.765 ms); p95 is slightly higher (3.697 ms vs 3.188 ms) on this
-small sample.
+halving tokens (44% fewer mean, 80% fewer at p50), cutting unnecessary context,
+nearly doubling expected-entity precision, and issuing fewer internal searches.
+Mean latency is slightly higher (1.756 ms vs 1.572 ms), as is p95
+(3.707 ms vs 3.076 ms), on this small sample.
 
 Adaptive context also skipped retrieval entirely for greetings and the
 unrelated weather prompt.
 
 The 6,000-token planner variant produced **identical** evidence and token
-counts to the 3,000-token run (519.6 mean tokens, 0.237 precision). That is
+counts to the 3,000-token run (574.3 mean tokens, 0.200 precision). That is
 expected: the planner caps its own budget by detected intent
 (`min(caller_budget, intent_budget)`), so simply raising the caller's ceiling
 does not widen the delivered context. This dataset is small

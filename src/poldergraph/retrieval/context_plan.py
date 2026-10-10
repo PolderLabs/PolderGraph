@@ -93,7 +93,12 @@ def plan_context(
             changed_paths=changed,
             why_selected=_why_selected(("exact", "lexical")),
         )
-    intent = "modify" if re.search(r"\b(refactor|change|modify|implement|fix)\b", text, re.I) else (
+    intent = "modify" if re.search(
+        r"\b(refactor|change|changes|modify|implement|fix|impact|break|breaks|breaking|"
+        r"ripple|regress\w*|affect\w*|consequence\w*)\b",
+        text,
+        re.I,
+    ) else (
         "debug" if re.search(r"\b(debug|error|failure|failing|bug)\b", text, re.I) else (
             "test" if re.search(r"\b(test|tests|coverage)\b", text, re.I) else (
                 "architecture"
