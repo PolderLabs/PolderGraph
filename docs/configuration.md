@@ -80,6 +80,8 @@ model = ""
 endpoint = ""
 timeout = 3.0
 confidence_threshold = 0.9
+# max_rss_mb = 2048
+# max_state_tokens = 8192
 ```
 
 ## Environment variables
@@ -207,6 +209,8 @@ when switching back to an exact prior configuration.
 | `endpoint` | string | empty | Optional compatible API endpoint override; custom hosted endpoints must come from trusted user config or the environment |
 | `timeout` | float | 3.0 | Hosted request timeout or local Laya process deadline in seconds |
 | `confidence_threshold` | float | 0.9 | Minimum probability for model decisions; uncertain answers keep the deterministic result |
+| `max_rss_mb` | float | unset | Optional resident-memory cap for the local decision worker. The child is evicted and transparently restarted on the next call when it exceeds the cap. An unmeasurable host reports `rss_known: false` and never evicts |
+| `max_state_tokens` | int | 0 | Optional bound on the state text sent to the local model. Oversized requests are rejected before the model loads. `0` means unbounded |
 
 Hosted providers read credentials from `TYPESAFE_API_KEY` or `OPENAI_API_KEY`.
 `laya` uses the optional `poldergraph[decision-laya]` extra and runs locally in
