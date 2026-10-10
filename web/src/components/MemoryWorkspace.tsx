@@ -176,7 +176,7 @@ export function MemoryWorkspace({ onNotify }: { onNotify: (message: string) => v
             aria-label="Search memories"
           />
           <label className="memory-semantic" title="Use local EmbeddingGemma vectors for semantic matching">
-            <input type="checkbox" checked={semantic} onChange={(event) => setSemantic(event.target.checked)} />
+            <input type="checkbox" aria-label="Use semantic memory search" checked={semantic} onChange={(event) => setSemantic(event.target.checked)} />
             Semantic
           </label>
           <button type="submit" className="button button--quiet">Search</button>
@@ -193,6 +193,7 @@ export function MemoryWorkspace({ onNotify }: { onNotify: (message: string) => v
             <span className="field__label">Memory</span>
             <textarea
               value={content}
+              aria-label="Memory content"
               onChange={(event) => setContent(event.target.value)}
               placeholder="e.g. This project uses pnpm and runs tests with pytest."
               rows={5}
@@ -203,21 +204,21 @@ export function MemoryWorkspace({ onNotify }: { onNotify: (message: string) => v
           <div className="memory-fields">
             <label className="field">
               <span className="field__label">Scope</span>
-              <select value={newScope} onChange={(event) => setNewScope(event.target.value as 'project' | 'user')}>
+              <select value={newScope} aria-label="Memory scope" onChange={(event) => setNewScope(event.target.value as 'project' | 'user')}>
                 <option value="project">This project</option>
                 <option value="user">Personal, across projects</option>
               </select>
             </label>
             <label className="field">
               <span className="field__label">Type</span>
-              <select value={newKind} onChange={(event) => setNewKind(event.target.value as MemoryKind)}>
+              <select value={newKind} aria-label="Memory type" onChange={(event) => setNewKind(event.target.value as MemoryKind)}>
                 {KINDS.map((kind) => <option key={kind} value={kind}>{titleCase(kind)}</option>)}
               </select>
             </label>
           </div>
           <label className="field">
             <span className="field__label">Tags <span className="field__optional">optional</span></span>
-            <input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="tooling, workflow" />
+            <input value={tags} aria-label="Tags, comma separated" onChange={(event) => setTags(event.target.value)} placeholder="tooling, workflow" />
           </label>
           <button type="submit" className="button button--primary" disabled={busy || !content.trim()}>
             {busy ? 'Saving…' : 'Save to memory'}
@@ -246,15 +247,15 @@ export function MemoryWorkspace({ onNotify }: { onNotify: (message: string) => v
                 <li className="memory-card" key={memory.id}>
                   {editingId === memory.id ? (
                     <div className="memory-edit">
-                      <textarea value={editContent} onChange={(event) => setEditContent(event.target.value)} rows={4} />
+                      <textarea value={editContent} aria-label="Edited memory content" onChange={(event) => setEditContent(event.target.value)} rows={4} />
                       <div className="memory-fields">
                         <label className="field"><span className="field__label">Type</span>
-                          <select value={editKind} onChange={(event) => setEditKind(event.target.value as MemoryKind)}>
+                          <select value={editKind} aria-label="Edited memory type" onChange={(event) => setEditKind(event.target.value as MemoryKind)}>
                             {KINDS.map((kind) => <option key={kind} value={kind}>{titleCase(kind)}</option>)}
                           </select>
                         </label>
                         <label className="field"><span className="field__label">Tags</span>
-                          <input value={editTags} onChange={(event) => setEditTags(event.target.value)} />
+                          <input value={editTags} aria-label="Edited tags, comma separated" onChange={(event) => setEditTags(event.target.value)} />
                         </label>
                       </div>
                       <div className="memory-card__actions">

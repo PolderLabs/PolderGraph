@@ -58,6 +58,7 @@ export function FilterPanel(props: FilterPanelProps): JSX.Element {
         <input
           type="search"
           className="field__input"
+          aria-label="Filter by name, path or kind"
           value={filters.text}
           placeholder="name, path, kind…"
           onChange={(event) => update({ text: event.target.value })}

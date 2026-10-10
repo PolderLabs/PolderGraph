@@ -1,0 +1,30 @@
+[
+  {
+    "id": "a0cc662b-9c36-4ec5-946b-f4c495b9f4f3",
+    "kind": "praise",
+    "text": "When nodes are highlighted in the graph view, their labels and surrounding text are unreadable because of poor contrast against the highlighted/selected background. Any node state that changes the background behind text - selected, hovered, highlighted neighbour, pinned - must keep its text readable and must not rely on a fixed label colour that assumes one background",
+    "tags": [
+      "contrast",
+      "color",
+      "background",
+      "label"
+    ],
+    "source": "user feedback via b0x_learn",
+    "reinforcements": 1,
+    "lastReinforced": "2026-10-10T11:11:47.606Z",
+    "created": "2026-10-10T11:11:47.606Z"
+  },
+  {
+    "id": "efe9e203-a169-4fd3-98b8-ff5e3ec0879d",
+    "kind": "preference",
+    "text": "Verified contrast fix: Draw node labels with a custom renderer onto a backing plate in the canvas colour before the text. Text contrast is then identical wherever the label falls - on the canvas, over a bright node, or over the highlight ring - measuring 16.02:1 (AAA) in both themes. Never reintroduce a per-state label colour chosen by eye; measure it.",
+    "tags": [
+      "contrast",
+      "audit-fix"
+    ],
+    "source": "diagnostic audit (contrast)",
+    "reinforcements": 1,
+    "lastReinforced": "2026-10-10T11:23:59.894Z",
+    "created": "2026-10-10T11:23:59.894Z"
+  }
+]

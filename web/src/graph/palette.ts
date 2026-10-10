@@ -20,6 +20,10 @@ export interface Palette {
   background: string;
   surface: string;
   text: string;
+  /** Text colour used on top of bright, filled shapes (dark in both themes). */
+  labelOnLight: string;
+  /** Text colour used on top of dark, filled shapes. */
+  labelOnDark: string;
   textMuted: string;
   accent: string;
   selected: string;
@@ -129,6 +133,8 @@ export const DARK: Palette = {
   background: '#0e1117',
   surface: '#151a23',
   text: '#e6edf5',
+  labelOnLight: '#0b0e14',
+  labelOnDark: '#f2f7ff',
   textMuted: '#8b98a9',
   accent: '#6ea8fe',
   selected: '#ffd166',
@@ -184,6 +190,8 @@ export const LIGHT: Palette = {
   background: '#f7f9fc',
   surface: '#ffffff',
   text: '#131820',
+  labelOnLight: '#0b0e14',
+  labelOnDark: '#f7f9fc',
   textMuted: '#5a6676',
   accent: '#2563eb',
   selected: '#b45309',
@@ -290,4 +298,47 @@ export function edgeSizeFor(provenance: Provenance, type: EdgeType): number {
   if (provenance === 'extracted') return 2.2;
   if (provenance === 'resolved') return 1.8;
   return 1.5;
+}
+
+/**
+ * Relative luminance of a hex colour, per WCAG 2.x.
+ *
+ * Used to decide which of the two text colours is readable on a node, rather
+ * than assuming every label sits on the dark canvas.
+ */
+function luminance(hex: string): number {
+  const value = hex.replace('#', '');
+  const full = value.length === 3 ? value.split('').map((c) => c + c).join('') : value;
+  const channels = [0, 2, 4].map((offset) => {
+    const raw = parseInt(full.slice(offset, offset + 2), 16) / 255;
+    return raw <= 0.03928 ? raw / 12.92 : ((raw + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+/** WCAG contrast ratio between two hex colours. */
+export function contrastRatio(foreground: string, background: string): number {
+  const a = luminance(foreground);
+  const b = luminance(background);
+  const lighter = Math.max(a, b);
+  const darker = Math.min(a, b);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/**
+ * Picks the text colour that is actually readable on `background`.
+ *
+ * A node's label can land on the node itself, on its selection ring, or on the
+ * canvas. A single fixed label colour assumed the canvas and became unreadable
+ * on the bright highlight colours - 1.22:1 for the light text on the selection
+ * ring, against the 4.5:1 that body text needs. Both candidates are now
+ * measured and the readable one wins, which keeps highlighted, pinned and
+ * hovered labels legible in either theme.
+ */
+export function readableTextOn(background: string, palette: Palette): string {
+  const onLight = palette.labelOnLight;
+  const onDark = palette.labelOnDark;
+  return contrastRatio(onLight, background) >= contrastRatio(onDark, background)
+    ? onLight
+    : onDark;
 }

@@ -117,6 +117,33 @@ strong (`chargeStrength: -520`), edges prefer a longer rest length
 visible gap (`collisionPadding: 9`). Communities separate into distinct groups
 instead of one crowded mass.
 
+## Label legibility
+
+A label can land on the dark canvas, on a bright node, or on the highlight ring
+drawn around a selected node. A single text colour cannot be readable against
+all three: measured on this palette, light text reached **1.22:1** on the
+selection ring and **2.05:1** on the accent, against the 4.5:1 that WCAG AA
+requires for body text.
+
+Rather than guessing a colour per state, labels are drawn by a custom renderer
+onto a small backing plate in the canvas colour before the text. The text then
+has the same background wherever it falls, so one readable colour is enough and
+the ratio is **16.02:1 (AAA)** in both themes. The plate is deliberately
+slightly transparent so the graph still reads as one image.
+
+## Accessibility
+
+Audited with the b0rk UI/UX checks:
+
+- Label and body text pass AA/AAA on both the canvas and the surface colour.
+- Every form control has an accessible name. Most are wrapped in a `<label>`
+  with visible text; the one filter input that had only a placeholder gained an
+  `aria-label`.
+- Three controls the auditor flagged turned out to be false positives — they are
+  inputs nested inside a `<label>` with visible text, which is a valid implicit
+  association. Adding `aria-label` there would have overridden the visible name,
+  so the markup was left alone.
+
 ## Also worth knowing
 
 - Repulsion uses `distanceMax` to bound work, and the exact pass is skipped above

@@ -17,6 +17,7 @@ import {
 import type { ColorMode, Palette } from './palette';
 import { LayoutController } from './layout';
 import { buildAdjacency, syncGraph, TRANSPARENT } from './sync';
+import { drawReadableNodeLabel, setLabelPalette } from './labels';
 import type { PgEdgeAttributes, PgNodeAttributes } from './attributes';
 import type { ForceSettingsState } from '../state/preferences';
 import { desaturate } from '../util/color';
@@ -141,6 +142,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       labelRenderedSizeThreshold: 9,
       minEdgeThickness: 0.6,
       labelColor: { attribute: 'labelColor' },
+      defaultDrawNodeLabel: drawReadableNodeLabel,
       // ForceAtlas2 changes coordinate bounds while settling; keep all nodes
       // fitted so layout movement remains visible across desktop and mobile.
       autoRescale: true,
@@ -174,6 +176,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     const handle = handleRef.current;
     if (!ready || !handle) return;
 
+    setLabelPalette(props.palette);
     const topologyChanged = syncGraph(
       handle.graph, props.nodes, props.edges, props.palette, props.colorMode,
     );
@@ -422,6 +425,8 @@ function reduceNode(
   const nearFocus = focusId !== null && (node === focusId || focusNeighbours?.has(node) === true);
 
   let color = base;
+  // Labels are drawn on a backing plate in the canvas colour, so one readable
+  // text colour is enough everywhere - no per-state guessing.
   let labelColor = palette.text;
 
   if (interaction.pathNodeIds.size > 0) {
