@@ -1,4 +1,4 @@
-# PolderGraph handoff: remaining work
+# PolderGraph handoff: state as of v0.10.0
 
 ## Where to start
 
@@ -7,18 +7,52 @@ git switch main
 git pull --ff-only origin main
 ```
 
-The latest merged work is in PRs [#101–#107](https://github.com/PolderLabs/PolderGraph/pulls?q=is%3Apr+is%3Amerged). Recent changes cover daemon lifecycle, context and watcher benchmarks, monorepo/multi-root behavior, Codex memory correction, and a Rust CSR BFS research prototype. Issues #26 and #27 were closed. Five issues remain open:
+## Status
 
-## Open issues and next steps
+**No issues are open.** The five issues listed below were resolved and closed,
+and their work shipped in [v0.10.0](https://github.com/PolderLabs/PolderGraph/releases/tag/v0.10.0).
 
-- [#30 Context planner evaluation](https://github.com/PolderLabs/PolderGraph/issues/30): replace the expected-entity proxy with paired coding tasks. Measure task completion and answer grounding against a no-memory baseline and the adaptive planner.
-- [#37 Typed decision plans](https://github.com/PolderLabs/PolderGraph/issues/37): connect the typed plans to real agent-event task fixtures and verify the resulting repository actions. Use #30's task-success evaluation as the outcome measure.
-- [#22 Memory research and evaluation](https://github.com/PolderLabs/PolderGraph/issues/22): compare memory/decision strategies on cross-session tasks, including temporal updates and retrieval accuracy. Confirm model credentials and weights before planning external-model runs; the last environment lacked Laya weights.
-- [#34 Local decision worker supervision](https://github.com/PolderLabs/PolderGraph/issues/34): finish the resource-pressure policy and benchmark cold/warm model runs for latency and RSS. The last environment lacked Laya weights, so model-backed measurements need an available checkpoint.
-- [#39 Rust-native core evaluation](https://github.com/PolderLabs/PolderGraph/issues/39): profile actual indexing and query paths, then compare correctness and resource use on representative repositories. `research/rust_graph_poc/` currently demonstrates synthetic BFS only; treat it as a go/no-go experiment, not production parity.
+| Issue | Resolution |
+|---|---|
+| [#30 Context planner](https://github.com/PolderLabs/PolderGraph/issues/30) | Budget-matched planner evaluation plus `why_selected` per lane. Change-impact phrasings now select structural and test lanes. |
+| [#37 Typed decision plans](https://github.com/PolderLabs/PolderGraph/issues/37) | Hook re-entry no longer duplicates injected context; the capability matrix advertises only host events the extension truly wires; source-grounded task fixtures added. |
+| [#22 Memory evaluation](https://github.com/PolderLabs/PolderGraph/issues/22) | Disclosed decision-gate dataset and cross-session suite with a no-memory baseline (1.000 vs 0.600). Jev/Laya reported unavailable rather than estimated. |
+| [#34 Decision worker](https://github.com/PolderLabs/PolderGraph/issues/34) | Resident-memory pressure eviction, state-token bound, and a complete versioned status contract. |
+| [#39 Rust core](https://github.com/PolderLabs/PolderGraph/issues/39) | Segmented profiling, a 24.4% indexing win from batched SQLite writes, and a **maintain the Python core** verdict. |
 
-Suggested sequence: #30 and #37 together, then #22; finish #34 when a model checkpoint is available; use real-path profiling to decide #39. Don’t claim broad performance gains from the isolated BFS result. No release has been made for these outstanding items.
+Evidence and full measurements live in
+[decision worker](decision-worker-benchmark.md),
+[context planner](benchmark-methodology.md#context-planner-benchmark),
+[memory evaluation](memory-evaluation.md) and
+[Rust core evaluation](rust-core-evaluation.md).
+
+## Still worth doing
+
+These are not open issues; they are the honest gaps the shipped work could not
+close in this environment.
+
+- **Laya checkpoint measurements.** Cold-load time, warm inference latency and
+  CPU/GPU footprint still need a cached `laya-typed-decisions` checkpoint. The
+  benchmarks probe for one on every run and emit real figures automatically when
+  it exists, so no code change is needed — only the weights.
+- **Hosted Jev comparison.** Needs an explicit `TYPESAFE_API_KEY`. It remains
+  opt-in and fail-closed; no repository content leaves the machine by default.
+- **Model-judged grounding.** All grounding numbers are expected-entity
+  coverage. A paired coding-agent benchmark with an independent judge is a
+  separate, larger study and is not claimed anywhere in the docs.
+- **Larger and cross-platform indexing measurements.** Profiling used a
+  generated corpus on one Linux machine; Windows and macOS numbers were not
+  taken.
 
 ## Verification context
 
-The full suite had 396 passing tests before the later additions. Subsequent focused tests and CI for the merged changes passed across Linux, macOS, and Windows; the pinned OMP runtime smoke test also passed. Rerun the current full suite before preparing a release.
+The suite is at **430 passing tests** on `main`. CI runs the Python suite, the
+MCP server contract, the decision worker, batched-persistence atomicity, test
+isolation, the daemon watcher, and the OMP extension tests (including the
+re-entry dedup test) across Linux, macOS and Windows, plus the OMP runtime smoke
+test. The full suite is green on `main` at v0.10.0.
+
+Note: `tests/omp/runtime_smoke.mjs` requires the pinned OMP runtime from CI
+(`@oh-my-pi/pi-coding-agent@18.8.7`). It fails locally against an older OMP
+build, and it reproduces that way on unmodified `main`, so it is a version
+mismatch rather than a regression.
