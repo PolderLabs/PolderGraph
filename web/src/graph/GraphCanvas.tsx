@@ -2,7 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Graph from 'graphology';
 import { MeasuredSigma } from './MeasuredSigma';
 import { EdgeRectangleProgram, NodeCircleProgram } from 'sigma/rendering';
-import type { EdgeDisplayData, NodeDisplayData, SigmaNodeEventPayload } from 'sigma/types';
+import type {
+  EdgeDisplayData,
+  NodeDisplayData,
+  SigmaNodeEventPayload,
+  SigmaStageEventPayload,
+} from 'sigma/types';
 
 import type { FilterableEdge, FilterableNode } from './filters';
 import {
@@ -17,7 +22,7 @@ import {
 import type { ColorMode, Palette } from './palette';
 import { LayoutController } from './layout';
 import { buildAdjacency, syncGraph, TRANSPARENT } from './sync';
-import { drawReadableNodeLabel, setLabelPalette } from './labels';
+import { drawReadableNodeLabel, drawSubtleNodeHover, setLabelPalette } from './labels';
 import type { PgEdgeAttributes, PgNodeAttributes } from './attributes';
 import type { ForceSettingsState } from '../state/preferences';
 import { desaturate } from '../util/color';
@@ -164,6 +169,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       minEdgeThickness: 0.6,
       labelColor: { attribute: 'labelColor' },
       defaultDrawNodeLabel: drawReadableNodeLabel,
+      defaultDrawNodeHover: drawSubtleNodeHover,
       // ForceAtlas2 changes coordinate bounds while settling; keep all nodes
       // fitted so layout movement remains visible across desktop and mobile.
       autoRescale: true,
@@ -209,7 +215,10 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       if (change > 1.6 || change < 0.625) setDatasetFit((token) => token + 1);
     }
     if (topologyChanged) handle.adjacency = buildAdjacency(handle.graph);
-    handle.controller.sync();
+    // Only a real topology change needs to reach the worker. Syncing on every
+    // render re-energised the simulation after each selection, so the graph
+    // drifted under the pointer and the next click landed on empty canvas.
+    if (topologyChanged) handle.controller.sync();
     handle.sigma.refresh();
   }, [ready, props.nodes, props.edges, props.palette, props.colorMode]);
 
@@ -304,11 +313,59 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     if (!ready || !handle) return;
     const sigma = handle.sigma;
 
+    // The node the pointer went down on, so a release that Sigma reports as a
+    // stage click can still be attributed to it.
+    let pressedNode: string | null = null;
+
     const handleNodeClick = ({ node }: SigmaNodeEventPayload) => propsRef.current.onSelect(node);
     const handleDoubleClick = ({ node }: SigmaNodeEventPayload) => propsRef.current.onFocusNode(node);
     const handleEnter = ({ node }: SigmaNodeEventPayload) => propsRef.current.onHover(node);
     const handleLeave = () => propsRef.current.onHover(null);
-    const handleStageClick = () => propsRef.current.onSelect(null);
+    // A release a few pixels from the press is reported by Sigma as a stage
+    // click, which used to clear the selection straight after the node was
+    // clicked - the panel snapped back to "select a node" while the user was
+    // still looking at it. If a node was pressed and the pointer is still within
+    // a few pixels of it, that release means the node, not the background.
+    /**
+     * Finds the node under a viewport point.
+     *
+     * Sigma's own hit test stops matching a node once that node is selected and
+     * is drawn by the ring program, which made a selected node impossible to
+     * click again. Looking the point up against the current display data finds
+     * it whatever program is drawing it.
+     */
+    const hitTestNode = (clientX: number, clientY: number): string | null => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return null;
+      const px = clientX - rect.left;
+      const py = clientY - rect.top;
+      let best: string | null = null;
+      let bestDistance = Infinity;
+      // Positions come from the graph attributes, not from the display data:
+      // display x/y are not the rendered coordinates and read as 0 or 1.
+      handle.sigma.getGraph().forEachNode((node, attributes) => {
+        const view = handle.sigma.graphToViewport({
+          x: Number(attributes.x ?? 0),
+          y: Number(attributes.y ?? 0),
+        });
+        const distance = Math.hypot(view.x - px, view.y - py);
+        const radius = Math.max(Number(attributes.size ?? 4), 4) + 3;
+        if (distance <= radius && distance < bestDistance) {
+          bestDistance = distance;
+          best = String(node);
+        }
+      });
+      return best;
+    };
+
+    const handleStageClick = ({ event }: SigmaStageEventPayload) => {
+      const original = event.original as MouseEvent;
+      // A release that Sigma did not attribute to a node may still be on one:
+      // a selected node is drawn by the ring program, which its hit test skips.
+      // Resolving it here is what makes a selected node clickable a second time.
+      const node = hitTestNode(original.clientX, original.clientY);
+      propsRef.current.onSelect(node);
+    };
 
     // Sigma normalises mouse and touch into `event`; `original` carries the
     // untouched browser event, which is what clientX/clientY come from.
@@ -334,7 +391,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
       return (
-        handle.sigma.framedGraphToViewport({
+        handle.sigma.graphToViewport({
           x: clientX - rect.left,
           y: clientY - rect.top,
         }) ?? null
@@ -375,6 +432,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
         !moved && Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) < 4;
       dragging = null;
       moved = false;
+      pressedNode = null;
       cancelAnimationFrame(dragFrame);
       dragFrame = 0;
       containerRef.current?.removeEventListener('mousemove', applyDrag);
@@ -385,6 +443,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
 
     const handleDownNode = ({ node, event }: SigmaNodeEventPayload) => {
       dragging = node;
+      pressedNode = node;
       moved = false;
       const original = event.original as MouseEvent;
       downAt = { x: original.clientX, y: original.clientY };
@@ -392,10 +451,18 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       window.addEventListener('mouseup', finishDrag, { once: true });
     };
 
-    // Sigma delivers the click itself when the press and release land on the
-    // same item, so nothing is dispatched here for a plain click.
+    // Sigma classifies the release as a stage click even when the press and the
+    // release are both on the same node, so `clickNode` never arrives and the
+    // selection is cleared the instant it is made. `upNode` is reliable, so
+    // selection is decided here: same node down and up, with no drag between.
     const handleUpNode = ({ node }: SigmaNodeEventPayload) => {
-      if (dragging === node && moved) finishDrag({ clientX: downAt.x, clientY: downAt.y } as MouseEvent);
+      if (dragging === node) {
+        if (moved) {
+          finishDrag({ clientX: downAt.x, clientY: downAt.y } as MouseEvent);
+        } else if (pressedNode === node) {
+          propsRef.current.onSelect(node);
+        }
+      }
     };
 
     sigma.on('clickNode', handleNodeClick);

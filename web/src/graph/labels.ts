@@ -13,7 +13,7 @@
  * it, so a single readable text colour is enough.
  */
 
-import type { NodeLabelDrawingFunction } from 'sigma/rendering';
+import type { NodeHoverDrawingFunction, NodeLabelDrawingFunction } from 'sigma/rendering';
 import type { Attributes } from 'graphology-types';
 import type { PgEdgeAttributes, PgNodeAttributes } from './attributes';
 import type { Palette } from './palette';
@@ -75,5 +75,30 @@ export const drawReadableNodeLabel: NodeLabelDrawingFunction<
   context.globalAlpha = 1;
   context.fillStyle = data.labelColor ?? palette?.text ?? '#e6edf5';
   context.fillText(label, textX, textY);
+  context.restore();
+};
+/**
+ * Hover indicator.
+ *
+ * Sigma's built-in hover draws a white filled tooltip box behind the node label
+ * (`fillStyle = "#FFF"`). On this dark canvas that reads as an opaque white
+ * slab that swallows both the node and its label, which is what made a
+ * highlighted node unreadable. The inspector panel already carries the node's
+ * details, so hovering only needs a ring to show where the pointer is.
+ */
+export const drawSubtleNodeHover: NodeHoverDrawingFunction<
+  PgNodeAttributes,
+  PgEdgeAttributes,
+  Attributes
+> = (context, node, settings) => {
+  const palette = currentPalette;
+  const radius = Number(node.size) + 6;
+  context.save();
+  context.strokeStyle = palette?.accent ?? '#6ea8fe';
+  context.lineWidth = Math.max(1.5, Number(settings.labelSize ?? 12) / 8);
+  context.globalAlpha = 0.9;
+  context.beginPath();
+  context.arc(node.x, node.y, radius, 0, Math.PI * 2);
+  context.stroke();
   context.restore();
 };

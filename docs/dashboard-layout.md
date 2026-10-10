@@ -169,6 +169,40 @@ The camera also refits when the dataset changes scale - switching between
 global and local, or applying a filter that removes most of the graph - so the
 view is never left pointing at empty canvas.
 
+## Clicking and selecting
+
+Selection went through four separate defects, each of which alone made a node
+look unclickable:
+
+1. **Sigma classifies the release as a stage click.** Even with the press and the
+   release on the same node it emitted `clickStage` rather than `clickNode`, so
+   the selection was cleared the instant it was made. Selection is now decided on
+   `upNode`, which is reliable.
+2. **A selected node could never be clicked again.** Once selected, a node is
+   drawn by the ring program, and Sigma's hit test stops matching it. The canvas
+   therefore resolves the node under the pointer itself, against the current
+   graph attributes, so a selected node stays clickable.
+3. **Four stacked canvases all took pointer events.** Sigma layers scene, labels,
+   hovers and its mouse capturer. With pointer events on the output layers, the
+   click landed above the capturer; only the capturer takes input now.
+4. **Every render re-energised the simulation.** The layout was synced on each
+   render, so selecting a node made the graph drift under the pointer and the
+   next click landed on empty canvas. It now syncs only when the topology really
+   changes.
+
+Positions come from the graph attributes rather than Sigma's display data:
+display `x`/`y` are not rendered coordinates and read back as 0 or 1. Drag
+conversions use `graphToViewport`; `framedGraphToViewport` returns values in the
+hundreds of thousands for raw graph coordinates.
+
+## Hovering
+
+Sigma's built-in hover draws a white filled tooltip box behind the node label.
+On this dark canvas that read as an opaque white slab that swallowed both the
+node and its label - the unreadable highlight. Hover is now a subtle ring in the
+accent colour. The inspector panel already carries the node's details, so the
+tooltip was redundant as well as unreadable.
+
 ## Also worth knowing
 
 - Repulsion uses `distanceMax` to bound work, and the exact pass is skipped above

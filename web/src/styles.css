@@ -255,6 +255,23 @@ button {
   outline: none;
 }
 
+/*
+ * Sigma stacks four canvases - scene, labels, hovers and the mouse capturer -
+ * all absolutely positioned. Left with pointer events on, the overlay layers
+ * sit above the capturer and swallow node clicks: Sigma reports the press and
+ * release on the node but then classifies the release as a stage click, which
+ * cleared the selection straight after a node was clicked. Only the capturer
+ * layer takes pointer input; the rest are pure output.
+ */
+.graph-canvas canvas:not(.sigma-mouse) {
+  pointer-events: none;
+}
+
+.graph-canvas canvas.sigma-mouse {
+  pointer-events: auto;
+  z-index: 2;
+}
+
 .canvasControls {
   position: absolute;
   left: 12px;
