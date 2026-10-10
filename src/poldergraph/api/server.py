@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config.models import Config
-from ..errors import API_VERSION, PolderGraphError, UsageError, envelope
+from ..errors import API_VERSION, PolderGraphError, UsageError, envelope, error_envelope
 from ..memory import MemoryStore, memory_backend
 from ..retrieval.service import QueryService, safe_read
 from ..storage.repository import Repository
@@ -25,6 +25,19 @@ ASSET_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"
 
 #: Only loopback by default; binding elsewhere requires an explicit opt-in.
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+#: HTTP status for each command error code.
+_ERROR_STATUS = {
+    "USAGE_ERROR": 400,
+    "INDEX_MISSING": 404,
+    "INDEX_STALE": 409,
+    "BACKEND_UNAVAILABLE": 503,
+    "CORRUPT_INDEX": 500,
+    "DOWNLOAD_DISABLED": 403,
+    "UNSUPPORTED_BACKEND": 400,
+    "MODEL_DOWNLOAD_FAILED": 502,
+}
 
 
 def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool = False) -> Any:
@@ -295,6 +308,171 @@ def create_app(workspace: Workspace, *, watch: bool = False, skip_backend: bool 
             pass
         return ok("view.preferences", payload)
 
+# ------------------------------------------------------------ configuration
+
+    #: Config sections the dashboard may read and write.
+    CONFIG_SECTIONS = (
+        "index",
+        "embedding",
+        "semantic_edges",
+        "graph",
+        "retrieval",
+        "privacy",
+        "decisions",
+    )
+
+    #: Never returned verbatim, so a secret cannot leave the machine by being
+    #: displayed. Redacted rather than omitted so "unset" stays distinguishable.
+    SECRET_FIELDS = ("api_key", "token", "password", "secret")
+
+    def _redact(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: (
+                    "***"
+                    if any(marker in key.lower() for marker in SECRET_FIELDS)
+                    else _redact(item)
+                )
+                for key, item in value.items()
+            }
+        return value
+
+    def _config_payload() -> dict[str, Any]:
+        config = workspace.config
+        return {
+            name: _redact(getattr(config, name).model_dump()) for name in CONFIG_SECTIONS
+        }
+
+    # A configuration mistake is the caller's, not the server's. Report it with
+    # the same envelope as every other command error and a matching 4xx, so the
+    # dashboard shows the message instead of a stack trace.
+    @app.exception_handler(PolderGraphError)
+    async def poldergraph_error_handler(request: Request, exc: PolderGraphError) -> Any:
+        return JSONResponse(status_code=_ERROR_STATUS.get(exc.code, 400), content=error_envelope("error", exc))
+
+    @app.get("/api/config")
+    def read_config() -> dict[str, Any]:
+        """Current workspace configuration, with anything secret redacted."""
+        return ok("config.read", _config_payload())
+
+    @app.put("/api/config")
+    async def write_config(request: Request) -> dict[str, Any]:
+        """Update configuration sections in place.
+
+        Unknown sections and unknown fields are rejected rather than silently
+        ignored, so a typo cannot look like it worked.
+        """
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise UsageError("Request body must be JSON.") from exc
+        if not isinstance(payload, dict):
+            raise UsageError("Configuration payload must be an object.")
+
+        config = workspace.config
+        applied: list[str] = []
+        for name, values in payload.items():
+            if name not in CONFIG_SECTIONS:
+                raise UsageError(f"Unknown configuration section {name!r}.")
+            if not isinstance(values, dict):
+                raise UsageError(f"Section {name!r} must be an object.")
+            section = getattr(config, name)
+            unknown = [key for key in values if key not in section.model_dump()]
+            if unknown:
+                raise UsageError(
+                    f"Unknown setting(s) in {name!r}: {', '.join(sorted(unknown))}."
+                )
+            merged = section.model_dump()
+            merged.update(values)
+            setattr(config, name, type(section)(**merged))
+            applied.append(name)
+
+        from ..config.loader import write_config as write_config_file
+
+        write_config_file(config, workspace.index_dir)
+        # The embedding model may have changed, so the cached service no longer
+        # describes this workspace.
+        service.invalidate_backend()
+        return ok("config.write", {"applied": applied, "config": _config_payload()})
+
+    def _model_cache_dir() -> Path:
+        return (workspace.index_dir / "cache" / "model").resolve()
+
+    def _model_is_cached() -> bool:
+        directory = _model_cache_dir()
+        if not directory.is_dir():
+            return False
+        needle = str(workspace.config.embedding.model).split("/")[-1].lower()
+        return any(needle in child.name.lower() for child in directory.iterdir())
+
+    def _workspace_vector_count() -> int:
+        try:
+            return int(workspace.con.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0])
+        except Exception:
+            return 0
+
+    @app.get("/api/models/status")
+    def models_status() -> dict[str, Any]:
+        """Which embedding model is configured and whether its weights are local."""
+        config = workspace.config
+        return ok(
+            "models.status",
+            {
+                "backend": config.embedding.backend,
+                "model": config.embedding.model,
+                "dimensions": config.index.dimensions,
+                "device": config.embedding.device,
+                "allow_downloads": config.privacy.allow_model_downloads,
+                "cache_dir": _model_cache_dir().as_posix(),
+                "cached": _model_is_cached(),
+                "vectors": _workspace_vector_count(),
+            },
+        )
+
+    @app.post("/api/models/download")
+    async def models_download() -> dict[str, Any]:
+        """Fetch the configured embedding model into the local cache.
+
+        Refuses when model downloads are switched off, so the setting the
+        dashboard exposes is enforced rather than advisory.
+        """
+        config = workspace.config
+        if not config.privacy.allow_model_downloads:
+            raise PolderGraphError(
+                "Model downloads are disabled for this workspace.",
+                code="DOWNLOAD_DISABLED",
+                remediation="Enable privacy.allow_model_downloads in Settings first.",
+            )
+        if config.embedding.backend != "native":
+            raise PolderGraphError(
+                "Only the native embedding backend downloads weights.",
+                code="UNSUPPORTED_BACKEND",
+                remediation="Set the embedding backend to 'native' first.",
+            )
+
+        from ..embedding.gemma import create_backend
+
+        def load() -> tuple[str, int]:
+            backend = create_backend(config, cache_dir=_model_cache_dir(), offline=False)
+            info = backend.model_info()
+            return info.model_id, info.dimensions
+
+        try:
+            model_id, dimensions = await asyncio.to_thread(load)
+        except Exception as exc:
+            raise PolderGraphError(
+                f"Could not download the embedding model: {exc}",
+                code="MODEL_DOWNLOAD_FAILED",
+                remediation="Check the network connection and retry from Settings.",
+            ) from exc
+        return ok(
+            "models.download",
+            {
+                "model": model_id,
+                "dimensions": dimensions,
+                "cached": _model_is_cached(),
+            },
+        )
     @app.get("/api/memory/status")
     def memory_status() -> dict[str, Any]:
         return ok("memory.status", MemoryStore(workspace.root).status())

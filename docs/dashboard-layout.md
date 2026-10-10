@@ -203,6 +203,50 @@ node and its label - the unreadable highlight. Hover is now a subtle ring in the
 accent colour. The inspector panel already carries the node's details, so the
 tooltip was redundant as well as unreadable.
 
+## Settings
+
+The dashboard has a full settings surface, reachable from the gear in the header.
+It is a sectioned page rather than a dialog, because configuration here is not a
+handful of preferences:
+
+- **View and layout** - theme, labels, legend, node limit and layout physics.
+  Browser-local, not workspace config.
+- **Embeddings** - backend, model, device, revision, and the remote-endpoint
+  fields for API backends.
+- **Decisions** - provider, timeout, confidence threshold, and the local
+  worker's state-token and memory caps.
+- **Privacy and egress** - the four switches that decide what may leave the
+  machine.
+- **Indexing**, **Retrieval**, **Semantic edges**, **Graph** - the index and
+  retrieval behaviour.
+
+Anything that can send code off the machine is marked *leaves this machine*
+inline, so it is visible at the point of the decision rather than in a policy
+document. Section ordering puts egress decisions where they are made.
+
+Editing is per-section and saved explicitly, so a half-finished edit never
+reaches the server, and a rejected value is reported against the section that
+caused it.
+
+### Editing configuration
+
+The API exposes an explicit section allowlist and rejects unknown sections and
+unknown fields with a 4xx rather than ignoring them, so a stale field name
+cannot look like it worked. Writes go to the workspace `config.toml` and the
+query service rebuilds its embedding backend, so a model change takes effect
+instead of the dashboard silently answering with the previous model.
+
+Secrets are redacted on read rather than omitted, so "unset" stays
+distinguishable from "hidden".
+
+### Models
+
+The Embeddings section shows what is actually local: the configured model, its
+dimensions, the device, how many vectors the index holds, and whether the
+weights are cached. The download button is disabled with an explanation when
+model downloads are switched off, and the server enforces the same switch - the
+setting is not advisory.
+
 ## Also worth knowing
 
 - Repulsion uses `distanceMax` to bound work, and the exact pass is skipped above

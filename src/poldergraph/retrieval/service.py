@@ -258,6 +258,20 @@ class QueryService:
         self._search_cache: OrderedDict[tuple[Any, ...], SearchResponse] = OrderedDict()
         self._search_cache_limit = 64
 
+    def invalidate_backend(self) -> None:
+        """Rebuild the embedding backend after a configuration change.
+
+        The service holds one backend for its lifetime, so changing the model,
+        its dimensions or the backend name has to rebuild it; otherwise the
+        dashboard would keep answering with the previous model.
+        """
+        from ..embedding.gemma import create_backend
+
+        if self.config.embedding.backend == "none":
+            self.backend = None
+            return
+        self.backend = create_backend(self.config)
+
     def workspace_index(self) -> Any:
         """Index directory, used for size reporting."""
         from pathlib import Path

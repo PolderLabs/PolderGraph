@@ -67,7 +67,7 @@ const BASE = '/api';
 
 interface RequestOptions {
   signal?: AbortSignal;
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PUT';
   body?: unknown;
 }
 
@@ -81,7 +81,7 @@ function joinQuery(params: Record<string, string | number | boolean | null | und
   return qs ? `?${qs}` : '';
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { signal, method = 'GET', body } = options;
 
   const headers: Record<string, string> = { Accept: 'application/json' };

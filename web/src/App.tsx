@@ -26,7 +26,10 @@ import { Inspector } from './components/Inspector';
 import { Legend } from './components/Legend';
 import { BreadcrumbBar, type BreadcrumbEntry, type ViewMode } from './components/BreadcrumbBar';
 import { ContextMenu, type ContextAction } from './components/ContextMenu';
-import { SettingsDialog } from './components/SettingsDialog';
+import { SettingsPage } from './components/SettingsPage';
+
+/** Command template used to open a symbol's source in the user's editor. */
+const EDITOR_COMMAND = 'code --goto {file}:{line}';
 import { SourceDialog } from './components/SourceDialog';
 import { MemoryWorkspace } from './components/MemoryWorkspace';
 
@@ -63,7 +66,6 @@ const SSE_REFRESH_DEBOUNCE_MS = 1500;
 export default function App(): JSX.Element {
   /* ---------------------------------------------------------------- prefs */
   const [preferences, setPreferences] = useState<ViewPreferencesState>(() => loadPreferences());
-  const [editorCommand, setEditorCommand] = useState('code --goto {file}:{line}');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<'graph' | 'memory'>('graph');
   const [mobilePanel, setMobilePanel] = useState<'filters' | 'inspector' | null>(null);
@@ -873,22 +875,19 @@ export default function App(): JSX.Element {
         />
       )}
 
-      {workspaceMode === 'graph' && <SettingsDialog
+      {workspaceMode === 'graph' && <SettingsPage
         open={settingsOpen}
         preferences={preferences}
-        onChange={updatePreferences}
+        onPreferencesChange={updatePreferences}
         onClose={() => setSettingsOpen(false)}
         onResetLayout={resetLayout}
-        onClearPositions={() => showToast('Saved node positions cleared.')}
-        editorCommand={editorCommand}
-        onEditorCommandChange={setEditorCommand}
       />}
 
       {workspaceMode === 'graph' && sourceTarget && (
         <SourceDialog
           path={sourceTarget.path}
+        editorCommand={EDITOR_COMMAND}
           line={sourceTarget.line}
-          editorCommand={editorCommand}
           onClose={() => setSourceTarget(null)}
         />
       )}
