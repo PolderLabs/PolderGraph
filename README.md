@@ -249,7 +249,9 @@ The test follows the separation of accurate retrieval and abstention emphasized 
 
 ### Context planner benchmark
 
-On the same synthetic repository corpus, we compared task-adaptive context with a fixed 3,000-token context budget. The offline run used 8 repository questions plus greeting and unrelated prompts, repeated 30 times each, with semantic embeddings disabled. The planner matched the baseline's **87.5% expected-entity case recall** while using **520 vs 1,026 estimated content tokens per request** (49% fewer). Expected-entity precision was **23.7% vs 10.4%**, and the planner skipped retrieval on the two unrelated prompts. Mean latency was **4.0 ms vs 3.1 ms**; p95 was **7.2 ms vs 5.5 ms**. The extra planning/packing work adds a few milliseconds in this small local run, while reducing context and irrelevant evidence.
+On the same synthetic repository corpus, we compared task-adaptive context with a fixed 3,000-token context budget. Both arms run at an **equal 3,000-token budget**, so the planner's strategy is the only variable; earlier releases compared 6,000 against 3,000, which confounded budget with strategy. Over 30 requests per arm with semantic embeddings disabled, the planner matched the baseline's **87.5% expected-entity case recall** while using **519.6 vs 1,026.3 mean estimated content tokens** (49% fewer) and **249 vs 1,268 p50 tokens**. Unnecessary context fell from **89.6% to 76.3%**, expected-entity precision rose from **10.4% to 23.7%**, and the planner issued **0.80 vs 1.00** internal searches per request. Mean latency was flat (**1.739 ms vs 1.765 ms**); p95 was slightly higher (**3.697 ms vs 3.188 ms**) on this small sample. The planner skipped retrieval on the two unrelated prompts.
+
+A 6,000-token planner arm produced identical evidence to the 3,000-token arm, because the planner caps its own budget by detected intent; raising the caller's ceiling does not widen delivered context.
 
 This is an evidence-coverage proxy, not model-judged grounding or task success. It uses a synthetic corpus, lexical/structural retrieval, and one machine; it does not establish that an agent solves coding tasks better. Reproduce it with:
 
@@ -258,6 +260,33 @@ uv run python tests/benchmarks/benchmark_context_planner.py --repeats 30
 ```
 
 See [benchmark methodology](docs/benchmark-methodology.md#context-planner-benchmark) for metric definitions and limitations.
+
+### Memory decision gates and cross-session behavior
+
+Two offline benchmarks evaluate persistent memory, with no model weights and no network:
+
+```bash
+uv run python tests/benchmarks/benchmark_decision_gates.py
+uv run python tests/benchmarks/benchmark_memory_tasks.py
+```
+
+The write gate was measured on a disclosed, versioned dataset of 15 synthetic statements (durable preferences, one-off statements, and ambiguous ones). With the shipped deterministic default, **precision 1.000, recall 0.500 and a false-write rate of 0.000** — it never stored a statement it should not have, at the cost of missing half the durable preferences. Latency was **0.523 ms mean / 0.538 ms p95** with a **6.8 ms** cold start.
+
+The hosted **Jev** and local **Laya** backends were **not available** in the environment where these numbers were recorded: no `laya` package or cached checkpoint was present, and no `TYPESAFE_API_KEY` was set, so hosted decisions stay opt-in and fail closed. **No figures are reported for them rather than estimated.** The benchmark probes availability on every run and emits real figures automatically on a machine that has a checkpoint or credential. On this run it verified **0 network calls and 0 weight downloads**.
+
+The cross-session suite runs four multi-session scenarios through the real Codex hook, each also run with memory capture disabled as a no-memory baseline:
+
+| Scenario | Memory enabled | No-memory baseline |
+|---|---|---|
+| Durable preference recalled in a later session | pass | fail |
+| Corrected preference recalled, original superseded | pass | fail |
+| Irrelevant query injects no stale preference | pass | pass |
+| Agent-authored text is never persisted | pass | pass |
+| **Task success rate** | **1.000 (5/5)** | **0.600 (3/5)** |
+
+Persistent memory is worth **+0.40 task success** here, entirely from the two scenarios needing cross-session carry-over.
+
+These are small synthetic suites measuring memory plumbing, not agent productivity. See [memory evaluation](docs/memory-evaluation.md) for method, full tables and limitations.
 
 ## Typed decisions API
 
