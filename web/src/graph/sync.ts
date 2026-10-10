@@ -17,7 +17,17 @@
 import type Graph from 'graphology';
 import type { PgEdgeAttributes, PgNodeAttributes } from './attributes';
 import type { FilterableEdge, FilterableNode } from './filters';
-import { isSemanticEdge, UNRESOLVED_KINDS } from './palette';
+import {
+  AGGREGATE_SIZE_SCALE,
+  communityColor,
+  DEFAULT_SIZE_SCALE,
+  isSemanticEdge,
+  nodeColorForKind,
+  sizeForImportance,
+  UNRESOLVED_KINDS,
+} from './palette';
+import type { Palette } from './palette';
+
 
 /** Edge program key used for a solid structural line. */
 const SOLID_EDGE_TYPE = 'line';
@@ -36,10 +46,39 @@ export const TRANSPARENT = 'rgba(0,0,0,0)';
 /**
  * @returns whether the topology changed, so adjacency must be rebuilt.
  */
+/**
+ * Appearance for a node the moment it enters the graph.
+ *
+ * The real values come from the display reducer, but that runs on a later
+ * refresh; using a representative size and colour here means a newly loaded
+ * graph is immediately visible and clickable.
+ */
+function initialAppearance(
+  node: FilterableNode,
+  palette: Palette,
+  colorMode: 'kind' | 'community',
+): { initialSize: number; initialColor: string } {
+  const scale = node.kind === 'community' ? AGGREGATE_SIZE_SCALE : DEFAULT_SIZE_SCALE;
+  return {
+    initialSize: sizeForImportance(node.importance ?? 0, node.degree ?? 0, scale),
+    // The real colour, not a placeholder. A placeholder grey meant every node
+    // rendered as an undifferentiated dot until the reducer ran a moment later,
+    // which looked like a visible switch from hollow to solid on load.
+    initialColor:
+      colorMode === 'community'
+        ? communityColor(node.community === null || node.community === undefined
+            ? ''
+            : String(node.community), palette.communityRamp)
+        : nodeColorForKind(node.kind ?? 'file', palette),
+  };
+}
+
 export function syncGraph(
   graph: Graph<PgNodeAttributes, PgEdgeAttributes>,
   nodes: FilterableNode[],
   edges: FilterableEdge[],
+  palette: Palette,
+  colorMode: 'kind' | 'community' = 'kind',
 ): boolean {
   const present = new Set<string>();
   let topologyChanged = false;
@@ -62,14 +101,19 @@ export function syncGraph(
       continue;
     }
 
+    // A new node starts with the size and colour its display reducer would
+    // give it. Starting at size 1 in a placeholder grey makes every node render
+    // as an unclickable dot until the next refresh, which is what a freshly
+    // loaded graph showed.
+    const { initialSize, initialColor } = initialAppearance(node, palette, colorMode);
     graph.addNode(node.id, {
       x: 0,
       y: 0,
-      size: 1,
+      size: initialSize,
       label: node.label,
       kind: node.kind,
       type: 'circle',
-      color: '#7f8ea3',
+      color: initialColor,
       labelColor: '#e6edf5',
       pgRingColor: TRANSPARENT,
       pgRingSize: 0,

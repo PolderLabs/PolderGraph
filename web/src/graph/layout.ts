@@ -291,13 +291,21 @@ export class LayoutController {
   beginDrag(node: string): void {
     if (!this.graph.hasNode(node)) return;
     if (!this.worker) return;
-    this.setRunning(true);
+    // Deliberately does not change the running state. Setting it would re-enter
+    // the layout-controlled effect, which re-seeds the whole graph: every click
+    // would then shuffle every node out from under the cursor, and a node you
+    // had just clicked becomes impossible to hit again.
     this.post({ type: 'wake', alpha: DRAG_ALPHA });
   }
 
   /** Moves the dragged node under the cursor. */
   dragTo(node: string, x: number, y: number): void {
     this.setPosition(node, x, y);
+  }
+
+  /** True while the worker still has forces running, so the drag must redraw. */
+  get isWaking(): boolean {
+    return this.alpha > 0;
   }
 
   /** Ends a drag. The layout decays back to rest on its own. */

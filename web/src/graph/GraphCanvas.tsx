@@ -174,11 +174,13 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     const handle = handleRef.current;
     if (!ready || !handle) return;
 
-    const topologyChanged = syncGraph(handle.graph, props.nodes, props.edges);
+    const topologyChanged = syncGraph(
+      handle.graph, props.nodes, props.edges, props.palette, props.colorMode,
+    );
     if (topologyChanged) handle.adjacency = buildAdjacency(handle.graph);
     handle.controller.sync();
     handle.sigma.refresh();
-  }, [ready, props.nodes, props.edges]);
+  }, [ready, props.nodes, props.edges, props.palette, props.colorMode]);
 
   /* -------------------------------------------------------- layout controls */
 
@@ -299,13 +301,30 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       );
     };
 
+    // Pointer moves arrive faster than the display can use them. Coalescing
+    // them into one redraw per animation frame is what stops a drag from
+    // flickering; refreshing on every move was the other half of that flicker.
+    let dragFrame = 0;
     const applyDrag = (event: MouseEvent) => {
       if (!dragging) return;
-      moved = true;
+      // Waking the layout on the initial press was wrong: the forces resume
+      // straight away, nodes drift between mouse-down and mouse-up, and Sigma
+      // then sees the press and the release land on different items - so a
+      // plain click is never delivered. The layout is woken only once the
+      // pointer has actually travelled, which is what makes it a drag.
+      if (!moved) {
+        if (Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) < 3) return;
+        moved = true;
+        handle.controller.beginDrag(dragging);
+      }
       const point = toGraphPoint(event.clientX, event.clientY);
       if (!point) return;
       handle.controller.dragTo(dragging, point.x, point.y);
-      handle.sigma.refresh();
+      if (dragFrame) return;
+      dragFrame = requestAnimationFrame(() => {
+        dragFrame = 0;
+        handle.sigma.refresh();
+      });
     };
 
     const finishDrag = (event: MouseEvent) => {
@@ -316,7 +335,10 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
         !moved && Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) < 4;
       dragging = null;
       moved = false;
+      cancelAnimationFrame(dragFrame);
+      dragFrame = 0;
       containerRef.current?.removeEventListener('mousemove', applyDrag);
+      handle.sigma.refresh();
       handle.controller.endDrag(node, isClick);
       if (isClick) propsRef.current.onNodePinned(node, true);
     };
@@ -326,13 +348,14 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       moved = false;
       const original = event.original as MouseEvent;
       downAt = { x: original.clientX, y: original.clientY };
-      handle.controller.beginDrag(node);
       containerRef.current?.addEventListener('mousemove', applyDrag);
       window.addEventListener('mouseup', finishDrag, { once: true });
     };
 
+    // Sigma delivers the click itself when the press and release land on the
+    // same item, so nothing is dispatched here for a plain click.
     const handleUpNode = ({ node }: SigmaNodeEventPayload) => {
-      if (dragging === node) finishDrag({ clientX: downAt.x, clientY: downAt.y } as MouseEvent);
+      if (dragging === node && moved) finishDrag({ clientX: downAt.x, clientY: downAt.y } as MouseEvent);
     };
 
     sigma.on('clickNode', handleNodeClick);
