@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, isAbortError } from './api/client';
-import { describeError } from './util/errors';
+import { describeDegradation, describeError } from './util/errors';
 import { EventsClient, type EventsStatus } from './api/events';
 import type {
   CommunitiesData,
@@ -19,7 +19,6 @@ import { applyFilters, collectFacets, type FilterableEdge, type FilterableNode }
 import { PALETTES, type ColorMode, type Palette } from './graph/palette';
 import { collapseCommunities, type CommunityMode } from './graph/community';
 import { buildPathHighlight, mergePathIntoGraph, type PathHighlight } from './graph/path';
-import { PREVENT_OVERLAP_MAX_NODES } from './graph/layout';
 
 import { Header } from './components/Header';
 import { FilterPanel, ForcePanel } from './components/FilterPanel';
@@ -387,8 +386,14 @@ export default function App(): JSX.Element {
           setSelectedId(best.id);
           setPinnedIds(new Set());
         }
-        if (data.degraded === true) {
-          showToast('Search ran in degraded mode: semantic recall was unavailable.');
+        const degraded = [
+          ...(Array.isArray(data.degraded) ? data.degraded : []),
+          ...(Array.isArray(data.routing?.degraded) ? data.routing.degraded : []),
+        ];
+        if (degraded.length > 0) {
+          // Surface the real reason and what to do about it, rather than a bare
+          // flag that leaves the user guessing which channel went missing.
+          showToast(`${describeDegradation(degraded[0])}`);
         }
       } catch (error) {
         if (isAbortError(error)) return;
@@ -640,7 +645,6 @@ export default function App(): JSX.Element {
     ? `${pathHighlight.hops} hops from ${pathHighlight.from.slice(0, 16)}… to ${pathHighlight.to.slice(0, 16)}…`
     : null;
 
-  const canPreventOverlap = displayNodes.length <= PREVENT_OVERLAP_MAX_NODES;
 
   const updatePreferences = useCallback((next: ViewPreferencesState) => setPreferences(next), []);
   const resetLayout = useCallback(() => {
@@ -720,6 +724,7 @@ export default function App(): JSX.Element {
               forceSettings={preferences.force}
               layoutResetToken={layoutResetToken}
               layoutRunning={layoutRunning}
+              onLayoutRunningChange={setLayoutRunning}
               showLabels={preferences.showLabels}
               hideLowValueEdges={preferences.hideLowValueEdges}
               fitToken={fitToken}
@@ -847,7 +852,6 @@ export default function App(): JSX.Element {
         <ForcePanel
           settings={preferences.force}
           open={forceOpen}
-          canPreventOverlap={canPreventOverlap}
           onToggleOpen={() => setForceOpen((open) => !open)}
           onChange={(force: ForceSettingsState) =>
             setPreferences((previous) => ({ ...previous, force }))

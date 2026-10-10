@@ -245,7 +245,6 @@ function Toggle({
 export interface ForcePanelProps {
   settings: ForceSettingsState;
   open: boolean;
-  canPreventOverlap: boolean;
   onToggleOpen: () => void;
   onChange: (settings: ForceSettingsState) => void;
   onReset: () => void;
@@ -276,62 +275,52 @@ export function ForcePanel(props: ForcePanelProps): JSX.Element {
       {props.open && (
         <div className="force__body">
           <ForceSlider
-            label="Gravity"
-            value={settings.gravity}
+            label="Repulsion"
+            value={settings.chargeStrength}
+            min={-400}
+            max={-10}
+            step={5}
+            onChange={(value) => set({ chargeStrength: value })}
+          />
+          <ForceSlider
+            label="Link strength"
+            value={settings.linkStrength}
+            min={0}
+            max={2}
+            step={0.05}
+            onChange={(value) => set({ linkStrength: value })}
+          />
+          <ForceSlider
+            label="Link distance"
+            value={settings.linkDistance}
+            min={10}
+            max={160}
+            step={2}
+            onChange={(value) => set({ linkDistance: value })}
+          />
+          <ForceSlider
+            label="Centering"
+            value={settings.centerStrength}
+            min={0}
+            max={1}
+            step={0.05}
+            onChange={(value) => set({ centerStrength: value })}
+          />
+          <ForceSlider
+            label="Settling"
+            value={settings.velocityDecay}
+            min={0.3}
+            max={0.95}
+            step={0.01}
+            onChange={(value) => set({ velocityDecay: value })}
+          />
+          <ForceSlider
+            label="Node spacing"
+            value={settings.collisionPadding}
             min={0}
             max={20}
-            step={0.1}
-            onChange={(value) => set({ gravity: value })}
-          />
-          <ForceSlider
-            label="Scaling ratio"
-            value={settings.scalingRatio}
-            min={0.01}
-            max={10}
-            step={0.01}
-            onChange={(value) => set({ scalingRatio: value })}
-          />
-          <ForceSlider
-            label="Speed (inverse of slow-down)"
-            value={1 / Math.max(settings.slowDown, 0.01)}
-            min={0.05}
-            max={5}
-            step={0.05}
-            onChange={(value) => set({ slowDown: 1 / Math.max(value, 0.01) })}
-          />
-          <ForceSlider
-            label="Edge weight influence"
-            value={settings.edgeWeightInfluence}
-            min={0}
-            max={5}
-            step={0.1}
-            onChange={(value) => set({ edgeWeightInfluence: value })}
-          />
-          <ForceToggle
-            label="Strong gravity"
-            checked={settings.strongGravityMode}
-            onChange={(value) => set({ strongGravityMode: value })}
-          />
-          <ForceToggle
-            label="Prevent overlap"
-            checked={settings.adjustSizes}
-            disabled={!props.canPreventOverlap}
-            hint={
-              props.canPreventOverlap
-                ? 'Quadratic per iteration; disabled automatically above 4,000 nodes.'
-                : 'Unavailable above 4,000 nodes — it would stall the browser.'
-            }
-            onChange={(value) => set({ adjustSizes: value })}
-          />
-          <ForceToggle
-            label="Lin-log mode"
-            checked={settings.linLogMode}
-            onChange={(value) => set({ linLogMode: value })}
-          />
-          <ForceToggle
-            label="Outbound attraction distribution"
-            checked={settings.outboundAttractionDistribution}
-            onChange={(value) => set({ outboundAttractionDistribution: value })}
+            step={0.5}
+            onChange={(value) => set({ collisionPadding: value })}
           />
           <button type="button" className="force__reset" onClick={props.onReset}>
             Reset to defaults
@@ -375,33 +364,5 @@ function ForceSlider({
   );
 }
 
-function ForceToggle({
-  label,
-  checked,
-  onChange,
-  disabled = false,
-  hint,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  disabled?: boolean;
-  hint?: string;
-}): JSX.Element {
-  return (
-    <label className={disabled ? 'force__field force__field--disabled' : 'force__field'}>
-      <span className="force__label">
-        <input
-          type="checkbox"
-          checked={checked}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.checked)}
-        />
-        {label}
-      </span>
-      {hint && <span className="force__hint">{hint}</span>}
-    </label>
-  );
-}
 
 export { DEFAULT_FORCE };

@@ -44,7 +44,10 @@ def test_context_offline_uses_in_process_service_and_disables_decisions(monkeypa
 
     result = CliRunner().invoke(app, ["context", "how does this work", "--offline", "--no-json"])
     assert result.exit_code == 0, result.output
-    assert seen == {"offline": True, "need_backend": False}
+    # Offline forbids downloads and remote calls, not the local embedding model.
+    # The backend must still be requested so warm-cache semantic and memory recall
+    # work; the backend itself enforces no-download when offline.
+    assert seen == {"offline": True, "need_backend": True}
     assert Workspace.config.decisions.provider == "disabled"
 
 

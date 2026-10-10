@@ -10,6 +10,16 @@ from ..storage.vectors import create_vector_store
 from .lexical import Candidate
 
 
+def _reason(exc: Exception) -> str:
+    """Human-readable cause for a degraded semantic channel.
+
+    Uses the error message when available, otherwise the class name, so the
+    degraded note stays actionable without leaking a traceback.
+    """
+    message = getattr(exc, "message", None) or str(exc)
+    return message.strip() or type(exc).__name__
+
+
 def semantic_candidates(
     repo: Repository,
     query: str,
@@ -24,10 +34,16 @@ def semantic_candidates(
     Returns (candidates, degraded_reason). A failure degrades to lexical-only
     rather than silently returning nothing.
     """
-    if backend is None or not backend.capabilities():
+    if backend is None:
         return [], "semantic backend unavailable"
-
-    info = backend.model_info()
+    try:
+        if not backend.capabilities():
+            return [], "semantic backend unavailable"
+        info = backend.model_info()
+    except Exception as exc:
+        # A missing or unloadable backend must degrade to lexical and structural
+        # evidence, never fail the whole query.
+        return [], f"semantic backend unavailable: {_reason(exc)}"
     if info.dimensions == 0:
         return [], "semantic backend unavailable"
 

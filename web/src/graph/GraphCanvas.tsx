@@ -15,7 +15,7 @@ import {
   sizeForImportance,
 } from './palette';
 import type { ColorMode, Palette } from './palette';
-import { ForceAtlas2Controller } from './layout';
+import { LayoutController } from './layout';
 import { buildAdjacency, syncGraph, TRANSPARENT } from './sync';
 import type { PgEdgeAttributes, PgNodeAttributes } from './attributes';
 import type { ForceSettingsState } from '../state/preferences';
@@ -48,6 +48,11 @@ export interface GraphCanvasProps {
   interaction: CanvasInteractionState;
   forceSettings: ForceSettingsState;
   layoutRunning: boolean;
+  /**
+   * Reports that the layout settled or started, so the UI can stop showing a
+   * running layout and leave the canvas still.
+   */
+  onLayoutRunningChange?: (running: boolean) => void;
   showLabels: boolean;
   hideLowValueEdges: boolean;
   /** Bumping this refits the camera (view switch, reset). */
@@ -65,7 +70,7 @@ export interface GraphCanvasProps {
 interface CanvasHandle {
   sigma: PgSigma;
   graph: Graph<PgNodeAttributes, PgEdgeAttributes>;
-  controller: ForceAtlas2Controller;
+  controller: LayoutController;
   /** Undirected adjacency, rebuilt when the topology changes. */
   adjacency: Map<string, Set<string>>;
 }
@@ -98,9 +103,10 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     if (!container) return;
 
     const graph = new Graph<PgNodeAttributes, PgEdgeAttributes>({ multi: false, type: 'mixed' });
-    const controller = new ForceAtlas2Controller({
+    const controller = new LayoutController({
       graph,
       onFrame: () => propsRef.current.onLayoutFrame(),
+      onRunningChange: (running: boolean) => propsRef.current.onLayoutRunningChange?.(running),
     });
 
     const sigma = new MeasuredSigma<PgNodeAttributes, PgEdgeAttributes>(graph, container, {
@@ -181,24 +187,31 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     if (!ready || !handle) return;
     const force = props.forceSettings;
     handle.controller.setSettings({
-      gravity: force.gravity,
-      scalingRatio: force.scalingRatio,
-      slowDown: force.slowDown,
-      edgeWeightInfluence: force.edgeWeightInfluence,
-      strongGravityMode: force.strongGravityMode,
-      adjustSizes: force.adjustSizes,
-      linLogMode: force.linLogMode,
-      outboundAttractionDistribution: force.outboundAttractionDistribution,
+      chargeStrength: force.chargeStrength,
+      linkStrength: force.linkStrength,
+      linkDistance: force.linkDistance,
+      centerStrength: force.centerStrength,
+      velocityDecay: force.velocityDecay,
+      collisionPadding: force.collisionPadding,
     });
   }, [ready, props.forceSettings]);
 
+  const wasLayoutRunning = useRef(false);
   useEffect(() => {
     const handle = handleRef.current;
     if (!ready || !handle) return;
     if (props.layoutRunning) {
+      wasLayoutRunning.current = true;
       handle.controller.start();
     } else {
       handle.controller.stop();
+      // Refit only on the transition into paused. A settled layout can finish
+      // well inside or well outside the current viewport, and a viewer should
+      // see the whole result instead of one corner of it.
+      if (wasLayoutRunning.current) {
+        wasLayoutRunning.current = false;
+        handle.sigma.getCamera().animatedReset({ duration: 320 });
+      }
     }
   }, [ready, props.layoutRunning]);
 

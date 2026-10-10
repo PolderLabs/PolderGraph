@@ -2,7 +2,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
-dist/
+# Only the root-level build output is ignored here. A blanket `dist/` rule would
+# also exclude web/dist/, and git cannot re-include a file inside an excluded
+# directory - which would make the tracked dashboard placeholder impossible.
+/dist/
+**/dist/*
+!web/dist/index.html
 build/
 *.egg
 .eggs/
@@ -35,4 +40,8 @@ Thumbs.db
 # is the copy the Python server serves and the wheel packages. web/dist was a
 # stale duplicate with mismatched asset hashes; ignore it so there is one source
 # of truth.
-web/dist/
+web/dist/*
+# A tracked placeholder keeps the source tarball buildable. pyproject force-includes
+# this directory, and a missing path makes hatchling fail, which breaks installing
+# straight from the GitHub source archive.
+!web/dist/index.html

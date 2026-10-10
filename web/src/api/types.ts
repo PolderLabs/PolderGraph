@@ -321,7 +321,8 @@ export interface SearchResult {
  */
 export interface SearchRouting {
   intent?: string;
-  degraded?: boolean;
+  /** The server sends the actual degradation reasons, not a bare flag. */
+  degraded?: string[];
   [key: string]: unknown;
 }
 
@@ -331,7 +332,8 @@ export interface SearchData {
   truncated: boolean;
   intent?: string;
   routing?: SearchRouting;
-  degraded?: boolean;
+  /** Reasons a retrieval channel was skipped or failed, with no hint attached. */
+  degraded?: string[];
 }
 
 export interface MemoryEntry {

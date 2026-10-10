@@ -1,14 +1,27 @@
 import type { ColorMode, ThemeName } from '../graph/palette';
 
+/**
+ * Layout controls, named after the forces the simulation actually applies.
+ *
+ * These replaced the ForceAtlas2 knobs, which had no effect on the d3-force
+ * model that now drives the graph.
+ */
 export interface ForceSettingsState {
-  gravity: number;
-  scalingRatio: number;
-  slowDown: number;
-  edgeWeightInfluence: number;
-  strongGravityMode: boolean;
-  adjustSizes: boolean;
-  linLogMode: boolean;
-  outboundAttractionDistribution: boolean;
+  /** Repulsion between nodes. More negative spreads the graph further apart. */
+  chargeStrength: number;
+  /** Spring strength along edges. Higher pulls related code closer together. */
+  linkStrength: number;
+  /** Preferred distance between connected nodes. */
+  linkDistance: number;
+  /**
+   * How hard the layout's centroid is pulled to the middle of the view. 1
+   * fully recentres it each tick; 0 leaves it wherever it drifted.
+   */
+  centerStrength: number;
+  /** Velocity kept per tick. Lower settles faster and moves less. */
+  velocityDecay: number;
+  /** Gap kept between node circles when overlaps are resolved. */
+  collisionPadding: number;
 }
 
 export interface LocalViewState {
@@ -52,14 +65,12 @@ export interface ViewPreferencesState {
 }
 
 export const DEFAULT_FORCE: ForceSettingsState = {
-  gravity: 1,
-  scalingRatio: 1,
-  slowDown: 1,
-  edgeWeightInfluence: 1,
-  strongGravityMode: false,
-  adjustSizes: false,
-  linLogMode: false,
-  outboundAttractionDistribution: false,
+  chargeStrength: -260,
+  linkStrength: 0.55,
+  linkDistance: 46,
+  centerStrength: 1,
+  velocityDecay: 0.62,
+  collisionPadding: 3,
 };
 
 export const DEFAULT_LOCAL: LocalViewState = {

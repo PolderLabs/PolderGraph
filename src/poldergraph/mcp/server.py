@@ -48,13 +48,24 @@ def _server_class() -> Any:
         ) from exc
 
 
+def _server_version() -> str:
+    """Report the installed package version in the MCP handshake.
+
+    Clients surface this in their server list and logs; an empty string makes
+    the integration impossible to identify.
+    """
+    from .. import __version__
+
+    return __version__
+
+
 def build_server(root: Path | None = None) -> Any:
     """Build the MCP server bound to a workspace."""
     server_class = _server_class()
 
     from ..cli_support import build_service
 
-    server = server_class("poldergraph")
+    server = server_class("poldergraph", version=_server_version())
 
     class Session:
         """Lazily opened workspace, reused across tool calls.

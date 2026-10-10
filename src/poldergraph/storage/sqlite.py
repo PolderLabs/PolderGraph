@@ -52,7 +52,29 @@ def connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
     cur.execute("PRAGMA temp_store=MEMORY")
     cur.execute("PRAGMA cache_size=-32000")
     cur.close()
+    if not read_only:
+        _recover_wal(path, con)
     return con
+
+
+def _recover_wal(path: Path, con: sqlite3.Connection) -> None:
+    """Fold a carried-over write-ahead log back into the database.
+
+    Copying or moving a repository while its index was open leaves a non-empty
+    ``-wal`` and a ``-shm`` that no longer match this file. SQLite can then fail
+    writes with "attempt to write a readonly database", which used to surface as
+    an empty result set plus a vector-only warning. Checkpointing the log on open
+    restores a consistent, writable index.
+    """
+    wal = Path(f"{path}-wal")
+    try:
+        if not wal.exists() or wal.stat().st_size == 0:
+            return
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.DatabaseError:
+        # Recovery is best-effort: a busy or locked database is still readable,
+        # and any real problem must surface from the actual failing operation.
+        return
 
 
 def load_vec_extension(con: sqlite3.Connection) -> bool:

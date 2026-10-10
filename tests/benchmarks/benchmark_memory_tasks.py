@@ -34,15 +34,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _workspace import benchmark_workspace  # noqa: E402
 
-# Retrieval here is lexical/structural (the semantic channel is disabled), so
-# recall prompts deliberately overlap the stored preference wording.
+# Recall prompts are deliberately paraphrased rather than reusing the stored
+# wording. Prompts that share words with the memory only exercise the lexical
+# path and would report success even when semantic recall is switched off, which
+# is exactly the regression this suite must catch.
 SCENARIOS: list[dict[str, Any]] = [
     {
         "id": "durable_recall",
         "description": "A preference stated in one session is recalled in a later one.",
         "turns": [
             {"session": "s1", "prompt": "I prefer concise explanations.", "event": "UserPromptSubmit", "expect": []},
-            {"session": "s2", "prompt": "Do I prefer concise or detailed explanations?", "event": "UserPromptSubmit", "expect_in_output": ["I prefer concise explanations."]},
+            {"session": "s2", "prompt": "How should you explain things to me?", "event": "UserPromptSubmit", "expect_in_output": ["I prefer concise explanations."]},
         ],
     },
     {
@@ -51,7 +53,7 @@ SCENARIOS: list[dict[str, Any]] = [
         "turns": [
             {"session": "s1", "prompt": "I prefer concise explanations.", "event": "UserPromptSubmit", "expect": []},
             {"session": "s2", "prompt": "I prefer detailed explanations.", "event": "UserPromptSubmit", "expect": []},
-            {"session": "s3", "prompt": "Do I prefer concise or detailed explanations?", "event": "UserPromptSubmit", "expect_in_output": ["I prefer detailed explanations."], "expect_absent": ["I prefer concise explanations."]},
+            {"session": "s3", "prompt": "How should you explain things to me?", "event": "UserPromptSubmit", "expect_in_output": ["I prefer detailed explanations."], "expect_absent": ["I prefer concise explanations."]},
         ],
     },
     {
@@ -67,7 +69,7 @@ SCENARIOS: list[dict[str, Any]] = [
         "description": "Agent-authored text is never stored as a user preference.",
         "turns": [
             {"session": "s1", "prompt": "I prefer concise explanations.", "event": "AfterAgentTurn", "expect": []},
-            {"session": "s2", "prompt": "Do I prefer concise or detailed explanations?", "event": "UserPromptSubmit", "expect_absent": ["I prefer concise explanations."]},
+            {"session": "s2", "prompt": "How should you explain things to me?", "event": "UserPromptSubmit", "expect_absent": ["I prefer concise explanations."]},
         ],
     },
 ]

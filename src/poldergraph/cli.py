@@ -614,6 +614,7 @@ def status(
                     "stored_format": get_meta(workspace.con, "index_format_version"),
                 },
                 "counts": counts,
+                "unresolved_breakdown": repo.unresolved_breakdown(),
                 "embedding": {
                     "backend": config.embedding.backend,
                     "model": config.embedding.model,
@@ -1174,7 +1175,7 @@ def context(
                     typer.echo(entity_line(_Simple(entity)))
             return
         workspace, _repo, service = build_service(
-            root, need_backend=not offline, offline=offline
+            root, need_backend=True, offline=offline
         )
         if offline:
             workspace.config.decisions.provider = "disabled"
@@ -1186,11 +1187,10 @@ def context(
         from .memory import MemoryStore, add_memories_to_context
 
         memory_store = MemoryStore(service.root)
+        # Offline forbids downloads and remote calls, not the local model: the
+        # native backend loads EmbeddingGemma from its warm cache, so memory
+        # recall keeps working for prompts that do not reuse the stored wording.
         memory_backend = service.backend
-        if offline:
-            from .embedding.protocol import DisabledBackend
-
-            memory_backend = DisabledBackend("offline mode uses lexical memory retrieval")
         add_memories_to_context(
             data, memory_store, query, budget, backend=memory_backend,
             decision_config=service.config.decisions,

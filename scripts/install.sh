@@ -30,20 +30,33 @@ fi
 
 echo "Installing PolderGraph from GitHub release $tag..."
 echo ''
+version=${tag#v}
 echo 'NOTE: PolderGraph downloads a ~2 GB embedding model the first time you run'
 echo '      poldergraph init. Python dependencies add another ~1.5 GB.'
 echo '      Expect 3-4 GB of free disk space.'
 echo ''
 install_dir=$(mktemp -d)
 trap 'rm -rf "$install_dir"' EXIT HUP INT TERM
-curl -fsSL -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/repos/$repo/tarball/$tag" -o "$install_dir/source.tar.gz"
-tar -xzf "$install_dir/source.tar.gz" -C "$install_dir"
-source_dir=$(find "$install_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-if [ -z "$source_dir" ] || [ ! -f "$source_dir/pyproject.toml" ]; then
-    echo 'Error: failed to extract the PolderGraph release source archive.' >&2
-    exit 1
+
+# Prefer the wheel published with the release. It already contains the built
+# dashboard, so installing it needs neither Node.js nor a source build. Only fall
+# back to the source archive if no wheel is attached.
+wheel_url="https://github.com/$repo/releases/download/$tag/poldergraph-$version-py3-none-any.whl"
+wheel_file="poldergraph-$version-py3-none-any.whl"
+if curl -fsSL "$wheel_url" -o "$install_dir/$wheel_file" 2>/dev/null; then
+    echo "Installing the published wheel for $tag..."
+    uv tool install --force --upgrade "poldergraph[all] @ file://$install_dir/$wheel_file"
+else
+    echo "No wheel found for $tag; building from the source archive."
+    curl -fsSL -H 'Accept: application/vnd.github+json' \
+        "https://api.github.com/repos/$repo/tarball/$tag" -o "$install_dir/source.tar.gz"
+    tar -xzf "$install_dir/source.tar.gz" -C "$install_dir"
+    source_dir=$(find "$install_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+    if [ -z "$source_dir" ] || [ ! -f "$source_dir/pyproject.toml" ]; then
+        echo 'Error: failed to extract the PolderGraph release source archive.' >&2
+        exit 1
+    fi
+    uv tool install --force --upgrade "poldergraph[all] @ file://$source_dir"
 fi
-uv tool install --force --upgrade "poldergraph[all] @ file://$source_dir"
 echo 'PolderGraph is installed. Open a new shell if the poldergraph command is not on PATH.'
 echo 'Run "poldergraph init" from the repository you want to index.'

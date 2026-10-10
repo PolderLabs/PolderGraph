@@ -1,5 +1,8 @@
 # End-to-end user test findings (v0.10.0)
 
+> **Status: all seven issues below are fixed on `main` after v0.10.0.** This file
+> is kept as the record of what was found and how each was verified.
+
 A hands-on run of the shipped release the way a new user and a coding agent would
 use it. Method: install from the published v0.10.0 wheel, index a real
 multi-module repository, then exercise the CLI, MCP server, query daemon,

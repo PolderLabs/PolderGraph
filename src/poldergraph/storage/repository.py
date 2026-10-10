@@ -547,6 +547,31 @@ class Repository:
 
     # -------------------------------------------------------- index health
 
+    def unresolved_breakdown(self) -> dict[str, int]:
+        """Split unresolved references into actionable and expected.
+
+        Most unresolved references are calls into third-party libraries
+        (`con.execute`, `node.child_by_field_name`) that can never resolve
+        locally, so a raw total larger than the entity count reads as a broken
+        index. A reference is *actionable* only when its name matches a symbol
+        this index actually holds: that is a genuine resolution gap.
+        """
+        total = int(self.con.execute("SELECT COUNT(*) FROM unresolved_refs").fetchone()[0])
+        if not total:
+            return {"total": 0, "actionable": 0, "external_or_unresolvable": 0}
+        actionable = int(
+            self.con.execute(
+                "SELECT COUNT(*) FROM unresolved_refs u "
+                "WHERE EXISTS (SELECT 1 FROM entities e WHERE e.name = u.name "
+                "AND e.root_id IS u.root_id)"
+            ).fetchone()[0]
+        )
+        return {
+            "total": total,
+            "actionable": actionable,
+            "external_or_unresolvable": total - actionable,
+        }
+
     def counts(self) -> dict[str, int]:
         return {
             "roots": int(self.con.execute("SELECT COUNT(*) FROM roots").fetchone()[0]),

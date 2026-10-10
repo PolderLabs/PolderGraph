@@ -18,6 +18,7 @@ import json
 import math
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,27 @@ DEFAULT_IDLE_TIMEOUT_SECONDS = 15 * 60
 
 #: Seconds a request may run before the client gives up.
 REQUEST_TIMEOUT = 120.0
+
+
+def _is_database_failure(exc: BaseException) -> bool:
+    """True when a failure points at the database rather than the request.
+
+    Only these trigger the reopen-and-retry path; a bad query or a missing index
+    must still surface its own error.
+    """
+    if isinstance(exc, sqlite3.DatabaseError):
+        return True
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "readonly database",
+            "disk i/o error",
+            "database is locked",
+            "attempt to write",
+            "no such table",
+        )
+    )
 
 
 def resolve_index_dir(root: Path | None) -> Path | None:
@@ -307,6 +329,29 @@ class Daemon:
 
     def handle(self, command: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Execute one request in a single committed SQLite read generation."""
+        try:
+            return self._handle_once(command, arguments)
+        except Exception as exc:
+            # The resident daemon holds long-lived connections. If the index file
+            # underneath them was replaced (a copied repository, a forced
+            # reindex, WAL recovery) those handles go stale and every query
+            # would silently return nothing. Drop the cached state and retry
+            # once so the daemon heals itself instead of needing a restart.
+            if not _is_database_failure(exc):
+                raise
+            self._invalidate()
+            return self._handle_once(command, arguments)
+
+    def _invalidate(self) -> None:
+        """Discard cached connections so the next request reopens them."""
+        self._release_thread_service()
+        with suppress(Exception):
+            self.close()
+        self._workspace = None
+        self._service = None
+        self._supervisor = None
+
+    def _handle_once(self, command: str, arguments: dict[str, Any]) -> dict[str, Any]:
         service = self._service_for_thread()
         connection = service.repo.con
         data_version_start = int(connection.execute("PRAGMA data_version").fetchone()[0])
