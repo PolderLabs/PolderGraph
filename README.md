@@ -449,6 +449,7 @@ Override with environment variables: `POLDERGRAPH_EMBEDDING__DEVICE=cuda`
 - [docs/decision-worker-benchmark.md](docs/decision-worker-benchmark.md) — local decision worker supervision and measured behavior
 - [docs/memory-evaluation.md](docs/memory-evaluation.md) — memory decision gates and cross-session task results
 - [docs/rust-core-evaluation.md](docs/rust-core-evaluation.md) — indexing profile and the Rust maintain/hybrid/rewrite verdict
+- [docs/end-to-end-findings.md](docs/end-to-end-findings.md) — hands-on v0.10.0 user-test findings and open defects
 - [docs/implementation-checklist.md](docs/implementation-checklist.md) — acceptance criteria
 
 ## Requirements
