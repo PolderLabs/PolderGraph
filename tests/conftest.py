@@ -2,12 +2,64 @@
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
+
+# Mirrors poldergraph.discovery.scanner.detect_root. A workspace root is found by
+# walking up from the start directory, so a stray project marker in a shared
+# temporary directory (for example /tmp/package.json) would capture every
+# pytest tmp_path and silently re-point the tests at the wrong workspace root.
+_ROOT_MARKERS = (
+    ".git",
+    "pyproject.toml",
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "Gemfile",
+    "composer.json",
+    "CMakeLists.txt",
+    ".poldergraph",
+)
+
+
+def _has_marker_ancestor(directory: Path) -> bool:
+    """True when ``directory`` or any parent is a directory a workspace root could resolve to."""
+    return any(
+        (parent / marker).exists()
+        for parent in (directory, *directory.parents)
+        for marker in _ROOT_MARKERS
+    )
+
+
+def _isolated_tmp_root() -> Path:
+    """A temp directory whose ancestors contain no project marker files."""
+    candidates = [Path(tempfile.gettempdir()), Path("/var/tmp"), Path.home() / ".cache"]
+    for base in candidates:
+        try:
+            resolved = base.resolve()
+            if not _has_marker_ancestor(resolved):
+                root = resolved / "poldergraph-pytest"
+                root.mkdir(parents=True, exist_ok=True)
+                return root
+        except OSError:
+            continue
+    raise RuntimeError("No marker-free temporary directory available for isolated tests.")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Keep tmp_path out of any directory that could be mistaken for a workspace root."""
+    root = _isolated_tmp_root()
+    tempfile.tempdir = str(root)
+    os.environ["TMPDIR"] = str(root)
 
 
 @pytest.fixture()

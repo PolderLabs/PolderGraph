@@ -108,6 +108,20 @@ def provider_enabled(config: Any) -> bool:
     return provider == "laya"
 
 
+def apply_supervision_limits(config: Any) -> None:
+    """Push configured resource caps onto the shared local decision worker.
+
+    Supervision policy is separate from decision confidence: an over-cap or
+    oversized request degrades to deterministic behavior instead of blocking.
+    """
+    max_rss_mb = _setting(config, "max_rss_mb", None)
+    max_state_tokens = _setting(config, "max_state_tokens", 0)
+    local_decision_worker.set_limits(
+        max_rss_mb=float(max_rss_mb) if max_rss_mb else None,
+        max_state_tokens=int(max_state_tokens or 0),
+    )
+
+
 def run_decision(
     state: str | dict[str, Any] | list[Any],
     questions: dict[str, DecisionQuestion],
@@ -138,6 +152,7 @@ def run_decision(
         _FAILURES.pop(key, None)
     try:
         if provider == "laya":
+            apply_supervision_limits(config)
             result = local_decision_worker.decide(
                 state,
                 questions,
@@ -202,6 +217,7 @@ def run_local_decision_batch(
         pending.append((index, key))
     if pending:
         try:
+            apply_supervision_limits(config)
             batch_results = local_decision_worker.decide_batch(
                 [states[index] for index, _key in pending],
                 questions,

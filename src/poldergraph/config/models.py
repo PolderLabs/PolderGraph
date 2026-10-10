@@ -10,6 +10,7 @@ Precedence, lowest to highest:
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, Literal
 
@@ -197,6 +198,12 @@ class DecisionsConfig(BaseModel):
     timeout: float = 3.0
     confidence_threshold: float = 0.9
     remote_providers: list[Literal["typesafe", "openai"]] = Field(default_factory=list)
+    # Local decision-worker supervision: evict the child when its resident set
+    # exceeds the cap (megabytes); None disables memory-pressure eviction.
+    max_rss_mb: float | None = None
+    # Documented contract bound on the state text handed to the local model.
+    # 0 means unbounded; the value is reported by the worker status contract.
+    max_state_tokens: int = 0
     # Runtime-only authorization metadata populated by the config loader.
     remote_authorized: bool = Field(default=False, exclude=True, repr=False)
     endpoint_authorized: bool = Field(default=False, exclude=True, repr=False)
@@ -207,6 +214,22 @@ class DecisionsConfig(BaseModel):
     def _check_timeout(cls, value: float) -> float:
         if not 0.1 <= value <= 120:
             raise ValueError("timeout must be between 0.1 and 120 seconds")
+        return value
+
+    @field_validator("max_rss_mb")
+    @classmethod
+    def _check_max_rss_mb(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("max_rss_mb must be greater than zero when set")
+        return value
+
+    @field_validator("max_state_tokens")
+    @classmethod
+    def _check_max_state_tokens(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("max_state_tokens must not be negative")
         return value
 
     @field_validator("confidence_threshold")
