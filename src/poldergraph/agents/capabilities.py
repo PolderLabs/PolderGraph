@@ -10,11 +10,15 @@ from .setup import AGENT_ADAPTERS
 
 _CAPABILITIES: dict[str, dict[str, Any]] = {
     "omp": {
-        "native_events": ["workspace_open", "task_start", "after_edit"],
+        # Only host events the extension actually subscribes to. A conceptual
+        # lifecycle point with no wired host hook must not be advertised.
+        "native_events": ["session_start", "tool_result", "before_agent_start"],
+        "covered_events": ["workspace_open", "task_start", "after_edit"],
         "description": "Native extension injects task context and refreshes after writes.",
     },
     "codex": {
-        "native_events": ["task_start"],
+        "native_events": ["UserPromptSubmit"],
+        "covered_events": ["task_start"],
         "description": "UserPromptSubmit hook injects bounded task context.",
     },
 }
@@ -101,6 +105,7 @@ def integration_capabilities(root: Path | None = None) -> dict[str, Any]:
                 "installed": installed,
                 "mode": mode,
                 "native_events": events,
+                "covered_events": known.get("covered_events", []),
                 "description": known.get(
                     "description",
                     "Agent instructions and optional MCP support; no native lifecycle hook is configured.",

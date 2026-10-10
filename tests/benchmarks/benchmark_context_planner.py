@@ -43,6 +43,8 @@ def _summarize(rows: list[dict[str, Any]], *, configuration: str) -> dict[str, A
         "grounded_evidence_precision": round(relevant / max(1, evidence), 4),
         "unnecessary_context_rate": round(1 - relevant / max(1, evidence), 4),
         "mean_token_estimate": round(statistics.mean(row["tokens"] for row in rows), 1),
+        "p50_token_estimate": round(_percentile([row["tokens"] for row in rows], 0.50), 1),
+        "p95_token_estimate": round(_percentile([row["tokens"] for row in rows], 0.95), 1),
         "mean_latency_ms": round(statistics.mean(latencies), 3),
         "p50_latency_ms": round(statistics.median(latencies), 3),
         "p95_latency_ms": round(_percentile(latencies, 0.95), 3),
@@ -80,6 +82,7 @@ def run(destination: Path, *, repeats: int = 3) -> dict[str, Any]:
 
     service.search = counted_search
     adaptive_rows: list[dict[str, Any]] = []
+    adaptive_wide_rows: list[dict[str, Any]] = []
     fixed_rows: list[dict[str, Any]] = []
     try:
         benchmark_cases = [
@@ -90,25 +93,31 @@ def run(destination: Path, *, repeats: int = 3) -> dict[str, Any]:
         for case in benchmark_cases:
             for _ in range(repeats):
                 expected = set(case["expect"])
-                before = call_count
-                started = time.perf_counter()
-                adaptive = service.context(case["question"], token_budget=6000)
-                adaptive_ms = (time.perf_counter() - started) * 1000
-                adaptive_names = _evidence_names(adaptive)
-                adaptive_hits = len(expected & adaptive_names)
-                adaptive_rows.append(
-                    {
-                        "id": case["id"],
-                        "expected": bool(expected),
-                        "matched": adaptive_hits,
-                        "evidence_count": len(adaptive_names),
-                        "tokens": adaptive.token_estimate,
-                        "latency_ms": adaptive_ms,
-                        "search_calls": call_count - before,
-                        "intent": adaptive.plan.intent if adaptive.plan else "none",
-                        "skipped": bool(adaptive.plan and adaptive.plan.skipped),
-                    }
-                )
+                # Primary comparison is budget-matched: adaptive planning and the
+                # fixed baseline both run at 3,000 tokens so planner strategy is
+                # the only variable. The wider budget is reported separately and
+                # labelled, never as the headline comparison.
+                for rows, budget in ((adaptive_rows, 3000), (adaptive_wide_rows, 6000)):
+                    before = call_count
+                    started = time.perf_counter()
+                    adaptive = service.context(case["question"], token_budget=budget)
+                    adaptive_ms = (time.perf_counter() - started) * 1000
+                    adaptive_names = _evidence_names(adaptive)
+                    adaptive_hits = len(expected & adaptive_names)
+                    rows.append(
+                        {
+                            "id": case["id"],
+                            "expected": bool(expected),
+                            "matched": adaptive_hits,
+                            "evidence_count": len(adaptive_names),
+                            "tokens": adaptive.token_estimate,
+                            "latency_ms": adaptive_ms,
+                            "search_calls": call_count - before,
+                            "intent": adaptive.plan.intent if adaptive.plan else "none",
+                            "skipped": bool(adaptive.plan and adaptive.plan.skipped),
+                            "budget": budget,
+                        }
+                    )
 
                 before = call_count
                 started = time.perf_counter()
@@ -150,6 +159,13 @@ def run(destination: Path, *, repeats: int = 3) -> dict[str, Any]:
             "embedding_backend": "none (offline structural/lexical retrieval)",
             "baseline": "One search plus context packing with a fixed 3,000-token budget.",
             "token_budget": 3000,
+            "budget_matched": True,
+            "comparison_note": (
+                "adaptive_planner_3000 and fixed_3000_baseline share the same "
+                "3,000-token budget, so the difference is planner strategy and "
+                "not budget. adaptive_planner_6000 is reported separately as a "
+                "budget variant."
+            ),
             "limitations": [
                 "Grounding is expected-entity coverage, not model-judged answer accuracy.",
                 "Synthetic corpus results do not establish coding task success or productivity.",
@@ -157,11 +173,17 @@ def run(destination: Path, *, repeats: int = 3) -> dict[str, Any]:
                 "Latency is measured on the current machine and is not a cross-machine claim.",
             ],
         },
-        "adaptive_planner": _summarize(adaptive_rows, configuration="adaptive_planner"),
+        "adaptive_planner_3000": _summarize(
+            adaptive_rows, configuration="adaptive_planner_3000"
+        ),
         "fixed_3000_baseline": _summarize(fixed_rows, configuration="fixed_3000_baseline"),
+        "adaptive_planner_6000": _summarize(
+            adaptive_wide_rows, configuration="adaptive_planner_6000"
+        ),
         "cases": {
-            "adaptive_planner": adaptive_rows,
+            "adaptive_planner_3000": adaptive_rows,
             "fixed_3000_baseline": fixed_rows,
+            "adaptive_planner_6000": adaptive_wide_rows,
         },
     }
 

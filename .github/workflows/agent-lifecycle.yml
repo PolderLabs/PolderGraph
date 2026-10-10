@@ -23,6 +23,8 @@ jobs:
           OMP_BIN: ${{ runner.temp }}/omp-runtime/node_modules/.bin/omp
       - name: Verify OMP context cursor behavior
         run: bun tests/omp/context_cursor.mjs
+      - name: Verify OMP hook re-entry does not duplicate context
+        run: bun tests/omp/reentry_dedup.mjs
 
   workspace-lifecycle:
     strategy:

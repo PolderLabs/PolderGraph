@@ -61,6 +61,9 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 	const readyRoots = new Set<string>();
 	const workspaceRoots = new Map<string, string>();
 	const evidenceCursors = new Map<string, string>();
+	// Last injection per root, used to suppress duplicate injection when the
+	// host re-enters before_agent_start for a turn already handled.
+	const lastInjected = new Map<string, { prompt: string; evidenceChanged: boolean }>();
 	let cliPath: string | undefined;
 	let cliSetup: Promise<string> | undefined;
 
@@ -176,6 +179,7 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 		void resolveWorkspaceRoot(ctx.cwd).then(async (root) => {
 			readyRoots.delete(root);
 			evidenceCursors.delete(root);
+			lastInjected.delete(root);
 			await ensureIndex(root, true);
 		}).catch((error) => {
 			pi.logger.warn(`PolderGraph automatic setup failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -183,6 +187,11 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 	});
 	pi.on("tool_result", (event, ctx) => {
 		if (event.isError || (event.toolName !== "edit" && event.toolName !== "write")) return;
+		// An edit can change the evidence for the current turn, so a later
+		// re-entry for the same prompt must be allowed to re-inject.
+		void resolveWorkspaceRoot(ctx.cwd).then((root) => {
+			lastInjected.delete(root);
+		}).catch(() => undefined);
 		void ensureIndex(ctx.cwd, true).catch((error) => {
 			pi.logger.warn(`PolderGraph background refresh failed: ${error instanceof Error ? error.message : String(error)}`);
 		});
@@ -204,6 +213,12 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 		try {
 			await ensureIndex(ctx.cwd);
 			const root = await resolveWorkspaceRoot(ctx.cwd);
+			const promptKey = event.prompt.trim();
+			// Host re-entry for a turn already handled must not inject twice. A
+			// re-send stays allowed when evidence actually changed (new evidence
+			// or a stale index), because that is new data, not a duplicate.
+			const previous = lastInjected.get(root);
+			if (previous && previous.prompt === promptKey && !previous.evidenceChanged) return;
 			const cursor = evidenceCursors.get(root);
 
 			const context = await runJson(
@@ -224,6 +239,10 @@ export default function polderGraphExtension(pi: ExtensionAPI) {
 			if (contextData.plan?.skipped) return;
 			const freshness = contextData.index ?? context.index ?? {};
 			if (cursor && contextData.new_evidence_count === 0 && freshness.fresh === true) return;
+			lastInjected.set(root, {
+				prompt: promptKey,
+				evidenceChanged: (contextData.new_evidence_count ?? 0) > 0 || freshness.fresh === false,
+			});
 			return {
 				systemPrompt: [
 					...event.systemPrompt,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 _SOCIAL = re.compile(
     r"^(?:hi|hello|hey|good (?:morning|afternoon|evening)|thanks|thank you|"
@@ -31,6 +31,7 @@ class ContextPlan:
     reason: str
     lanes: tuple[str, ...]
     changed_paths: tuple[str, ...] = ()
+    why_selected: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -39,9 +40,29 @@ class ContextPlan:
             "skipped": self.skipped,
             "reason": self.reason,
             "lanes": list(self.lanes),
+            "why_selected": dict(self.why_selected),
             "changed_paths": list(self.changed_paths),
             "changed_paths_source_read_required": bool(self.changed_paths),
         }
+
+
+_LANE_REASONS: dict[str, str] = {
+    "exact": "Exact symbol and path matches for the named entities.",
+    "lexical": "Keyword matches over indexed source text.",
+    "semantic": "Semantic neighbours of the query; inferred, not structural fact.",
+    "structural": "Callers, callees and typed edges resolved from source.",
+    "tests": "Tests linked to the affected code.",
+    "changed_files": "Files changed in the working tree for this request.",
+}
+
+
+def _why_selected(lanes: tuple[str, ...]) -> dict[str, str]:
+    """Explain, per lane, why it was chosen for this task.
+
+    Structural and semantic lanes stay explicitly distinguishable so an agent
+    never reads an inferred neighbour as a proven dependency.
+    """
+    return {lane: _LANE_REASONS[lane] for lane in lanes if lane in _LANE_REASONS}
 
 
 def plan_context(
@@ -60,6 +81,7 @@ def plan_context(
             reason="No repository evidence is needed for this message.",
             lanes=(),
             changed_paths=(),
+            why_selected={},
         )
     if _NARROW.search(text) and len(text.split()) <= 12 and not _BROAD.search(text):
         return ContextPlan(
@@ -69,6 +91,7 @@ def plan_context(
             reason="Narrow lookup: use compact exact and lexical evidence.",
             lanes=("exact", "lexical"),
             changed_paths=changed,
+            why_selected=_why_selected(("exact", "lexical")),
         )
     intent = "modify" if re.search(r"\b(refactor|change|modify|implement|fix)\b", text, re.I) else (
         "debug" if re.search(r"\b(debug|error|failure|failing|bug)\b", text, re.I) else (
@@ -104,4 +127,5 @@ def plan_context(
         ),
         lanes=lanes,
         changed_paths=changed,
+        why_selected=_why_selected(lanes),
     )

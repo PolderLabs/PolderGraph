@@ -100,10 +100,14 @@ The planner comparison uses the synthetic multi-module repository in
 configurations use the same offline lexical/structural index and expected
 entity annotations (300 requests total per configuration):
 
-- **Adaptive planner** calls `QueryService.context` with a 6,000-token caller
-  ceiling. The task planner selects its intent, lanes, and effective budget.
+- **Adaptive planner (primary)** calls `QueryService.context` with a
+  3,000-token caller ceiling, matching the baseline exactly so planner strategy
+  is the only variable. The task planner still selects its own intent, lanes,
+  and effective budget.
 - **Fixed baseline** runs one lexical/structural search and packs with a
   3,000-token budget, matching the former fixed-budget OMP behavior.
+- **Adaptive planner (6,000 tokens)** is reported separately as a budget
+  variant, never as the headline comparison.
 
 The report records estimated content tokens, p50/p95 and mean wall latency,
 internal search-call count, expected-entity case recall, and expected-entity
@@ -114,11 +118,39 @@ can be reproduced with:
 uv run python tests/benchmarks/benchmark_context_planner.py --repeats 30
 ```
 
-The Linux/Python 3.12.14 run on 2026-10-09 kept expected-entity case recall
-equal at 0.875 and reduced mean estimated tokens from 1,026 to 520 per
-request. Expected-entity precision rose from 0.104 to 0.237; mean latency rose
-from 3.1 ms to 4.0 ms and p95 from 5.5 ms to 7.2 ms. Adaptive context avoided
-retrieval for greetings and the unrelated weather prompt. This dataset is small
+### Budget-matched results (2026-10-10, Linux, CPython 3.12.14)
+
+Earlier runs compared the planner at a 6,000-token ceiling against a
+3,000-token baseline, which confounded planner strategy with budget. The
+comparison below holds the budget at 3,000 tokens on both sides (30 requests
+per configuration, `--repeats 3` over 10 cases):
+
+| Metric | Adaptive @3,000 | Fixed @3,000 baseline |
+|---|---|---|
+| Expected-entity case recall | 0.875 | 0.875 |
+| Expected-entity precision | 0.237 | 0.104 |
+| Unnecessary context rate | 0.763 | 0.896 |
+| Mean estimated tokens | 519.6 | 1,026.3 |
+| p50 estimated tokens | 249 | 1,268 |
+| p95 estimated tokens | 1,341 | 1,699 |
+| Mean latency | 1.739 ms | 1.765 ms |
+| p50 / p95 latency | 1.703 / 3.697 ms | 1.891 / 3.188 ms |
+| Mean search calls | 0.80 | 1.00 |
+
+At an equal budget the planner keeps case recall identical while roughly
+halving tokens, cutting unnecessary context, more than doubling expected-entity
+precision, and issuing fewer internal searches. Mean latency is flat
+(1.739 ms vs 1.765 ms); p95 is slightly higher (3.697 ms vs 3.188 ms) on this
+small sample.
+
+Adaptive context also skipped retrieval entirely for greetings and the
+unrelated weather prompt.
+
+The 6,000-token planner variant produced **identical** evidence and token
+counts to the 3,000-token run (519.6 mean tokens, 0.237 precision). That is
+expected: the planner caps its own budget by detected intent
+(`min(caller_budget, intent_budget)`), so simply raising the caller's ceiling
+does not widen the delivered context. This dataset is small
 and synthetic. Entity overlap
 is only an evidence-selection proxy; it is not answer grounding judged by a
 model, end-to-end task completion, or developer productivity. The semantic
