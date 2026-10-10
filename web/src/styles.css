@@ -1877,3 +1877,24 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .switch__label {
   font-size: 12px;
 }
+.header__searchIcon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  color: var(--pg-text-muted);
+  pointer-events: none;
+}
+
+.header__searchInput {
+  padding-left: 28px;
+}
+
+/* Icon buttons render their glyph as inline SVG, so they centre as a box. */
+.header__iconButton,
+.header__ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}

@@ -2,6 +2,14 @@ import { forwardRef } from 'react';
 import type { StatusData } from '../api/types';
 import type { EventsStatus } from '../api/events';
 import type { Palette, ThemeName } from '../graph/palette';
+import {
+  IconFilters,
+  IconGraph,
+  IconSearch,
+  IconSettings,
+  IconSun,
+  IconTheme,
+} from './Icons';
 
 export interface HeaderProps {
   workspaceMode: 'graph' | 'memory';
@@ -54,6 +62,9 @@ export const Header = forwardRef<HTMLInputElement, HeaderProps>(function Header(
           props.onSearchSubmit(props.searchValue);
         }}
       >
+        <span className="header__searchIcon" aria-hidden="true">
+          <IconSearch size={13} />
+        </span>
         <input
           ref={searchRef}
           type="search"
@@ -86,7 +97,7 @@ export const Header = forwardRef<HTMLInputElement, HeaderProps>(function Header(
           title="Show filters"
           aria-label="Show filters"
         >
-          ≡
+          <IconFilters />
         </button>
         <button
           type="button"
@@ -95,7 +106,7 @@ export const Header = forwardRef<HTMLInputElement, HeaderProps>(function Header(
           title="Show selected entity"
           aria-label="Show selected entity"
         >
-          ◇
+          <IconGraph />
         </button>
         <button
           type="button"
@@ -104,7 +115,7 @@ export const Header = forwardRef<HTMLInputElement, HeaderProps>(function Header(
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
           aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
         >
-          {theme === 'dark' ? '☾' : '☀'}
+          {theme === 'dark' ? <IconTheme /> : <IconSun />}
         </button>
         <button
           type="button"
@@ -117,7 +128,7 @@ export const Header = forwardRef<HTMLInputElement, HeaderProps>(function Header(
           key
         </button>
         <button type="button" className="header__iconButton" onClick={props.onOpenSettings} title="Settings">
-          ⚙
+          <IconSettings />
         </button>
       </div>
     </header>
