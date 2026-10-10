@@ -280,17 +280,59 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     const handleRightClickStage = (payload: { event: SigmaNodeEventPayload['event'] }) =>
       openMenu(null, payload.event);
 
-    // Sigma has no dedicated drag event, so a drag is inferred from a node
-    // press followed by a release on the same node.
-    let pressedNode: string | null = null;
-    const handleDownNode = ({ node }: SigmaNodeEventPayload) => {
-      pressedNode = node;
-      handle.controller.setFixed(node, true);
-      propsRef.current.onNodePinned(node, true);
+    // Sigma 3 has no drag events, so dragging is driven from the container:
+    // press a node, follow the pointer, release. The layout is woken while the
+    // pointer is down, so the rest of the graph rearranges around the node
+    // instead of the node being pulled through a frozen picture.
+    let dragging: string | null = null;
+    let moved = false;
+    let downAt = { x: 0, y: 0 };
+
+    const toGraphPoint = (clientX: number, clientY: number) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      return (
+        handle.sigma.framedGraphToViewport({
+          x: clientX - rect.left,
+          y: clientY - rect.top,
+        }) ?? null
+      );
     };
+
+    const applyDrag = (event: MouseEvent) => {
+      if (!dragging) return;
+      moved = true;
+      const point = toGraphPoint(event.clientX, event.clientY);
+      if (!point) return;
+      handle.controller.dragTo(dragging, point.x, point.y);
+      handle.sigma.refresh();
+    };
+
+    const finishDrag = (event: MouseEvent) => {
+      if (!dragging) return;
+      const node = dragging;
+      // A press that never moved is a click, not a drag: pin it instead.
+      const isClick =
+        !moved && Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) < 4;
+      dragging = null;
+      moved = false;
+      containerRef.current?.removeEventListener('mousemove', applyDrag);
+      handle.controller.endDrag(node, isClick);
+      if (isClick) propsRef.current.onNodePinned(node, true);
+    };
+
+    const handleDownNode = ({ node, event }: SigmaNodeEventPayload) => {
+      dragging = node;
+      moved = false;
+      const original = event.original as MouseEvent;
+      downAt = { x: original.clientX, y: original.clientY };
+      handle.controller.beginDrag(node);
+      containerRef.current?.addEventListener('mousemove', applyDrag);
+      window.addEventListener('mouseup', finishDrag, { once: true });
+    };
+
     const handleUpNode = ({ node }: SigmaNodeEventPayload) => {
-      if (pressedNode === node) propsRef.current.onNodePinned(node, true);
-      pressedNode = null;
+      if (dragging === node) finishDrag({ clientX: downAt.x, clientY: downAt.y } as MouseEvent);
     };
 
     sigma.on('clickNode', handleNodeClick);

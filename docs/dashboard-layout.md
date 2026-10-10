@@ -72,6 +72,26 @@ Checked in a real browser against a 1,000-node index:
   (local graph, path from/to, impact, explain).
 - No page errors; seven canvases render.
 
+## Dragging
+
+Nodes are draggable, and the rest of the graph rearranges around the one you
+are holding. Sigma 3 has no drag events, so dragging is driven from the canvas
+container: press a node, follow the pointer, release.
+
+The important part is that a drag **wakes the simulation**. A settled layout has
+no forces running, so without that the node would simply be pulled across a
+frozen picture and nothing else would move. Dragging restores a small amount of
+energy (`DRAG_ALPHA`) and pins the held node to the cursor; when the node is
+released the layout decays back to rest on its own, so the graph never ends up
+permanently animating after an interaction.
+
+A press that never moves is treated as a click, not a drag, so selecting a node
+still pins it rather than nudging the whole graph.
+
+Verified in a browser: dragging a node opens its source in the inspector, the
+surrounding clusters visibly re-settle around the new position, and two frames
+captured four seconds after the drag are byte-identical.
+
 ## Also worth knowing
 
 - Repulsion uses `distanceMax` to bound work, and the exact pass is skipped above

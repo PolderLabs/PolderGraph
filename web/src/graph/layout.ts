@@ -29,6 +29,14 @@ export interface LayoutNodeAttributes extends Record<string, unknown> {
 /** Entries per node in the position buffer: x, y. */
 const POSITION_STRIDE = 2;
 
+/**
+ * Energy restored while a node is being dragged.
+ *
+ * Enough for neighbours to react, low enough that the graph still comes to rest
+ * promptly once the node is dropped.
+ */
+const DRAG_ALPHA = 0.22;
+
 export interface LayoutControllerOptions {
   graph: Graph;
   settings?: Partial<LayoutSettings>;
@@ -268,6 +276,37 @@ export class LayoutController {
     if (!this.graph.hasNode(node)) return;
     this.graph.setNodeAttribute(node, 'x', x);
     this.graph.setNodeAttribute(node, 'y', y);
+  }
+
+  /**
+   * Starts a drag: the node is pinned to the cursor and the forces are woken.
+   *
+   * Waking the simulation is what makes the rest of the graph move accordingly
+   * instead of the dragged node being dragged through a frozen layout.
+   */
+  beginDrag(node: string): void {
+    if (!this.graph.hasNode(node)) return;
+    this.ensureWorker();
+    this.setRunning(true);
+    this.post({ type: 'wake', alpha: DRAG_ALPHA });
+  }
+
+  /** Moves the dragged node and keeps the layout responsive around it. */
+  dragTo(node: string, x: number, y: number): void {
+    if (!this.graph.hasNode(node)) return;
+    this.setPosition(node, x, y);
+    const index = this.index[node];
+    if (index === undefined) return;
+    this.post({ type: 'pin', index, x, y });
+  }
+
+  /** Ends a drag. The layout then decays back to rest on its own. */
+  endDrag(node: string, pinned: boolean): void {
+    if (!this.graph.hasNode(node)) return;
+    this.setFixed(node, pinned);
+    const index = this.index[node];
+    if (index === undefined || pinned) return;
+    this.post({ type: 'unpin', index });
   }
 
   destroy(): void {

@@ -43,7 +43,7 @@ export interface LayoutSettings {
 
 export const DEFAULT_SETTINGS: LayoutSettings = {
   chargeStrength: -320,
-  linkStrength: 0.7,
+  linkStrength: 0.22,
   linkDistance: 60,
   centerStrength: 1,
   velocityDecay: 0.55,
@@ -80,11 +80,38 @@ export interface LayoutSyncMessage {
   edges: Int32Array;
 }
 
+/** Re-energises a settled layout so it can absorb a drag. */
+export interface LayoutWakeMessage {
+  type: 'wake';
+  /** Energy to restore; the layout decays again from here. */
+  alpha: number;
+}
+
+/** Pins a node under the cursor while it is being dragged. */
+export interface LayoutPinMessage {
+  type: 'pin';
+  index: number;
+  x: number;
+  y: number;
+}
+
+/** Releases a dragged node so the forces can move it again. */
+export interface LayoutUnpinMessage {
+  type: 'unpin';
+  index: number;
+}
+
 export interface LayoutStopMessage {
   type: 'stop';
 }
 
-export type LayoutRequest = LayoutStartMessage | LayoutSyncMessage | LayoutStopMessage;
+export type LayoutRequest =
+  | LayoutStartMessage
+  | LayoutSyncMessage
+  | LayoutWakeMessage
+  | LayoutPinMessage
+  | LayoutUnpinMessage
+  | LayoutStopMessage;
 
 export interface LayoutTick {
   type: 'tick';
@@ -116,6 +143,9 @@ interface SimNode {
   y: number;
   vx: number;
   vy: number;
+  /** Set while a node is dragged: the forces then leave it where it is put. */
+  fx: number | null;
+  fy: number | null;
 }
 
 interface SimLink {
@@ -141,6 +171,8 @@ function seed(count: number): void {
     node.y = Math.sin(angle) * radius * Math.sqrt((i + 0.5) / count);
     node.vx = 0;
     node.vy = 0;
+    node.fx = null;
+    node.fy = null;
   }
 }
 
@@ -235,6 +267,8 @@ function rebuild(nextIds: string[], nextRadii: Float32Array, positions: Float32A
       y: Number.isFinite(y) ? y : 0,
       vx: 0,
       vy: 0,
+      fx: null,
+      fy: null,
     });
   }
   nodes = rebuilt;
@@ -264,6 +298,34 @@ self.onmessage = (event: MessageEvent<LayoutRequest>) => {
       lastTickAt = 0;
       clearTimeout(timer ?? undefined);
       timer = setTimeout(tick, 0);
+      break;
+    }
+    case 'wake': {
+      // A drag needs the forces running so neighbours follow the node. The
+      // layout decays again once the hand lets go.
+      if (!simulation) break;
+      simulation.alpha(message.alpha);
+      lastTickAt = 0;
+      clearTimeout(timer ?? undefined);
+      timer = setTimeout(tick, 0);
+      break;
+    }
+    case 'pin': {
+      const node = nodes[message.index];
+      if (!node) break;
+      node.x = message.x;
+      node.y = message.y;
+      node.vx = 0;
+      node.vy = 0;
+      node.fx = message.x;
+      node.fy = message.y;
+      break;
+    }
+    case 'unpin': {
+      const node = nodes[message.index];
+      if (!node) break;
+      node.fx = null;
+      node.fy = null;
       break;
     }
     case 'stop':
