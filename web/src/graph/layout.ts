@@ -35,7 +35,7 @@ const POSITION_STRIDE = 2;
  * Enough for neighbours to react, low enough that the graph still comes to rest
  * promptly once the node is dropped.
  */
-const DRAG_ALPHA = 0.22;
+const DRAG_ALPHA = 0.08;
 
 export interface LayoutControllerOptions {
   graph: Graph;
@@ -279,34 +279,30 @@ export class LayoutController {
   }
 
   /**
-   * Starts a drag: the node is pinned to the cursor and the forces are woken.
+   * Starts a drag by waking the forces.
    *
-   * Waking the simulation is what makes the rest of the graph move accordingly
-   * instead of the dragged node being dragged through a frozen layout.
+   * The dragged node is moved through the graph rather than pinned inside the
+   * simulation. Pinning it into the worker means the node's index has to stay in
+   * step with the worker's own node list, and a single mismatch there corrupts
+   * the whole layout. Moving it on the graph and letting the woken forces pull
+   * the neighbourhood around it gives the same visible result with no way to
+   * desynchronise the two node lists.
    */
   beginDrag(node: string): void {
     if (!this.graph.hasNode(node)) return;
-    this.ensureWorker();
+    if (!this.worker) return;
     this.setRunning(true);
     this.post({ type: 'wake', alpha: DRAG_ALPHA });
   }
 
-  /** Moves the dragged node and keeps the layout responsive around it. */
+  /** Moves the dragged node under the cursor. */
   dragTo(node: string, x: number, y: number): void {
-    if (!this.graph.hasNode(node)) return;
     this.setPosition(node, x, y);
-    const index = this.index[node];
-    if (index === undefined) return;
-    this.post({ type: 'pin', index, x, y });
   }
 
-  /** Ends a drag. The layout then decays back to rest on its own. */
+  /** Ends a drag. The layout decays back to rest on its own. */
   endDrag(node: string, pinned: boolean): void {
-    if (!this.graph.hasNode(node)) return;
     this.setFixed(node, pinned);
-    const index = this.index[node];
-    if (index === undefined || pinned) return;
-    this.post({ type: 'unpin', index });
   }
 
   destroy(): void {

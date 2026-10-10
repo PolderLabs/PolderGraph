@@ -92,6 +92,31 @@ Verified in a browser: dragging a node opens its source in the inspector, the
 surrounding clusters visibly re-settle around the new position, and two frames
 captured four seconds after the drag are byte-identical.
 
+## Degenerate layouts recover themselves
+
+A layout collapsed into a line is still "settled" as far as alpha is concerned,
+so it needs its own check. When the run finishes, the worker measures the
+bounding box; if it is more than eight times wider than it is tall (or the
+reverse), the graph is treated as a failure rather than a result and is laid out
+again from the seed. One automatic rescue only, so a genuinely sparse graph is
+left alone rather than being laid out forever.
+
+This was added after a drag was seen leaving the graph as a single diagonal line
+that never recovered on its own.
+
+Dragging was also made non-destructive: the dragged node is moved through the
+graph and the woken forces pull the neighbourhood around it, rather than being
+pinned inside the worker. Pinning needs the node's index to stay in step with the
+worker's own node list, and a single mismatch there corrupts the whole layout.
+
+## Spacing
+
+The shipped values favour a readable graph over a compact one: repulsion is
+strong (`chargeStrength: -520`), edges prefer a longer rest length
+(`linkDistance: 85`) and pull weakly (`linkStrength: 0.22`), and nodes keep a
+visible gap (`collisionPadding: 9`). Communities separate into distinct groups
+instead of one crowded mass.
+
 ## Also worth knowing
 
 - Repulsion uses `distanceMax` to bound work, and the exact pass is skipped above

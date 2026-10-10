@@ -42,12 +42,12 @@ export interface LayoutSettings {
 }
 
 export const DEFAULT_SETTINGS: LayoutSettings = {
-  chargeStrength: -320,
+  chargeStrength: -520,
   linkStrength: 0.22,
-  linkDistance: 60,
+  linkDistance: 85,
   centerStrength: 1,
   velocityDecay: 0.55,
-  collisionPadding: 4,
+  collisionPadding: 9,
 };
 
 /** Fraction of remaining energy dissipated each tick; ~0.1 to settle. */
@@ -56,6 +56,16 @@ const ALPHA_DECAY = 0.035;
 const ALPHA_MIN = 0.005;
 /** Energy restored when the topology changes under a settled layout. */
 const ALPHA_ON_SYNC = 0.25;
+/**
+ * A layout is degenerate once its bounding box is this many times wider than it
+ * is tall (or the other way round).
+ *
+ * A chain of nodes pulled into a line still counts as "settled" as far as alpha
+ * is concerned, so it needs its own check: without this, one bad interaction can
+ * leave the graph as a single diagonal line and it will never recover by itself.
+ */
+const MAX_ASPECT_RATIO = 8;
+
 /** Minimum wall-clock gap between ticks, so the worker never outruns the frames. */
 const MIN_TICK_INTERVAL_MS = 16;
 
@@ -87,20 +97,6 @@ export interface LayoutWakeMessage {
   alpha: number;
 }
 
-/** Pins a node under the cursor while it is being dragged. */
-export interface LayoutPinMessage {
-  type: 'pin';
-  index: number;
-  x: number;
-  y: number;
-}
-
-/** Releases a dragged node so the forces can move it again. */
-export interface LayoutUnpinMessage {
-  type: 'unpin';
-  index: number;
-}
-
 export interface LayoutStopMessage {
   type: 'stop';
 }
@@ -109,8 +105,6 @@ export type LayoutRequest =
   | LayoutStartMessage
   | LayoutSyncMessage
   | LayoutWakeMessage
-  | LayoutPinMessage
-  | LayoutUnpinMessage
   | LayoutStopMessage;
 
 export interface LayoutTick {
@@ -159,6 +153,8 @@ let settings: LayoutSettings = { ...DEFAULT_SETTINGS };
 let simulation: Simulation<SimNode, SimLink> | null = null;
 let tickCount = 0;
 let lastTickAt = 0;
+/** Guards the one automatic rescue of a degenerate layout. */
+let rescued = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 /** Seeds nodes on a golden-angle spiral, the standard no-overlap start. */
@@ -235,12 +231,41 @@ function tick(): void {
   } satisfies LayoutTick);
 
   if (simulation.alpha() < ALPHA_MIN) {
+    // A settled layout that has collapsed into a line is not a result, it is a
+    // failure. Detect it and lay the graph out again from the seed.
+    if (!rescued && isDegenerate()) {
+      rescued = true;
+      seed(nodes.length);
+      simulation.alpha(0.6);
+      lastTickAt = 0;
+      timer = setTimeout(tick, 0);
+      return;
+    }
     self.postMessage({ type: 'settled' } satisfies LayoutSettled);
     return;
   }
   // `setTimeout` rather than a direct call, so a `stop` or `sync` message is
   // always observed between ticks.
   timer = setTimeout(tick, 0);
+}
+
+/** True when the layout has collapsed into a line or a point. */
+function isDegenerate(): boolean {
+  if (nodes.length < 3) return false;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const node of nodes) {
+    if (node.x < minX) minX = node.x;
+    if (node.x > maxX) maxX = node.x;
+    if (node.y < minY) minY = node.y;
+    if (node.y > maxY) maxY = node.y;
+  }
+  const width = Math.max(1e-6, maxX - minX);
+  const height = Math.max(1e-6, maxY - minY);
+  const ratio = Math.max(width / height, height / width);
+  return ratio > MAX_ASPECT_RATIO;
 }
 
 /** Serialises current positions as x, y pairs. */
@@ -284,6 +309,7 @@ self.onmessage = (event: MessageEvent<LayoutRequest>) => {
       rebuild(message.ids, message.radii, message.positions, message.edges, true);
       tickCount = 0;
       lastTickAt = 0;
+      rescued = false;
       clearTimeout(timer ?? undefined);
       timer = setTimeout(tick, 0);
       break;
@@ -304,28 +330,10 @@ self.onmessage = (event: MessageEvent<LayoutRequest>) => {
       // A drag needs the forces running so neighbours follow the node. The
       // layout decays again once the hand lets go.
       if (!simulation) break;
-      simulation.alpha(message.alpha);
+      simulation.alpha(Math.max(simulation.alpha(), message.alpha));
       lastTickAt = 0;
       clearTimeout(timer ?? undefined);
       timer = setTimeout(tick, 0);
-      break;
-    }
-    case 'pin': {
-      const node = nodes[message.index];
-      if (!node) break;
-      node.x = message.x;
-      node.y = message.y;
-      node.vx = 0;
-      node.vy = 0;
-      node.fx = message.x;
-      node.fy = message.y;
-      break;
-    }
-    case 'unpin': {
-      const node = nodes[message.index];
-      if (!node) break;
-      node.fx = null;
-      node.fy = null;
       break;
     }
     case 'stop':
