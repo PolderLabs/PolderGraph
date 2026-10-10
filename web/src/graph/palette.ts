@@ -50,36 +50,36 @@ export const UNRESOLVED_PROVENANCE: Record<string, boolean> = {
 
 export const DARK: Palette = {
   node: {
-    workspace: '#7c6cf5',
-    repository: '#8f7cf7',
-    directory: '#6f8fe8',
-    file: '#5fa8e8',
-    module: '#48c2d8',
+    workspace: '#8b5cf6',
+    repository: '#a855f7',
+    directory: '#4c8dff',
+    file: '#38bdf8',
+    module: '#22d3ee',
 
-    namespace: '#4fb9a7',
-    package: '#43c9b0',
-    class: '#e0b055',
-    interface: '#e8c46a',
-    trait: '#e3bd63',
-    enum: '#d9a94f',
-    type_alias: '#efd07d',
+    namespace: '#2dd4bf',
+    package: '#14b8a6',
+    class: '#ffc93c',
+    interface: '#fde047',
+    trait: '#facc15',
+    enum: '#fbbf24',
+    type_alias: '#e3e048',
 
-    function: '#f08a5d',
-    method: '#f5a06c',
-    constructor: '#e8825a',
-    endpoint: '#ff8a6b',
+    function: '#ff5a3c',
+    method: '#ff7a45',
+    constructor: '#f04438',
+    endpoint: '#ff8a5c',
 
-    property: '#b7c26a',
-    field: '#aeba5f',
-    constant: '#c9d477',
-    variable: '#adba66',
+    property: '#a3e635',
+    field: '#84cc16',
+    constant: '#bef264',
+    variable: '#9ccc3c',
 
-    test: '#9b7ff0',
-    document: '#6fa8dc',
-    section: '#5f9bd0',
-    image: '#cf7fbf',
-    audio_segment: '#c173c9',
-    video_segment: '#b96cc4',
+    test: '#c084fc',
+    document: '#94a3b8',
+    section: '#60a5fa',
+    image: '#f472b6',
+    audio_segment: '#e879f9',
+    video_segment: '#d946ef',
 
     unknown_symbol: '#ff6b6b',
   },
@@ -129,9 +129,9 @@ export const DARK: Palette = {
     semantically_related: 'rgba(140, 228, 202, 0.6)',
     semantic: 'rgba(140, 228, 202, 0.6)',
   },
-  unresolvedEdge: 'rgba(255, 122, 122, 0.72)',
-  background: '#0e1117',
-  surface: '#151a23',
+  unresolvedEdge: 'rgba(255, 122, 122, 0.5)',
+  background: '#08090c',
+  surface: '#101318',
   text: '#e6edf5',
   labelOnLight: '#0b0e14',
   labelOnDark: '#f2f7ff',
@@ -260,10 +260,10 @@ export interface SizeScale {
  * collapse to sub-pixel discs when the graph is normalised into [0,1]. A
  * radius of 4..14 px keeps a 1000-node graph legible and clickable.
  */
-export const DEFAULT_SIZE_SCALE: SizeScale = { min: 4, max: 14 };
+export const DEFAULT_SIZE_SCALE: SizeScale = { min: 1.6, max: 11 };
 
 /** Larger bound used for community meta-nodes, which represent many entities. */
-export const AGGREGATE_SIZE_SCALE: SizeScale = { min: 12, max: 34 };
+export const AGGREGATE_SIZE_SCALE: SizeScale = { min: 9, max: 26 };
 
 /**
  * Bounded scale over degree/importance.

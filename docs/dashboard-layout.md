@@ -144,6 +144,31 @@ Audited with the b0rk UI/UX checks:
   association. Adding `aria-label` there would have overridden the visible name,
   so the markup was left alone.
 
+## Look and feel
+
+The graph view follows the conventions of the large-graph explorers people
+already recognise (Obsidian, Cosmograph and similar): the canvas carries the
+image, and the chrome stays out of the way.
+
+| Choice | Why |
+|---|---|
+| Near-black canvas (`#08090c`) | Bright nodes have to carry the picture; a blue-grey field competes with them |
+| Hairline edges at 16-24% opacity | Prominent edges turn a large graph into a mesh. Structure is read from the nodes and their clustering |
+| Node size 1.6-11px by importance and degree | Mostly small dots with a few hubs standing out, rather than everything mid-sized and blobby |
+| Vivid, well-separated hues per kind | A kind must be readable when the node is only a few pixels across |
+| Labels off by default | At this density labels are clutter. They appear on hover and selection, and the backing plate keeps them readable either way |
+| Legend off by default | It is a floating panel and covered the graph. It is one click away in the header |
+| Camera refits with a 1.12 margin | A bare fit leaves outer nodes clipped at the canvas edge |
+
+Every node colour was checked against the new canvas with a contrast audit: all
+eight principal hues pass AA and AAA for non-text contrast (6.4:1 to 13.2:1) and
+pass under deuteranopia, protanopia, tritanopia and achromatopsia simulation, so
+the colours do not depend on colour vision to be told apart.
+
+The camera also refits when the dataset changes scale - switching between
+global and local, or applying a filter that removes most of the graph - so the
+view is never left pointing at empty canvas.
+
 ## Also worth knowing
 
 - Repulsion uses `distanceMax` to bound work, and the exact pass is skipped above

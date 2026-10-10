@@ -24,6 +24,11 @@ import { desaturate } from '../util/color';
 import { DashedEdgeProgram } from './edgeProgram';
 import { NodeRingProgram } from './ringProgram';
 
+/** Breathing room left around the graph when the camera frames it, as a ratio. */
+const FIT_MARGIN = 1.12;
+/** Camera animation length, in milliseconds. */
+const FIT_DURATION_MS = 320;
+
 /** Sigma instance typed with the attributes this app stores on each item. */
 type PgSigma = MeasuredSigma<PgNodeAttributes, PgEdgeAttributes>;
 
@@ -90,6 +95,22 @@ interface CanvasHandle {
  */
 export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * Frames the whole graph with a margin.
+   *
+   * A reset fits the bounds exactly, which leaves the outermost nodes touching
+   * the canvas edge. The reference graph views all sit inside a margin, and it
+   * also stops a node being half-clipped when the layout settles.
+   */
+  const fitGraph = useCallback((duration = FIT_DURATION_MS) => {
+    const handle = handleRef.current;
+    if (!handle) return;
+    const camera = handle.sigma.getCamera();
+    camera.animatedReset({ duration });
+    const state = camera.getState();
+    camera.animate({ ...state, ratio: (state.ratio ?? 1) * FIT_MARGIN }, { duration });
+  }, []);
   const handleRef = useRef<CanvasHandle | null>(null);
   const [ready, setReady] = useState(false);
 
@@ -177,9 +198,16 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
     if (!ready || !handle) return;
 
     setLabelPalette(props.palette);
+    const previousCount = handle.graph.order;
     const topologyChanged = syncGraph(
       handle.graph, props.nodes, props.edges, props.palette, props.colorMode,
     );
+    // A view switch or a filter changes the shape of the graph completely, so
+    // the camera is refitted rather than left pointing at empty canvas.
+    if (previousCount > 0 && props.nodes.length > 0) {
+      const change = props.nodes.length / previousCount;
+      if (change > 1.6 || change < 0.625) setDatasetFit((token) => token + 1);
+    }
     if (topologyChanged) handle.adjacency = buildAdjacency(handle.graph);
     handle.controller.sync();
     handle.sigma.refresh();
@@ -202,6 +230,7 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
   }, [ready, props.forceSettings]);
 
   const wasLayoutRunning = useRef(false);
+  const [datasetFit, setDatasetFit] = useState(0);
   useEffect(() => {
     const handle = handleRef.current;
     if (!ready || !handle) return;
@@ -215,10 +244,10 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
       // see the whole result instead of one corner of it.
       if (wasLayoutRunning.current) {
         wasLayoutRunning.current = false;
-        handle.sigma.getCamera().animatedReset({ duration: 320 });
+        fitGraph();
       }
     }
-  }, [ready, props.layoutRunning]);
+  }, [ready, props.layoutRunning, fitGraph]);
 
   /* ------------------------------------------------------ appearance refresh */
 
@@ -250,8 +279,16 @@ export function GraphCanvas(props: GraphCanvasProps): JSX.Element {
   useEffect(() => {
     const handle = handleRef.current;
     if (!ready || !handle || props.fitToken === 0) return;
-    handle.sigma.getCamera().animatedReset({ duration: 320 });
-  }, [ready, props.fitToken]);
+    fitGraph();
+  }, [ready, props.fitToken, fitGraph]);
+
+  // Refit when the dataset changes scale: a view switch or a filter reshapes
+  // the graph, and leaving the camera where it was points it at empty canvas.
+  useEffect(() => {
+    const handle = handleRef.current;
+    if (!ready || !handle || datasetFit === 0) return;
+    fitGraph();
+  }, [ready, datasetFit, fitGraph]);
 
   useEffect(() => {
     const handle = handleRef.current;

@@ -101,8 +101,8 @@ export const DEFAULT_FILTERS: FiltersState = {
 export const DEFAULT_PREFERENCES: ViewPreferencesState = {
   theme: 'dark',
   colorMode: 'kind',
-  showLegend: true,
-  showLabels: true,
+  showLegend: false,
+  showLabels: false,
   hideLowValueEdges: true,
   communityMode: 'structural',
   collapseCommunities: false,
