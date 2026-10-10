@@ -31,6 +31,11 @@ from .builder import EntityBuilder, FileEntities
 
 ProgressFn = Callable[[str, int, int], None]
 
+#: Files persisted per SQLite transaction. Batching removes the per-file fsync
+#: that dominated large indexing runs; each batch is still all-or-nothing, and a
+#: bounded size keeps peak memory and rollback cost predictable.
+PERSIST_BATCH_SIZE = 64
+
 
 @dataclass
 class IndexStats:
@@ -177,11 +182,15 @@ class Indexer:
             self.progress("persisting", 0, len(built), detail="entities, edges, full-text index")
 
         entity_batches: list[tuple[FileEntities, str]] = []
-        for position, result in enumerate(built):
-            entity_batches.extend(self._persist(result, stats))
-            if self.progress and (position % 5 == 0 or position == len(built) - 1):
+        for offset in range(0, len(built), PERSIST_BATCH_SIZE):
+            batch = built[offset : offset + PERSIST_BATCH_SIZE]
+            with writer_transaction(self.workspace.con):
+                for result in batch:
+                    entity_batches.extend(self._persist_in_transaction(result, stats))
+            if self.progress:
+                done = min(offset + PERSIST_BATCH_SIZE, len(built))
                 self.progress(
-                    "persisting", position + 1, len(built),
+                    "persisting", done, len(built),
                     detail=f"{stats.entities_written} entities, {stats.edges_written} edges",
                 )
 
@@ -252,6 +261,18 @@ class Indexer:
 
     def _persist(self, result: FileEntities, stats: IndexStats) -> list[tuple[FileEntities, str]]:
         """Write one file's entities/edges/FTS rows and return embeddable pairs."""
+        with writer_transaction(self.workspace.con):
+            return self._persist_in_transaction(result, stats)
+
+    def _persist_in_transaction(
+        self, result: FileEntities, stats: IndexStats
+    ) -> list[tuple[FileEntities, str]]:
+        """Persist one file inside an already-open writer transaction.
+
+        Callers batch many files into a single transaction so a large index does
+        not pay one fsync per file. Correctness is unchanged: a failed batch
+        still rolls back completely, leaving no partially written file.
+        """
         con = self.workspace.con
         discovered = DiscoveredFile(
             path=result.path,
@@ -260,49 +281,48 @@ class Indexer:
             mtime_ns=0,
             language=result.file_index.language if result.file_index else None,
         )
-        with writer_transaction(con):
-            existing = self.repo.entities_owned_by_path(result.path, root_id=self.workspace.root_id())
-            if existing:
-                existing_ids = [entity.id for entity in existing]
-                new_ids = {entity.id for entity in result.entities}
-                removed_ids = [entity_id for entity_id in existing_ids if entity_id not in new_ids]
-                self.repo.delete_edges_touching(existing_ids)
-                # Keep stable entity rows in place so their content-addressed
-                # vectors remain reusable across model/provider switches.
-                # Changed representations are invalidated by input_hash in
-                # _embed; genuinely removed entities still cascade metadata.
-                self.repo.delete_entities(removed_ids)
+        existing = self.repo.entities_owned_by_path(result.path, root_id=self.workspace.root_id())
+        if existing:
+            existing_ids = [entity.id for entity in existing]
+            new_ids = {entity.id for entity in result.entities}
+            removed_ids = [entity_id for entity_id in existing_ids if entity_id not in new_ids]
+            self.repo.delete_edges_touching(existing_ids)
+            # Keep stable entity rows in place so their content-addressed
+            # vectors remain reusable across model/provider switches.
+            # Changed representations are invalidated by input_hash in
+            # _embed; genuinely removed entities still cascade metadata.
+            self.repo.delete_entities(removed_ids)
 
-            self.repo.upsert_entities(result.entities)
-            self.repo.upsert_edges(result.edges)
+        self.repo.upsert_entities(result.entities)
+        self.repo.upsert_edges(result.edges)
 
-            for entity in result.entities:
-                self.repo.fts.index_entity(
-                    entity.id,
-                    {
-                        "name": entity.name,
-                        "qualified_name": entity.qualified_name,
-                        "path": entity.path,
-                        "signature": entity.signature,
-                        "docstring": entity.docstring,
-                        "semantic_text": self._fts_semantic_text(entity, result),
-                    },
-                )
-
-            for record in getattr(result, "unresolved_refs", []):
-                self.repo.record_unresolved(**record)
-
-            self.repo.record_file(
-                root_id=self.workspace.root_id(),
-                path=result.path,
-                size=len(result.source_bytes or b""),
-                mtime_ns=discovered.mtime_ns,
-                content_hash=result.content_hash,
-                language=result.file_index.language if result.file_index else None,
-                parse_status=result.parse_status,
-                is_generated=discovered.is_generated,
-                is_media=result.path.lower().endswith((".png", ".jpg", ".mp4", ".mp3", ".wav")),
+        for entity in result.entities:
+            self.repo.fts.index_entity(
+                entity.id,
+                {
+                    "name": entity.name,
+                    "qualified_name": entity.qualified_name,
+                    "path": entity.path,
+                    "signature": entity.signature,
+                    "docstring": entity.docstring,
+                    "semantic_text": self._fts_semantic_text(entity, result),
+                },
             )
+
+        for record in getattr(result, "unresolved_refs", []):
+            self.repo.record_unresolved(**record)
+
+        self.repo.record_file(
+            root_id=self.workspace.root_id(),
+            path=result.path,
+            size=len(result.source_bytes or b""),
+            mtime_ns=discovered.mtime_ns,
+            content_hash=result.content_hash,
+            language=result.file_index.language if result.file_index else None,
+            parse_status=result.parse_status,
+            is_generated=discovered.is_generated,
+            is_media=result.path.lower().endswith((".png", ".jpg", ".mp4", ".mp3", ".wav")),
+        )
 
         stats.files_indexed += 1
         stats.entities_written += len(result.entities)

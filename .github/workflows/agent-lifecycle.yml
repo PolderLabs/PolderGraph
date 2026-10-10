@@ -58,7 +58,9 @@ jobs:
       - name: Exercise actual MCP server startup and tool flow
         run: pytest -q tests/integration/test_mcp_contract.py
       - name: Test supervised local decision worker
-        run: pytest -q tests/unit/test_decision_worker.py tests/unit/test_decision_runtime.py tests/unit/test_decisions.py
+        run: pytest -q tests/unit/test_decision_worker.py tests/unit/test_decision_worker_pressure.py tests/unit/test_decision_runtime.py tests/unit/test_decisions.py
+      - name: Test batched persistence atomicity and test isolation
+        run: pytest -q tests/unit/test_persist_batching.py tests/unit/test_pytest_tmp_isolation.py tests/unit/test_agent_capabilities.py
       - name: Test embedding space switching and vector reuse
         run: pytest -q tests/unit/test_parsing_and_indexing.py::TestIncrementalUpdate
       - name: Test daemon watcher and concurrent socket clients

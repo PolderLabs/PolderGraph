@@ -446,6 +446,9 @@ Override with environment variables: `POLDERGRAPH_EMBEDDING__DEVICE=cuda`
 - [docs/privacy-security.md](docs/privacy-security.md) — privacy and security model
 - [docs/troubleshooting.md](docs/troubleshooting.md) — common issues and fixes
 - [docs/benchmark-methodology.md](docs/benchmark-methodology.md) — benchmark methodology and results
+- [docs/decision-worker-benchmark.md](docs/decision-worker-benchmark.md) — local decision worker supervision and measured behavior
+- [docs/memory-evaluation.md](docs/memory-evaluation.md) — memory decision gates and cross-session task results
+- [docs/rust-core-evaluation.md](docs/rust-core-evaluation.md) — indexing profile and the Rust maintain/hybrid/rewrite verdict
 - [docs/implementation-checklist.md](docs/implementation-checklist.md) — acceptance criteria
 
 ## Requirements
