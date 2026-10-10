@@ -203,6 +203,21 @@ node and its label - the unreadable highlight. Hover is now a subtle ring in the
 accent colour. The inspector panel already carries the node's details, so the
 tooltip was redundant as well as unreadable.
 
+## Navigation rail and layout overhaul
+
+The dashboard shell was rebuilt around an icon rail to free canvas space:
+
+- **Icon rail (52px).** Collapsible navigation on the left. The filter panel no
+  longer occupies permanent horizontal width; clicking its icon expands or
+  collapses it, leaving the graph full canvas width when closed.
+- **Shortcuts overlay (`?`).** Pressing `?` brings up a modal cheat-sheet of
+  every keyboard command (`F` fit, `Space` pause/resume, `R` reset, `L` labels,
+  `K` legend, `S` settings, `/` search, `Esc` deselect).
+- **Toolbars and controls.** The canvas controls (Fit, Pause/Resume, Reset) now
+  use drawn SVG icons and unified button styling.
+- **Header icons.** Replaced all text-character glyphs with a consistent 16px SVG
+  icon set across the top bar.
+
 ## Settings
 
 The dashboard has a full settings surface, reachable from the gear in the header.

@@ -150,6 +150,34 @@ export function IconShield(props: IconProps) {
   );
 }
 
+export function IconSliders(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M2.5 5h7M12 5h1.5M2.5 11h1.5M6.5 11h7" />
+      <circle cx="10.8" cy="5" r="1.7" />
+      <circle cx="5.2" cy="11" r="1.7" />
+    </svg>
+  );
+}
+
+export function IconKey(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <circle cx="5.5" cy="6" r="3" />
+      <path d="M7.8 7.8 13.5 13.5M10.8 10.8l1.7-.3M12.5 12.5l1.3-.3" />
+    </svg>
+  );
+}
+
+export function IconHelp(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <circle cx="8" cy="8" r="6.2" />
+      <path d="M6.2 6.4a2 2 0 0 1 3.6 1.1c0 1.2-1.8 1.5-1.8 2.5M8 12.2h.1" />
+    </svg>
+  );
+}
+
 export function IconChevron(props: IconProps) {
   return (
     <svg {...svgProps(props)}>

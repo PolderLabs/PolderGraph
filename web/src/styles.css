@@ -1,34 +1,76 @@
+/* ============================================================ design tokens */
+/*
+ * One scale for spacing, radii, elevation and type. The dashboard previously
+ * had a radius and a couple of colours but no spacing or elevation scale, so
+ * every panel invented its own padding and shadow.
+ */
 :root {
-  color-scheme: dark;
   --pg-bg: #0b0f17;
   --pg-surface: #111722;
   --pg-surface-2: #182131;
+  --pg-surface-3: #1e2839;
   --pg-border: #263449;
+  --pg-border-strong: #35455f;
   --pg-text: #e6edf5;
   --pg-muted: #8b98a9;
+  --pg-faint: #64718a;
   --pg-accent: #6ea8fe;
   --pg-selected: #ffd166;
   --pg-changed: #4ade80;
   --pg-unresolved: #ff6b6b;
   --pg-path: #f472b6;
+
+  /* Spacing: 4px base. */
+  --pg-space-1: 4px;
+  --pg-space-2: 8px;
+  --pg-space-3: 12px;
+  --pg-space-4: 16px;
+  --pg-space-5: 24px;
+  --pg-space-6: 32px;
+
+  /* Radii. */
+  --pg-radius-sm: 6px;
   --pg-radius: 10px;
-  --pg-font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --pg-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --pg-radius-lg: 14px;
+  --pg-radius-pill: 999px;
+
+  /* Elevation: subtle on a dark canvas, so shadows read as depth not smudge. */
+  --pg-shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
+  --pg-shadow-2: 0 6px 20px rgb(0 0 0 / 35%);
+  --pg-shadow-3: 0 18px 48px rgb(0 0 0 / 45%);
+
+  /* Type scale. */
+  --pg-text-xs: 10.5px;
+  --pg-text-sm: 11.5px;
+  --pg-text-md: 13px;
+  --pg-text-lg: 15px;
+  --pg-text-xl: 19px;
+
+  --pg-transition: 140ms cubic-bezier(0.4, 0, 0.2, 1);
+  --pg-focus: 0 0 0 2px var(--pg-bg), 0 0 0 4px var(--pg-accent);
+
+  --pg-rail: 52px;
+  --pg-sidebar: 268px;
+  --pg-inspector: 380px;
+
+  --pg-font: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --pg-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 }
 
 :root[data-theme='light'] {
-  color-scheme: light;
   --pg-bg: #f7f9fc;
   --pg-surface: #ffffff;
   --pg-surface-2: #eef2f8;
+  --pg-surface-3: #e4eaf4;
   --pg-border: #d8e0ec;
+  --pg-border-strong: #bcc8db;
   --pg-text: #131820;
   --pg-muted: #5a6676;
+  --pg-faint: #8492a6;
   --pg-accent: #2563eb;
-  --pg-selected: #b45309;
-  --pg-changed: #15803d;
-  --pg-unresolved: #dc2626;
-  --pg-path: #db2777;
+  --pg-shadow-1: 0 1px 2px rgb(15 23 42 / 8%);
+  --pg-shadow-2: 0 6px 20px rgb(15 23 42 / 10%);
+  --pg-shadow-3: 0 18px 48px rgb(15 23 42 / 14%);
 }
 
 * {
@@ -1897,4 +1939,330 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+/* ============================================================== navigation */
+/*
+ * A persistent icon rail replaces the fixed-width sidebar. On a graph viewer
+ * horizontal space is the scarce resource, so the exploration panels collapse to
+ * a 52px rail and only take the full width when deliberately opened.
+ */
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--pg-space-1);
+  padding: var(--pg-space-2) 0;
+  border-right: 1px solid var(--pg-border);
+  background: var(--pg-surface);
+}
+
+.rail__button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid transparent;
+  border-radius: var(--pg-radius-sm);
+  background: transparent;
+  color: var(--pg-muted);
+  cursor: pointer;
+  transition: background var(--pg-transition), color var(--pg-transition),
+    border-color var(--pg-transition);
+}
+
+.rail__button:hover {
+  background: var(--pg-surface-2);
+  color: var(--pg-text);
+}
+
+.rail__button[aria-current='true'],
+.rail__button[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--pg-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--pg-accent) 38%, transparent);
+  color: var(--pg-text);
+}
+
+.rail__button:focus-visible {
+  box-shadow: var(--pg-focus);
+  outline: none;
+}
+
+.rail__spacer {
+  flex: 1;
+}
+
+.rail__divider {
+  width: 22px;
+  height: 1px;
+  margin: var(--pg-space-1) 0;
+  background: var(--pg-border);
+}
+
+/* ============================================================ app structure */
+
+.app__main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.app__sidebar {
+  width: var(--pg-sidebar);
+  flex: none;
+  border-right: 1px solid var(--pg-border);
+  background: var(--pg-surface);
+  overflow: hidden;
+}
+
+.app__right {
+  width: var(--pg-inspector);
+  flex: none;
+  border-left: 1px solid var(--pg-border);
+  background: var(--pg-surface);
+  overflow-y: auto;
+  box-shadow: var(--pg-shadow-1);
+}
+
+.app__canvas {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ============================================================== overlays */
+
+.app__overlays {
+  position: fixed;
+  right: calc(var(--pg-inspector) + var(--pg-space-3));
+  top: 60px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pg-space-2);
+  max-height: calc(100vh - 120px);
+}
+
+.canvasControls {
+  position: absolute;
+  left: var(--pg-space-3);
+  top: var(--pg-space-3);
+  z-index: 3;
+  display: flex;
+  gap: var(--pg-space-1);
+  padding: var(--pg-space-1);
+  border: 1px solid var(--pg-border);
+  border-radius: var(--pg-radius);
+  background: color-mix(in srgb, var(--pg-surface) 88%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--pg-shadow-2);
+}
+
+.canvasControls button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--pg-radius-sm);
+  background: transparent;
+  color: var(--pg-muted);
+  font-size: var(--pg-text-sm);
+  cursor: pointer;
+  transition: background var(--pg-transition), color var(--pg-transition);
+}
+
+.canvasControls button:hover {
+  background: var(--pg-surface-2);
+  color: var(--pg-text);
+}
+
+.canvasControls button:focus-visible {
+  box-shadow: var(--pg-focus);
+  outline: none;
+}
+
+.canvasBadge {
+  position: absolute;
+  left: 50%;
+  top: var(--pg-space-3);
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 5px 12px;
+  border: 1px solid var(--pg-border);
+  border-radius: var(--pg-radius-pill);
+  background: color-mix(in srgb, var(--pg-surface) 90%, transparent);
+  color: var(--pg-muted);
+  font-size: var(--pg-text-sm);
+  box-shadow: var(--pg-shadow-1);
+}
+
+/* ================================================================ status */
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--pg-border);
+  border-radius: var(--pg-radius-pill);
+  background: var(--pg-surface-2);
+  color: var(--pg-muted);
+  font-size: var(--pg-text-xs);
+  white-space: nowrap;
+}
+
+.status--ok {
+  border-color: color-mix(in srgb, var(--pg-changed) 38%, transparent);
+  color: var(--pg-changed);
+}
+
+.status--warn {
+  border-color: color-mix(in srgb, var(--pg-selected) 38%, transparent);
+  color: var(--pg-selected);
+}
+
+.status__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+/* ================================================================= toast */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: var(--pg-space-5);
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 9px 16px;
+  border: 1px solid var(--pg-border-strong);
+  border-radius: var(--pg-radius);
+  background: var(--pg-surface-2);
+  color: var(--pg-text);
+  font-size: var(--pg-text-sm);
+  box-shadow: var(--pg-shadow-3);
+  animation: toastIn 180ms ease;
+}
+
+.toast--error {
+  border-color: color-mix(in srgb, var(--pg-unresolved) 50%, transparent);
+  color: var(--pg-unresolved);
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* ============================================================== empty states */
+
+.canvasMessage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--pg-space-2);
+  padding: var(--pg-space-6);
+  text-align: center;
+  color: var(--pg-muted);
+}
+
+.canvasMessage h2 {
+  margin: 0;
+  font-size: var(--pg-text-lg);
+  color: var(--pg-text);
+}
+
+.canvasMessage p {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--pg-text-md);
+  line-height: 1.6;
+}
+
+.canvasMessage__remedy {
+  color: var(--pg-accent);
+}
+
+.canvasMessage button {
+  margin-top: var(--pg-space-2);
+  padding: 7px 16px;
+  border: 1px solid var(--pg-border-strong);
+  border-radius: var(--pg-radius-sm);
+  background: var(--pg-surface-2);
+  color: var(--pg-text);
+  font-size: var(--pg-text-sm);
+  cursor: pointer;
+}
+
+.canvasMessage button:hover {
+  border-color: var(--pg-accent);
+}
+
+/* ============================================================ shortcuts */
+
+.shortcuts {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 55%);
+  backdrop-filter: blur(4px);
+}
+
+.shortcuts__panel {
+  width: min(460px, 92vw);
+  padding: var(--pg-space-5);
+  border: 1px solid var(--pg-border-strong);
+  border-radius: var(--pg-radius-lg);
+  background: var(--pg-surface);
+  box-shadow: var(--pg-shadow-3);
+}
+
+.shortcuts__title {
+  margin: 0 0 var(--pg-space-4);
+  font-size: var(--pg-text-lg);
+}
+
+.shortcuts__list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--pg-space-2) var(--pg-space-4);
+  margin: 0;
+  font-size: var(--pg-text-sm);
+}
+
+.shortcuts__list dt {
+  justify-self: start;
+}
+
+.shortcuts__list dd {
+  margin: 0;
+  color: var(--pg-muted);
+}
+
+kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 2px 6px;
+  border: 1px solid var(--pg-border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--pg-radius-sm);
+  background: var(--pg-surface-2);
+  font-family: var(--pg-mono);
+  font-size: var(--pg-text-xs);
+  text-align: center;
 }

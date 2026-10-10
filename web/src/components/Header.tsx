@@ -8,6 +8,8 @@ import {
   IconSearch,
   IconSettings,
   IconSun,
+  IconHelp,
+  IconKey,
   IconTheme,
 } from './Icons';
 
@@ -26,6 +28,7 @@ export interface HeaderProps {
   onToggleTheme: () => void;
   onToggleLegend: () => void;
   onOpenSettings: () => void;
+  onOpenShortcuts?: () => void;
   onToggleFilters: () => void;
   onToggleInspector: () => void;
 }
@@ -121,15 +124,31 @@ export const Header = forwardRef<HTMLInputElement, HeaderProps>(function Header(
           type="button"
           className="header__iconButton"
           onClick={props.onToggleLegend}
-          title="Toggle legend"
+          title="Toggle legend (K)"
           aria-label="Toggle legend"
-          aria-pressed={props.searching ? undefined : undefined}
         >
-          key
+          <IconKey size={15} />
         </button>
-        <button type="button" className="header__iconButton" onClick={props.onOpenSettings} title="Settings">
+        <button
+          type="button"
+          className="header__iconButton"
+          onClick={props.onOpenSettings}
+          title="Settings (S)"
+          aria-label="Settings"
+        >
           <IconSettings />
         </button>
+        {props.onOpenShortcuts && (
+          <button
+            type="button"
+            className="header__iconButton"
+            onClick={props.onOpenShortcuts}
+            title="Keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts"
+          >
+            <IconHelp size={15} />
+          </button>
+        )}
       </div>
     </header>
   );

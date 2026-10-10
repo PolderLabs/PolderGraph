@@ -21,6 +21,9 @@ import { collapseCommunities, type CommunityMode } from './graph/community';
 import { buildPathHighlight, mergePathIntoGraph, type PathHighlight } from './graph/path';
 
 import { Header } from './components/Header';
+import { Rail } from './components/Rail';
+import { IconFit, IconPause, IconPlay, IconRefresh } from './components/Icons';
+import { ShortcutsOverlay } from './components/ShortcutsOverlay';
 import { FilterPanel, ForcePanel } from './components/FilterPanel';
 import { Inspector } from './components/Inspector';
 import { Legend } from './components/Legend';
@@ -113,6 +116,8 @@ export default function App(): JSX.Element {
   const [pathEndpoints, setPathEndpoints] = useState<{ from: string; to: string } | null>(null);
   const [layoutRunning, setLayoutRunning] = useState(true);
   const [forceOpen, setForceOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [sidebarPanel, setSidebarPanel] = useState<'filters' | 'graph' | 'settings' | null>('filters');
   const [fitToken, setFitToken] = useState(0);
   const [layoutResetToken, setLayoutResetToken] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string | null } | null>(null);
@@ -531,11 +536,20 @@ export default function App(): JSX.Element {
         return;
       }
       if (typing) return;
-      if (event.key === 'f') setFitToken((token) => token + 1);
+      if (event.key === 'f' || event.key === 'F') setFitToken((token) => token + 1);
       if (event.key === ' ') {
         event.preventDefault();
         setLayoutRunning((running) => !running);
       }
+      if (event.key === 'r' || event.key === 'R') resetLayout();
+      if (event.key === 'l' || event.key === 'L') {
+        setPreferences((prev) => ({ ...prev, showLabels: !prev.showLabels }));
+      }
+      if (event.key === 'k' || event.key === 'K') {
+        setPreferences((prev) => ({ ...prev, showLegend: !prev.showLegend }));
+      }
+      if (event.key === 's' || event.key === 'S') setSettingsOpen((open) => !open);
+      if (event.key === '?') setShortcutsOpen((open) => !open);
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -679,6 +693,7 @@ export default function App(): JSX.Element {
           setPreferences((previous) => ({ ...previous, showLegend: !previous.showLegend }))
         }
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
         onToggleFilters={() => setMobilePanel((panel) => panel === 'filters' ? null : 'filters')}
         onToggleInspector={() => setMobilePanel((panel) => panel === 'inspector' ? null : 'inspector')}
         ref={searchRef}
@@ -686,22 +701,32 @@ export default function App(): JSX.Element {
 
       {workspaceMode === 'memory' ? (
         <MemoryWorkspace onNotify={showToast} />
-      ) : <main className={`app__body${mobilePanel ? ` app__body--${mobilePanel}` : ''}`}>
-        <div className="app__left" aria-label="Graph filters">
-          <FilterPanel
-            facets={facets}
-            filters={preferences.filters}
-            visibleCount={filtered.nodes.length}
-            totalCount={graph.nodes.length}
-            communityMode={communityMode}
-            onChange={(filters: FiltersState) =>
-              setPreferences((previous) => ({ ...previous, filters }))
-            }
-            onReset={() =>
-              setPreferences((previous) => ({ ...previous, filters: DEFAULT_FILTERS }))
-            }
-          />
-        </div>
+      ) : <main className={`app__main app__body${mobilePanel ? ` app__body--${mobilePanel}` : ''}`}>
+        <Rail
+          active={sidebarPanel}
+          onToggle={(panel) => {
+            if (panel === 'settings') setSettingsOpen(true);
+            else setSidebarPanel((current) => (current === panel ? null : panel));
+          }}
+          onPrivacy={() => setSettingsOpen(true)}
+        />
+        {sidebarPanel === 'filters' && (
+          <aside className="app__sidebar" aria-label="Graph filters">
+            <FilterPanel
+              facets={facets}
+              filters={preferences.filters}
+              visibleCount={filtered.nodes.length}
+              totalCount={graph.nodes.length}
+              communityMode={communityMode}
+              onChange={(filters: FiltersState) =>
+                setPreferences((previous) => ({ ...previous, filters }))
+              }
+              onReset={() =>
+                setPreferences((previous) => ({ ...previous, filters: DEFAULT_FILTERS }))
+              }
+            />
+          </aside>
+        )}
 
         <section className="app__canvas" aria-label="Graph canvas">
           {graphError ? (
@@ -748,23 +773,33 @@ export default function App(): JSX.Element {
 
           {graphLoading && <div className="canvasBadge">loading…</div>}
 
-          <div className="canvasControls">
-            <button type="button" onClick={() => setFitToken((token) => token + 1)} title="Fit (F)">
-              fit
+          <div className="canvasControls" role="toolbar" aria-label="Canvas controls">
+            <button
+              type="button"
+              onClick={() => setFitToken((token) => token + 1)}
+              title="Fit to screen (F)"
+              aria-label="Fit graph to viewport"
+            >
+              <IconFit size={14} />
+              <span>Fit</span>
             </button>
             <button
               type="button"
               onClick={() => setLayoutRunning((running) => !running)}
-              title="Pause/resume layout (Space)"
+              title={layoutRunning ? "Pause layout (Space)" : "Resume layout (Space)"}
+              aria-label={layoutRunning ? "Pause force layout" : "Resume force layout"}
             >
-              {layoutRunning ? 'pause' : 'resume'}
+              {layoutRunning ? <IconPause size={14} /> : <IconPlay size={14} />}
+              <span>{layoutRunning ? 'Pause' : 'Resume'}</span>
             </button>
             <button
               type="button"
               onClick={resetLayout}
-              title="Re-seed positions"
+              title="Re-seed layout (R)"
+              aria-label="Re-seed layout from center"
             >
-              reset layout
+              <IconRefresh size={14} />
+              <span>Reset</span>
             </button>
           </div>
 
@@ -874,6 +909,8 @@ export default function App(): JSX.Element {
           onClose={() => setContextMenu(null)}
         />
       )}
+
+      <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       {workspaceMode === 'graph' && <SettingsPage
         open={settingsOpen}
