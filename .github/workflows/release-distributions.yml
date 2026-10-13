@@ -75,4 +75,8 @@ jobs:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           wheel=(dist/poldergraph-"$RELEASE_VERSION"-*.whl)
-          gh release upload "$RELEASE_TAG" "${wheel[@]}" "dist/poldergraph-$RELEASE_VERSION.tar.gz"
+          # --clobber makes this step idempotent. A release can already carry the
+          # artifacts when they were attached by hand or by an earlier run, and
+          # `gh release upload` fails outright on an existing asset name, which
+          # turns a successful build into a failed workflow.
+          gh release upload "$RELEASE_TAG" "${wheel[@]}" "dist/poldergraph-$RELEASE_VERSION.tar.gz" --clobber
