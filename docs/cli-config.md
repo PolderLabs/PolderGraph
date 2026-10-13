@@ -8,9 +8,10 @@ Primary:
 uv tool install --force --upgrade "poldergraph[all] @ git+https://github.com/PolderLabs/PolderGraph.git@v0.1.7"
 ```
 
-Each GitHub release includes the compiled dashboard (`web/dist`) in its source
-archive. The platform installer scripts use an authenticated GitHub API request
-to resolve and download the latest release source archive.
+Each GitHub release includes the compiled dashboard
+(`src/poldergraph/web/dist`) in its source archive. The platform installer scripts
+use an authenticated GitHub API request to resolve and download the latest
+release source archive.
 
 Also support standard Python packaging installation.
 

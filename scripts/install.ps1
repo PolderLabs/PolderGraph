@@ -36,26 +36,44 @@ Write-Host ''
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $tempDir | Out-Null
 try {
-    $archive = Join-Path $tempDir 'source.tar.gz'
-    $archiveUrl = "https://api.github.com/repos/$repo/tarball/$($release.tag_name)"
-    & curl.exe --fail --silent --show-error --location `
-        --header 'Accept: application/vnd.github+json' `
-        --output $archive $archiveUrl
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not download the PolderGraph release archive (curl exit code $LASTEXITCODE)."
-    }
-    tar -xzf $archive -C $tempDir
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Could not extract the PolderGraph release source archive.'
-    }
+    # Prefer the wheel published with the release. It already contains the built
+    # dashboard, so installing it needs neither Node.js nor a source build. Only
+    # fall back to the source archive if no wheel is attached.
+    $version = $release.tag_name -replace '^v', ''
+    $wheelName = "poldergraph-$version-py3-none-any.whl"
+    $wheel = Join-Path $tempDir $wheelName
+    $wheelUrl = "https://github.com/$repo/releases/download/$($release.tag_name)/$wheelName"
 
-    $sourceDir = Get-ChildItem -Path $tempDir -Directory | Select-Object -First 1
-    if (-not $sourceDir -or -not (Test-Path (Join-Path $sourceDir.FullName 'pyproject.toml'))) {
-        throw 'Could not find the PolderGraph project in the release source archive.'
+    & curl.exe --fail --silent --show-error --location --output $wheel $wheelUrl
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $wheel)) {
+        Write-Host "Installing the published wheel for $($release.tag_name)..."
+        # A bare Windows path is not a valid reference for uv; make it a file:// URI.
+        $wheelUri = ([System.Uri]$wheel).AbsoluteUri
+        uv tool install --force --upgrade "poldergraph[all] @ $wheelUri"
     }
+    else {
+        Write-Host "No wheel found for $($release.tag_name); building from the source archive."
+        $archive = Join-Path $tempDir 'source.tar.gz'
+        $archiveUrl = "https://api.github.com/repos/$repo/tarball/$($release.tag_name)"
+        & curl.exe --fail --silent --show-error --location `
+            --header 'Accept: application/vnd.github+json' `
+            --output $archive $archiveUrl
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not download the PolderGraph release archive (curl exit code $LASTEXITCODE)."
+        }
+        tar -xzf $archive -C $tempDir
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Could not extract the PolderGraph release source archive.'
+        }
 
-    $sourceUri = ([System.Uri]$sourceDir.FullName).AbsoluteUri
-    uv tool install --force --upgrade "poldergraph[all] @ $sourceUri"
+        $sourceDir = Get-ChildItem -Path $tempDir -Directory | Select-Object -First 1
+        if (-not $sourceDir -or -not (Test-Path (Join-Path $sourceDir.FullName 'pyproject.toml'))) {
+            throw 'Could not find the PolderGraph project in the release source archive.'
+        }
+
+        $sourceUri = ([System.Uri]$sourceDir.FullName).AbsoluteUri
+        uv tool install --force --upgrade "poldergraph[all] @ $sourceUri"
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "PolderGraph installation failed (uv exit code $LASTEXITCODE)."
     }

@@ -61,6 +61,15 @@ All five dashboard assets are present in the published wheel.
 force-including `web/dist` from a path that does not exist in the sdist (for
 example, ship a placeholder or build assets during install).
 
+**Resolved in v0.11.0.** Both parts landed. `install.sh` prefers the published
+wheel, and the split path is gone: Vite now writes straight to
+`src/poldergraph/web/dist` (`web/vite.config.ts`), which is the directory
+`api/server.py` serves and the one every distribution packages, so there is no
+second copy to force-include and no mismatch between `index.html` and
+`assets/`. Those built assets are tracked rather than ignored, so a
+distribution built without `pnpm build` still ships a working dashboard instead
+of an `index.html` whose hashed asset references 404.
+
 ---
 
 ## 2. `--offline` disables the local model, so agents lose memory and semantic recall (P1)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "poldergraph"
-version = "0.10.0"
+version = "0.11.0"
 description = "Fully local, zero-cloud code intelligence graph for developers and coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -74,17 +74,12 @@ Documentation = "https://github.com/poldergraph/poldergraph/tree/main/docs"
 [tool.hatch.build.targets.wheel]
 packages = ["src/poldergraph"]
 
-# The dashboard is built by `pnpm --dir web build` into web/dist and force-
-# included into the wheel at src/poldergraph/web/dist, so `poldergraph ui`
-# needs no Node.js on the end-user machine.
-[tool.hatch.build.targets.wheel.force-include]
-"web/dist" = "poldergraph/web/dist"
+# `pnpm --dir web build` writes straight to src/poldergraph/web/dist, which is
+# inside the packaged `src/poldergraph` tree, so `poldergraph ui` needs no
+# Node.js on the end-user machine and no second copy can drift out of sync.
 
 [tool.hatch.build.targets.sdist]
-include = ["src/poldergraph", "omp", "package.json", "web/src", "web/dist", "web/package.json", "web/vite.config.ts", "web/tsconfig.json", "docs", "scripts", "README.md", "AGENTS.md", "LICENSE", "tests"]
-
-[tool.hatch.build.targets.sdist.force-include]
-"web/dist" = "web/dist"
+include = ["src/poldergraph", "omp", "package.json", "web/src", "web/package.json", "web/pnpm-lock.yaml", "web/pnpm-workspace.yaml", "web/vite.config.ts", "web/tsconfig.json", "docs", "scripts", "README.md", "AGENTS.md", "LICENSE", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

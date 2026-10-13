@@ -2,12 +2,14 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
-# Only the root-level build output is ignored here. A blanket `dist/` rule would
-# also exclude web/dist/, and git cannot re-include a file inside an excluded
-# directory - which would make the tracked dashboard placeholder impossible.
 /dist/
 **/dist/*
-!web/dist/index.html
+# The dashboard that ships to users: api/server.py serves it and every
+# distribution packages it, so it is tracked rather than ignored. Its index.html
+# carries hashed asset references, so ignoring the assets/ directory yields a
+# distribution whose dashboard loads nothing.
+!src/poldergraph/web/dist/
+!src/poldergraph/web/dist/**
 build/
 *.egg
 .eggs/
@@ -36,12 +38,10 @@ Thumbs.db
 .mypy_cache/
 .ruff_cache/
 
-# The dashboard build outputs to src/poldergraph/web/dist (Vite outDir), which
-# is the copy the Python server serves and the wheel packages. web/dist was a
-# stale duplicate with mismatched asset hashes; ignore it so there is one source
-# of truth.
+# The dashboard build outputs to src/poldergraph/web/dist (Vite outDir). That is
+# the copy the Python server serves and the one every distribution packages, so
+# it is tracked: a release built without `pnpm build` would otherwise ship an
+# index.html whose hashed asset references 404, which is a blank dashboard.
+# web/dist no longer exists as a build target; keep it ignored in case an old
+# checkout still has one lying around.
 web/dist/*
-# A tracked placeholder keeps the source tarball buildable. pyproject force-includes
-# this directory, and a missing path makes hatchling fail, which breaks installing
-# straight from the GitHub source archive.
-!web/dist/index.html

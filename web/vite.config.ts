@@ -28,10 +28,13 @@ export default defineConfig({
     format: 'es',
   },
   build: {
-    // Hatch's force-include copies web/dist into the Python package for both
-    // wheels and source distributions. Keeping the build output here also lets
-    // the package's build hooks find the documented dashboard artifact.
-    outDir: './dist',
+    // Build straight into the directory the Python package serves
+    // (api/server.py: ASSET_DIR -> src/poldergraph/web/dist) and that hatch
+    // packages as `src/poldergraph/web/dist`. Building to web/dist instead
+    // left a second copy that nothing serves, and force-including web/dist
+    // into poldergraph/web/dist could publish stale or mismatched asset
+    // hashes, because index.html and assets/ then come from different builds.
+    outDir: '../src/poldergraph/web/dist',
     emptyOutDir: true,
     target: 'es2022',
     sourcemap: false,
@@ -40,12 +43,11 @@ export default defineConfig({
       output: {
         manualChunks: {
           sigma: ['sigma'],
-          graphology: [
-            'graphology',
-            'graphology-types',
-            'graphology-layout',
-            'graphology-layout-forceatlas2',
-          ],
+          // The layout moved to d3-force, so graphology-layout and
+          // graphology-layout-forceatlas2 are no longer pulled in by anything
+          // under web/src. Listing them here only reserved a chunk name for
+          // modules that are never imported.
+          graphology: ['graphology', 'graphology-types'],
         },
       },
     },

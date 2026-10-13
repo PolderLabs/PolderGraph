@@ -57,7 +57,7 @@ CASES: list[dict[str, Any]] = [
         "query": "What command runs the unit and integration checks?",
     },
     {
-        "content": "Build the dashboard with pnpm --dir web build; the wheel bundles web/dist.",
+        "content": "Build the dashboard with pnpm --dir web build; the wheel bundles src/poldergraph/web/dist.",
         "scope": "project",
         "kind": "workflow",
         "tags": ["dashboard", "build", "release"],
