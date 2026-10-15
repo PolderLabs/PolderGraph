@@ -60,7 +60,9 @@ def server(tmp_path_factory):
     from poldergraph.storage.repository import Repository
     from poldergraph.workspace import create_index, open_workspace
 
-    create_index(root, Config())
+    # Contract tests exercise MCP behavior without downloading the default
+    # local embedding model. Semantic behavior is covered below with fakes.
+    create_index(root, Config(embedding={"backend": "none"}))
     workspace = open_workspace(root)
     indexer = Indexer(workspace, backend=None)
     indexer.ensure_root()
@@ -237,6 +239,13 @@ class TestToolResponses:
         monkeypatch.setattr("poldergraph.embedding.gemma.create_backend", create_backend)
         session = server.poldergraph_session
         service = session.service()
+        # This test explicitly replaces backend creation with a fake, so mark
+        # the workspace as configured for a backend before creating fresh MCP
+        # sessions (which read configuration from disk).
+        from poldergraph.config.loader import write_config
+
+        service.config.embedding.backend = "native"
+        write_config(service.config, service.workspace.index_dir)
         auth_id = service.resolve_entity("AuthService").id
         session_id = service.resolve_entity("Session").id
         info = FakeBackend().model_info()
