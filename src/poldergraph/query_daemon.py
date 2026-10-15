@@ -44,6 +44,14 @@ DEFAULT_IDLE_TIMEOUT_SECONDS = 15 * 60
 #: Seconds a request may run before the client gives up.
 REQUEST_TIMEOUT = 120.0
 
+# The socket is local, but same-user clients are still untrusted input. Keep
+# both memory use and idle connections bounded independently of the listen
+# backlog.
+MAX_REQUEST_BYTES = 8 * 1024 * 1024
+MAX_CLIENT_HANDLERS = 16
+FRAME_READ_TIMEOUT = 5.0
+SHUTDOWN_TIMEOUT = 15.0
+
 
 def _is_database_failure(exc: BaseException) -> bool:
     """True when a failure points at the database rather than the request.
@@ -92,6 +100,32 @@ def socket_path(index_dir: Path) -> Path:
         user_key = hashlib.sha256(str(user_id).encode()).hexdigest()[:8]
         path = runtime_dir / f"pg-{user_key}" / f"{workspace_id}.sock"
     return path
+
+
+def runtime_config_fingerprint(index_dir: Path) -> str:
+    """Hash effective values and their origins, including egress trust."""
+    from .config.loader import load_config
+
+    loaded = load_config(index_dir)
+    effective = loaded.effective()
+    leaf_keys: set[str] = set()
+
+    def collect_leaves(value: Any, prefix: str = "") -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                collect_leaves(child, f"{prefix}{key}.")
+        else:
+            leaf_keys.add(prefix[:-1])
+
+    collect_leaves(effective)
+    material = {
+        "config": effective,
+        "origins": {
+            key: origin for key, origin in loaded.origins.items() if key in leaf_keys
+        },
+    }
+    encoded = json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def is_running(index_dir: Path) -> bool:
@@ -183,7 +217,16 @@ def ensure_daemon(root: Path, *, autostart: bool = True) -> bool:
     if index_dir is None:
         return False
     if is_running(index_dir):
-        return True
+        status = send_request(index_dir, "status", {})
+        expected_fingerprint = runtime_config_fingerprint(index_dir)
+        if status and status.get("config_fingerprint") == expected_fingerprint:
+            return True
+        # A warm daemon must not continue using an old model, provider choice,
+        # or hosted-service authorization after configuration changes.
+        if not autostart or os.environ.get("POLDERGRAPH_NO_DAEMON"):
+            return False
+        if not stop_daemon(root):
+            return False
     if not autostart or os.environ.get("POLDERGRAPH_NO_DAEMON"):
         return False
 
@@ -223,12 +266,20 @@ def stop_daemon(root: Path) -> bool:
     try:
         payload = json.dumps({"command": "__shutdown__", "arguments": {}}).encode("utf-8")
         sock.sendall(len(payload).to_bytes(4, "big") + payload)
-        _recv_exactly(sock, 4)
+        header = _recv_exactly(sock, 4)
+        if header is not None:
+            _recv_exactly(sock, int.from_bytes(header, "big"))
     except OSError:
         pass
     finally:
         sock.close()
-    return True
+    deadline = time.monotonic() + SHUTDOWN_TIMEOUT
+    path = socket_path(index_dir)
+    while time.monotonic() < deadline:
+        if not path.exists() and not is_running(index_dir):
+            return True
+        time.sleep(0.05)
+    return not path.exists() and not is_running(index_dir)
 
 
 class Daemon:
@@ -245,6 +296,8 @@ class Daemon:
         self._read_connections_lock = threading.Lock()
         self._handlers: set[threading.Thread] = set()
         self._handlers_lock = threading.Lock()
+        self._handler_slots = threading.BoundedSemaphore(MAX_CLIENT_HANDLERS)
+        self._config_fingerprint: str | None = None
         self._shutdown = threading.Event()
         if idle_timeout is None:
             configured = os.environ.get("POLDERGRAPH_DAEMON_IDLE_SECONDS")
@@ -271,6 +324,7 @@ class Daemon:
                 backend.model_info()
         self._workspace = workspace
         self._service = service
+        self._config_fingerprint = runtime_config_fingerprint(service.workspace_index())
         from .indexing.supervisor import IndexSupervisor
 
         self._supervisor = IndexSupervisor(
@@ -497,6 +551,7 @@ class Daemon:
                     "counts": service.repo.counts(),
                     "freshness": service.freshness(),
                     "config": service.config.model_dump(),
+                    "config_fingerprint": self._config_fingerprint,
                     "supervisor": (
                         self._supervisor.status() if self._supervisor else {"state": "stopped"}
                     ),
@@ -556,6 +611,9 @@ class Daemon:
                     continue
                 except OSError:
                     break
+                if not self._handler_slots.acquire(blocking=False):
+                    conn.close()
+                    continue
                 handler = threading.Thread(
                     target=self._serve_connection,
                     args=(conn,),
@@ -564,7 +622,14 @@ class Daemon:
                 )
                 with self._handlers_lock:
                     self._handlers.add(handler)
-                handler.start()
+                try:
+                    handler.start()
+                except RuntimeError:
+                    with self._handlers_lock:
+                        self._handlers.discard(handler)
+                    self._handler_slots.release()
+                    conn.close()
+                    continue
                 last_activity = time.monotonic()
         finally:
             server.close()
@@ -586,6 +651,7 @@ class Daemon:
             self._release_thread_service()
             with self._handlers_lock:
                 self._handlers.discard(threading.current_thread())
+            self._handler_slots.release()
 
     def _handle_memory(
         self, action: str, arguments: dict[str, Any], service: Any
@@ -646,13 +712,17 @@ class Daemon:
     def _serve_one(self, conn: socket.socket) -> None:
         conn.settimeout(REQUEST_TIMEOUT)
         try:
+            conn.settimeout(FRAME_READ_TIMEOUT)
             header = _recv_exactly(conn, 4)
             if header is None:
                 return
             length = int.from_bytes(header, "big")
+            if length > MAX_REQUEST_BYTES:
+                return
             body = _recv_exactly(conn, length)
             if body is None:
                 return
+            conn.settimeout(REQUEST_TIMEOUT)
             request = json.loads(body.decode("utf-8"))
             if request.get("command") == "__ping__":
                 result = {"ok": True}

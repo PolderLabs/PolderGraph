@@ -211,6 +211,112 @@ class TestToolResponses:
         assert results[0]["evidence"] in {"exact", "lexical", "semantic", "graph-expanded"}
         assert isinstance(results[0]["score_features"], dict)
 
+    def test_semantic_tools_load_backend_on_their_first_call(self, server, monkeypatch):
+        """A semantic MCP tool must not depend on pg_context loading its backend first."""
+        from poldergraph.embedding.protocol import ModelInfo
+        from poldergraph.mcp.server import build_server
+        from poldergraph.storage.vectors import VectorRecord, create_vector_store
+
+        class FakeBackend:
+            def capabilities(self):
+                return {"text"}
+
+            def model_info(self):
+                return ModelInfo(model_id="fake/mcp-first-call", revision="test", dimensions=3)
+
+            def embed_texts(self, items, *, task, dimensions):
+                return [[1.0, 0.0, 0.0] for _ in items]
+
+        created = []
+
+        def create_backend(config, **kwargs):
+            backend = FakeBackend()
+            created.append(backend)
+            return backend
+
+        monkeypatch.setattr("poldergraph.embedding.gemma.create_backend", create_backend)
+        session = server.poldergraph_session
+        service = session.service()
+        auth_id = service.resolve_entity("AuthService").id
+        session_id = service.resolve_entity("Session").id
+        info = FakeBackend().model_info()
+        store = create_vector_store(
+            service.workspace.con, dimensions=info.dimensions, model_id=info.model_id
+        )
+        store.upsert(
+            [
+                VectorRecord(
+                    embedding_id="auth-vector",
+                    entity_id=auth_id,
+                    vector=[1.0, 0.0, 0.0],
+                    dimensions=info.dimensions,
+                    model_id=info.model_id,
+                    model_revision=info.revision,
+                    task_type="document",
+                    input_hash="auth",
+                ),
+                VectorRecord(
+                    embedding_id="session-vector",
+                    entity_id=session_id,
+                    vector=[0.9, 0.1, 0.0],
+                    dimensions=info.dimensions,
+                    model_id=info.model_id,
+                    model_revision=info.revision,
+                    task_type="document",
+                    input_hash="session",
+                ),
+            ]
+        )
+        service.workspace.con.commit()
+
+        search_server = build_server(service.root)
+        try:
+            search = _call(search_server, "pg_search", {"query": "session behavior"})
+        finally:
+            search_server.poldergraph_session.close()
+        self._assert_envelope(search, "pg_search")
+        assert created
+        assert any("semantic" in result["score_features"] for result in search["data"]["results"])
+
+        related_server = build_server(service.root)
+        try:
+            related = _call(related_server, "pg_related", {"entity": "AuthService"})
+        finally:
+            related_server.poldergraph_session.close()
+        self._assert_envelope(related, "pg_related")
+        assert related["data"]["related"]
+
+        lexical_server = build_server(service.root)
+        created_before_lexical = len(created)
+        try:
+            lexical = _call(
+                lexical_server,
+                "pg_search",
+                {"query": "session behavior", "include_semantic": False},
+            )
+        finally:
+            lexical_server.poldergraph_session.close()
+        self._assert_envelope(lexical, "pg_search")
+        assert len(created) == created_before_lexical
+
+    def test_pg_related_reports_unavailable_semantic_backend(self, server, monkeypatch):
+        from poldergraph.embedding.protocol import DisabledBackend
+        from poldergraph.mcp.server import build_server
+
+        monkeypatch.setattr(
+            "poldergraph.embedding.gemma.create_backend",
+            lambda config, **kwargs: DisabledBackend("test backend unavailable"),
+        )
+        service = server.poldergraph_session.service()
+        fresh_server = build_server(service.root)
+        try:
+            payload = _call(fresh_server, "pg_related", {"entity": "AuthService"})
+        finally:
+            fresh_server.poldergraph_session.close()
+        assert payload["ok"] is False
+        assert payload["command"] == "pg_related"
+        assert payload["error"]["code"] == "BACKEND_UNAVAILABLE"
+
     def test_pg_context_shape(self, server, monkeypatch):
         from poldergraph.embedding.protocol import ModelInfo
 
@@ -379,8 +485,33 @@ class TestToolResponses:
         # A second run with no edits must find nothing to do.
         assert second["data"]["plan"]["changed"] == 0
 
+    def test_pg_update_returns_a_structured_indexing_failure(self, server, monkeypatch):
+        from poldergraph.errors import IndexLockedError
+
+        def fail_run(*args, **kwargs):
+            raise IndexLockedError("test index lock")
+
+        monkeypatch.setattr("poldergraph.indexing.pipeline.Indexer.run", fail_run)
+        payload = _call(server, "pg_update", {})
+        assert payload["ok"] is False
+        assert payload["command"] == "pg_update"
+        assert payload["error"]["code"] == "INDEX_LOCKED"
+        assert payload["error"]["remediation"]
+
 
 class TestActionableErrors:
+    def test_value_errors_are_structured_usage_errors(self, server, monkeypatch):
+        service = server.poldergraph_session.service()
+
+        def fail_related(*args, **kwargs):
+            raise ValueError("invalid related request")
+
+        monkeypatch.setattr(service, "related", fail_related)
+        payload = _call(server, "pg_related", {"entity": "AuthService"})
+        assert payload["ok"] is False
+        assert payload["error"]["code"] == "USAGE_ERROR"
+        assert payload["error"]["message"] == "invalid related request"
+
     def test_unknown_entity_has_remediation(self, server):
         payload = _call(server, "pg_entity", {"entity": "definitely_missing_symbol_xyz"})
         if payload.get("ok"):

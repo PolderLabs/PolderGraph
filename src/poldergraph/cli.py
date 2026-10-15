@@ -2057,7 +2057,7 @@ def daemon_start(
     target: Optional[Path] = typer.Argument(None, help="Repository root."),
 ) -> None:
     """Start the query daemon so later queries skip model setup."""
-    from .query_daemon import ensure_daemon, is_running, resolve_index_dir
+    from .query_daemon import ensure_daemon, resolve_index_dir
 
     root = target or Path.cwd()
     index_dir = resolve_index_dir(root)
@@ -2066,9 +2066,6 @@ def daemon_start(
             "error: no index found; run 'poldergraph init' first.", fg=typer.colors.RED, err=True
         )
         raise typer.Exit(int(ExitCode.INDEX_MISSING))
-    if is_running(index_dir):
-        typer.echo("Query daemon is already running.")
-        return
     typer.echo("Starting query daemon and loading the embedding model...")
     started = time.monotonic()
     if ensure_daemon(root, autostart=True):
@@ -2083,10 +2080,22 @@ def daemon_stop(
     target: Optional[Path] = typer.Argument(None, help="Repository root."),
 ) -> None:
     """Stop the query daemon."""
-    from .query_daemon import stop_daemon
+    from .query_daemon import is_running, resolve_index_dir, socket_path, stop_daemon
 
     root = target or Path.cwd()
-    typer.echo("Query daemon stopped." if stop_daemon(root) else "No query daemon was running.")
+    index_dir = resolve_index_dir(root)
+    was_running = index_dir is not None and is_running(index_dir)
+    if stop_daemon(root):
+        typer.echo("Query daemon stopped." if was_running else "No query daemon was running.")
+        return
+    if index_dir is not None and socket_path(index_dir).exists():
+        typer.secho(
+            "error: the daemon did not finish shutting down before the timeout.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(int(ExitCode.BACKEND_UNAVAILABLE))
+    typer.echo("No query daemon was running.")
 
 
 @daemon_app.command("status")
@@ -2132,7 +2141,8 @@ def config_show(
         loaded = load_config(index_dir)
         data = {
             "config": loaded.effective(),
-            "origins": {key: loaded.origin_of(key) for key in loaded.effective().get("index", {})},
+            "origins": loaded.effective_origins(),
+            "hosted_authorization": loaded.hosted_authorization(),
             "workspace_config": str(loaded.workspace_config_path)
             if loaded.workspace_config_path
             else None,
@@ -2148,6 +2158,9 @@ def config_show(
                 typer.echo("origins")
                 for key, origin in sorted(data["origins"].items()):
                     typer.echo(f"  {key:<28} {origin}")
+                typer.echo("")
+                typer.echo("hosted authorization")
+                typer.echo(json.dumps(data["hosted_authorization"], indent=2))
     except PolderGraphError as exc:
         if json_output:
             emit_error(command, exc)
@@ -2166,41 +2179,52 @@ def config_set(
     path: Optional[Path] = typer.Argument(None, help="Repository root."),
 ) -> None:
     """Set one configuration value in the workspace config."""
-    command = "config set"
     try:
-        from .config.loader import load_config, write_config
+        from .config.loader import (
+            _deep_merge,
+            _read_toml,
+            load_config,
+            parse_config_value,
+            write_config_data,
+        )
         from .workspace import find_index_dir
 
         index_dir = find_index_dir(path) or (path or Path.cwd()).resolve() / ".poldergraph"
         index_dir.mkdir(parents=True, exist_ok=True)
         loaded = load_config(index_dir)
-        config = loaded.config
         section, _, field = key.partition(".")
         if not field:
             raise UsageError(f"Key must be dotted, e.g. index.dimensions (got '{key}').")
-        target = getattr(config, section, None)
+        if "." in field:
+            raise UsageError(f"Key must name a config field, e.g. index.dimensions (got '{key}').")
+        target = getattr(loaded.config, section, None)
         if target is None:
             raise UsageError(f"Unknown config section '{section}'.")
         if not hasattr(target, field):
             raise UsageError(f"Unknown config key '{key}'.")
-        current = getattr(target, field)
         try:
-            coerced: Any = value
-            if isinstance(current, bool):
-                coerced = value.lower() in {"1", "true", "yes", "on"}
-            elif isinstance(current, int):
-                coerced = int(value)
-            elif isinstance(current, float):
-                coerced = float(value)
-        except ValueError:
-            raise UsageError(f"Cannot parse '{value}' for {key}.") from None
-        setattr(target, field, coerced)
-        config = config.model_validate(config.model_dump())
-        write_config(config, index_dir)
-        typer.echo(f"{key} = {getattr(target, field)}")
+            coerced = parse_config_value(value)
+        except PolderGraphError as exc:
+            raise UsageError(exc.message, remediation=exc.remediation) from exc
+
+        # Validate against the effective configuration first.  The file write
+        # below intentionally contains only the workspace override, so trusted
+        # user settings retain their origin and authorization semantics.
+        candidate = loaded.config.model_dump()
+        candidate.setdefault(section, {})[field] = coerced
+        try:
+            config = Config.model_validate(candidate)
+        except Exception as exc:
+            raise UsageError(f"Invalid value for {key}: {exc}") from None
+
+        path = index_dir / "config.toml"
+        workspace_data = _read_toml(path) if path.is_file() else {}
+        _deep_merge(workspace_data, {section: {field: coerced}}, "workspace", {})
+        write_config_data(workspace_data, path)
+        typer.echo(f"{key} = {getattr(getattr(config, section), field)}")
     except PolderGraphError as exc:
         typer.secho(f"error: {exc.message}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(int(exc.exit_code))
+        raise typer.Exit(int(exc.exit_code)) from None
 
 
 def main() -> None:
