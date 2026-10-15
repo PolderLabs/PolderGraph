@@ -191,9 +191,22 @@ Options:
 - `--effective` — show merged values and origins
 - `--json` — machine-readable output
 
+Effective output includes the origin of every setting and hosted-service
+authorization status. It never prints credentials.
+
 ### `poldergraph config set KEY VALUE`
 
-Set one configuration value in the workspace config.
+Set one configuration value in the workspace config. Scalar values are parsed
+from their command-line form; lists and mappings use TOML syntax, for example
+`poldergraph config set decisions.remote_providers '["typesafe"]'`. Invalid
+values leave the existing file unchanged. The command writes only the selected
+workspace override, preserving user-level settings and their trust origins.
+
+Collection values use TOML syntax. For example:
+
+```sh
+poldergraph config set decisions.remote_providers '["typesafe"]'
+```
 
 ## Exit codes
 

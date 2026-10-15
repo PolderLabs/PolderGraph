@@ -18,6 +18,18 @@ If sqlite-vec still fails, PolderGraph falls back to a brute-force vector backen
 
 Another `poldergraph` process (possibly `watch`) is writing. Wait or stop the other process. The lock is released automatically when the writing process exits.
 
+## Query daemon uses old settings or does not restart
+
+The query daemon checks the effective configuration before reuse. A change to
+workspace or user settings causes the next daemon-backed query or
+`poldergraph daemon start` to replace the warm process. `poldergraph daemon stop`
+waits for the socket to be removed; if it times out, check
+`poldergraph daemon status` and retry after active queries finish.
+
+The local socket accepts request frames up to 8 MiB and serves at most 16
+clients at once. Extra clients are closed promptly, and incomplete frame headers
+or bodies time out after five seconds.
+
 ## Corrupt index
 
 Run `poldergraph doctor` to diagnose. Run `poldergraph rebuild` to create a replacement index atomically. The existing index is preserved as a backup until the new one passes integrity checks.

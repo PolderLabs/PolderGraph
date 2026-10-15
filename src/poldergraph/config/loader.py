@@ -30,6 +30,51 @@ class LoadedConfig:
     def effective(self) -> dict[str, Any]:
         return self.config.to_toml_dict()
 
+    def effective_origins(self) -> dict[str, str]:
+        """Return the source for every value exposed by :meth:`effective`."""
+        origins: dict[str, str] = {}
+        for dotted in _effective_leaf_paths(self.effective()):
+            origins[dotted] = self.origin_of(dotted)
+        return origins
+
+    def hosted_authorization(self) -> dict[str, dict[str, Any]]:
+        """Describe non-secret remote-service authorization decisions."""
+        embedding_reason = (
+            "Remote embedding consent is enabled by a trusted source."
+            if self.config.embedding.remote_authorized
+            else "Remote embedding consent must be enabled by user config, environment, or CLI."
+        )
+        if not self.config.embedding.endpoint_authorized:
+            embedding_reason = "A custom embedding endpoint must come from user config, environment, or CLI."
+
+        decision_reason = (
+            "Remote decision consent and provider allowlist come from trusted sources."
+            if self.config.decisions.remote_authorized
+            and bool(self.config.decisions.authorized_remote_providers)
+            else "Remote decision consent and provider allowlist must come from user config, environment, or CLI."
+        )
+        if not self.config.decisions.endpoint_authorized:
+            decision_reason = "A custom decision endpoint must come from user config, environment, or CLI."
+
+        return {
+            "embedding": {
+                "remote_authorized": self.config.embedding.remote_authorized,
+                "endpoint_authorized": self.config.embedding.endpoint_authorized,
+                "consent_origin": self.origin_of("privacy.allow_remote_embedding"),
+                "endpoint_origin": self.origin_of("embedding.api_endpoint"),
+                "reason": embedding_reason,
+            },
+            "decisions": {
+                "remote_authorized": self.config.decisions.remote_authorized,
+                "endpoint_authorized": self.config.decisions.endpoint_authorized,
+                "authorized_remote_providers": self.config.decisions.authorized_remote_providers,
+                "consent_origin": self.origin_of("privacy.allow_remote_decisions"),
+                "provider_allowlist_origin": self.origin_of("decisions.remote_providers"),
+                "endpoint_origin": self.origin_of("decisions.endpoint"),
+                "reason": decision_reason,
+            },
+        }
+
 
 def user_config_path() -> Path:
     return Path(platformdirs.user_config_dir("poldergraph")) / "config.toml"
@@ -37,6 +82,18 @@ def user_config_path() -> Path:
 
 #: Config fields whose value is itself a mapping; they are leaves, not sections.
 _LEAF_MAPPING_KEYS: frozenset[str] = frozenset({"weights", "kind_priors"})
+
+
+def _effective_leaf_paths(data: dict[str, Any], prefix: str = "") -> list[str]:
+    """Flatten an effective config into the dotted paths users can configure."""
+    paths: list[str] = []
+    for key, value in data.items():
+        dotted = f"{prefix}{key}"
+        if isinstance(value, dict) and key not in _LEAF_MAPPING_KEYS:
+            paths.extend(_effective_leaf_paths(value, prefix=f"{dotted}."))
+        else:
+            paths.append(dotted)
+    return paths
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any], origin: str, origins: dict[str, str], prefix: str = "") -> dict[str, Any]:
@@ -75,6 +132,20 @@ def _coerce_scalar(raw: str) -> Any:
     except ValueError:
         pass
     return raw
+
+
+def parse_config_value(raw: str) -> Any:
+    """Parse the TOML scalar or collection syntax accepted by ``config set``."""
+    stripped = raw.strip()
+    if stripped.startswith(("[", "{")):
+        try:
+            return tomllib.loads(f"value = {raw}")["value"]
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigError(
+                f"Invalid TOML value '{raw}': {exc}",
+                remediation="Use TOML syntax, for example: [\"typesafe\"].",
+            ) from exc
+    return _coerce_scalar(raw)
 
 
 def env_overrides(environ: dict[str, str] | None = None) -> dict[str, Any]:
@@ -203,7 +274,7 @@ def _toml_value(value: Any) -> str:
     if isinstance(value, str):
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')
         return f'"{escaped}"'
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return str(value)
     if isinstance(value, list):
         return "[" + ", ".join(_toml_value(v) for v in value) + "]"
@@ -225,20 +296,20 @@ def _toml_table(name: str, data: dict[str, Any], lines: list[str]) -> None:
             _toml_table(f"{name}.{key}", value, lines)
 
 
+def write_config_data(data: dict[str, Any], path: Path) -> Path:
+    """Write a config-shaped mapping without adding values from other origins."""
+    lines: list[str] = []
+    for key, value in data.items():
+        if not isinstance(value, dict):
+            lines.append(f"{key} = {_toml_value(value)}")
+    for key, value in data.items():
+        if isinstance(value, dict):
+            _toml_table(key, value, lines)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 def write_config(config: Config, index_dir: Path) -> Path:
     """Write the documented config.toml shape (round-trips through load_config)."""
     path = index_dir / "config.toml"
-    data = config.to_toml_dict()
-    lines: list[str] = [f"version = {_toml_value(data['version'])}"]
-    for section in (
-        "index", "embedding", "semantic_edges", "graph", "retrieval", "ui", "privacy", "decisions"
-    ):
-        _toml_table(section, data[section], lines)
-    if data.get("exclude"):
-        lines.append("")
-        lines.append(f"exclude = {_toml_value(data['exclude'])}")
-    if data.get("include"):
-        lines.append("")
-        lines.append(f"include = {_toml_value(data['include'])}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    return write_config_data(config.to_toml_dict(), path)

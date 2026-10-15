@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import (
+    BackendUnavailableError,
     PolderGraphError,
     UsageError,
     envelope,
@@ -195,7 +196,6 @@ def build_server(root: Path | None = None) -> Any:
         """Search the repository with hybrid ranking and score decomposition."""
         from ..retrieval.service import SearchFilters
 
-        service = session.service()
         filters = SearchFilters(
             kinds=kinds or [],
             languages=languages or [],
@@ -204,6 +204,10 @@ def build_server(root: Path | None = None) -> Any:
         )
 
         def run() -> dict[str, Any]:
+            # Keep explicitly lexical searches fast and independent of optional
+            # embedding configuration. Hybrid searches must initialize the same
+            # configured backend as the CLI before their first query.
+            service = session.service(need_backend=include_semantic)
             response = service.search(
                 query,
                 limit=_clamp(limit, DEFAULT_RESULT_LIMIT),
@@ -320,9 +324,14 @@ def build_server(root: Path | None = None) -> Any:
         entity: str, limit: int = 10, consistency: str = "bounded"
     ) -> dict[str, Any]:
         """Return semantic neighbours with structural linkage made explicit."""
-        service = session.service()
-
         def run():
+            service = session.service(need_backend=True)
+            backend = service.backend
+            if backend is None or not backend.capabilities():
+                raise BackendUnavailableError(
+                    "Semantic neighbours require an available embedding backend.",
+                    remediation="Configure an embedding backend and run: poldergraph doctor",
+                )
             data = service.related(entity, limit=_clamp(limit, 10), consistency=consistency)
             return _envelope("pg_related") | {"data": data}
 
@@ -356,22 +365,27 @@ def build_server(root: Path | None = None) -> Any:
         from ..indexing.incremental import plan_update
         from ..indexing.pipeline import Indexer
 
-        service = session.service(need_backend=True)
-        workspace = service.workspace
-        indexer = Indexer(workspace, backend=service.backend)
-        discovered = indexer.discover()
-        from ..indexing.incremental import embedding_space_fingerprint
+        def run() -> dict[str, Any]:
+            service = session.service(need_backend=True)
+            workspace = service.workspace
+            indexer = Indexer(workspace, backend=service.backend)
+            discovered = indexer.discover()
+            from ..indexing.incremental import embedding_space_fingerprint
 
-        embedding_space_id = embedding_space_fingerprint(service.backend)
-        plan = plan_update(
-            session.repo(), discovered, root_id=workspace.root_id(),
-            embedding_space_id=embedding_space_id,
-        )
-        stats = indexer.run(
-            discovered, changed=plan.to_index, removed_paths=plan.removed,
-            embedding_space_id=embedding_space_id,
-        )
-        return _envelope("pg_update") | {"data": {"plan": plan.summary(), "index": stats.to_dict()}}
+            embedding_space_id = embedding_space_fingerprint(service.backend)
+            plan = plan_update(
+                session.repo(), discovered, root_id=workspace.root_id(),
+                embedding_space_id=embedding_space_id,
+            )
+            stats = indexer.run(
+                discovered, changed=plan.to_index, removed_paths=plan.removed,
+                embedding_space_id=embedding_space_id,
+            )
+            return _envelope("pg_update") | {
+                "data": {"plan": plan.summary(), "index": stats.to_dict()}
+            }
+
+        return _guard("pg_update", run)
 
     # ------------------------------------------------------- pg_find_tests
 
@@ -558,6 +572,8 @@ def _guard(command: str, call: Any) -> Any:
         return call()
     except PolderGraphError as exc:
         return error_envelope(command, exc)
+    except (TypeError, ValueError) as exc:
+        return error_envelope(command, UsageError(str(exc)))
 
 
 def run_server(root: Path | None = None) -> None:

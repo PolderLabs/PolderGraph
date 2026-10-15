@@ -14,12 +14,17 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from poldergraph.query_daemon import (
+    MAX_CLIENT_HANDLERS,
+    MAX_REQUEST_BYTES,
     Daemon,
     _named,
     _without,
+    ensure_daemon,
+    is_running,
     resolve_index_dir,
     send_request,
     socket_path,
+    stop_daemon,
 )
 
 
@@ -399,3 +404,167 @@ class TestSocketPaths:
     def test_resolve_finds_index_dir(self, indexed_workspace):
         resolved = resolve_index_dir(indexed_workspace.root)
         assert resolved == indexed_workspace.index_dir
+
+
+def test_daemon_rejects_oversized_and_incomplete_frames(tmp_path, monkeypatch):
+    import socket
+    import threading
+
+    from poldergraph import query_daemon
+
+    monkeypatch.setattr(query_daemon, "FRAME_READ_TIMEOUT", 0.05)
+    daemon = Daemon(tmp_path)
+    for index, header in enumerate(
+        ((MAX_REQUEST_BYTES + 1).to_bytes(4, "big"), b"\x00\x00")
+    ):
+        server, client = socket.socketpair()
+
+        def serve_one(server=server):
+            with server:
+                daemon._serve_one(server)
+
+        worker = threading.Thread(target=serve_one, daemon=True)
+        worker.start()
+        client.sendall(header)
+        client.settimeout(2)
+        if index == 0:
+            assert client.recv(1) == b""
+        else:
+            response_header = client.recv(4)
+            assert len(response_header) == 4
+            response = client.recv(int.from_bytes(response_header, "big"))
+            assert b'"code": "DAEMON_ERROR"' in response
+        worker.join(timeout=2)
+        assert not worker.is_alive()
+        client.close()
+
+
+def test_daemon_bounds_handlers_and_remains_usable_after_bad_frames(tmp_path):
+    import socket
+    import threading
+
+    from poldergraph.config.models import Config
+    from poldergraph.indexing.pipeline import Indexer
+    from poldergraph.workspace import create_index, open_workspace
+
+    (tmp_path / "module.py").write_text("class Service: pass\n", encoding="utf-8")
+    create_index(tmp_path, Config(embedding={"backend": "none"}))
+    workspace = open_workspace(tmp_path)
+    indexer = Indexer(workspace, backend=None)
+    indexer.ensure_root()
+    indexer.run(indexer.discover())
+    workspace.close()
+
+    daemon = Daemon(tmp_path)
+    server = threading.Thread(target=daemon.serve, daemon=True)
+    server.start()
+    index_dir = tmp_path / ".poldergraph"
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not is_running(index_dir):
+        time.sleep(0.05)
+    assert is_running(index_dir)
+
+    clients = []
+    try:
+        for _ in range(MAX_CLIENT_HANDLERS):
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.connect(str(socket_path(index_dir)))
+            client.sendall(b"\x00\x00")
+            clients.append(client)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and len(daemon._handlers) < MAX_CLIENT_HANDLERS:
+            time.sleep(0.01)
+        assert len(daemon._handlers) == MAX_CLIENT_HANDLERS
+
+        overflow = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        overflow.settimeout(2)
+        overflow.connect(str(socket_path(index_dir)))
+        assert overflow.recv(1) == b""
+        overflow.close()
+    finally:
+        for client in clients:
+            client.close()
+
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline and len(daemon._handlers):
+        time.sleep(0.05)
+    assert len(daemon._handlers) == 0
+    assert send_request(index_dir, "__ping__", {}) == {"ok": True}
+    assert send_request(index_dir, "__shutdown__", {}) == {"ok": True}
+    server.join(timeout=5)
+    assert not server.is_alive()
+
+
+def test_daemon_restarts_when_effective_config_changes(tmp_path, monkeypatch):
+    from poldergraph import query_daemon
+    from poldergraph.config.models import Config
+    from poldergraph.indexing.pipeline import Indexer
+    from poldergraph.workspace import create_index, open_workspace
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    (tmp_path / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    create_index(
+        tmp_path,
+        Config(embedding={"backend": "none"}, decisions={"provider": "typesafe"}),
+    )
+    workspace = open_workspace(tmp_path)
+    indexer = Indexer(workspace, backend=None)
+    indexer.ensure_root()
+    indexer.run(indexer.discover())
+    workspace.close()
+
+    index_dir = tmp_path / ".poldergraph"
+    real_stop_daemon = query_daemon.stop_daemon
+    stopped = []
+
+    def track_stop(root):
+        stopped.append(root)
+        return real_stop_daemon(root)
+
+    monkeypatch.setattr(query_daemon, "stop_daemon", track_stop)
+    try:
+        assert ensure_daemon(tmp_path)
+        initial = send_request(index_dir, "status", {})
+        assert initial["config"]["decisions"]["provider"] == "typesafe"
+        assert ensure_daemon(tmp_path)
+        assert stopped == []
+
+        from poldergraph.config.loader import load_config, write_config
+
+        loaded = load_config(index_dir, user_path=tmp_path / "xdg/poldergraph/config.toml")
+        loaded.config.decisions.provider = "disabled"
+        write_config(loaded.config, index_dir)
+
+        assert ensure_daemon(tmp_path)
+        assert stopped == [tmp_path]
+        refreshed = send_request(index_dir, "status", {})
+        assert refreshed["config"]["decisions"]["provider"] == "disabled"
+        assert is_running(index_dir)
+    finally:
+        stop_daemon(tmp_path)
+
+
+def test_repeated_immediate_daemon_stop_start_cycles_are_ready(tmp_path, monkeypatch):
+    from poldergraph.config.models import Config
+    from poldergraph.indexing.pipeline import Indexer
+    from poldergraph.workspace import create_index, open_workspace
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    (tmp_path / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    create_index(tmp_path, Config(embedding={"backend": "none"}))
+    workspace = open_workspace(tmp_path)
+    indexer = Indexer(workspace, backend=None)
+    indexer.ensure_root()
+    indexer.run(indexer.discover())
+    workspace.close()
+
+    index_dir = tmp_path / ".poldergraph"
+    try:
+        for _ in range(3):
+            assert ensure_daemon(tmp_path)
+            assert is_running(index_dir)
+            assert stop_daemon(tmp_path)
+            assert not socket_path(index_dir).exists()
+            assert not is_running(index_dir)
+    finally:
+        stop_daemon(tmp_path)

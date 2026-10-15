@@ -69,8 +69,15 @@ class TestProvenance:
 
 
 class TestConfigPrecedence:
-    def test_defaults(self):
-        config = load_config(Path("/nonexistent"), environ={}).config
+    def test_defaults_ignore_user_config(self, tmp_path: Path, monkeypatch):
+        user_config = tmp_path / "user.toml"
+        user_config.write_text("[index]\ndimensions = 2048\n", encoding="utf-8")
+        monkeypatch.setattr("poldergraph.config.loader.user_config_path", lambda: user_config)
+        config = load_config(
+            tmp_path / "no-workspace",
+            environ={},
+            user_path=tmp_path / "missing-user.toml",
+        ).config
         assert config.index.dimensions == 256
         assert config.embedding.model == "google/embeddinggemma-2"
         assert config.ui.host == "127.0.0.1"
